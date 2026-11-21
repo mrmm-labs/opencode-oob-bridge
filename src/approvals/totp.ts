@@ -24,8 +24,7 @@ export function newSeed(): Uint8Array {
   return randomBytes(20)
 }
 
-export const step = (ms: number): number =>
-  Math.floor(ms / 1000 / STEP_SECONDS)
+export const step = (ms: number): number => Math.floor(ms / 1000 / STEP_SECONDS)
 
 /** The code for a time step (RFC 4226 truncation). */
 export function code(seed: Uint8Array, counter: number): string {
@@ -56,5 +55,6 @@ export function match(
   return hit
 }
 
+/** The enrolment link. SHA-1, 6 digits and 30 seconds are what every authenticator app assumes, so they are left out and the QR code stays small. */
 export const otpauth = (seed: Uint8Array, account: string, issuer: string) =>
-  `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${base32(seed)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=${STEP_SECONDS}`
+  `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${base32(seed)}&issuer=${encodeURIComponent(issuer)}`

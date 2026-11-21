@@ -54,7 +54,9 @@ export function parseApprovals(
   for (const [name, c] of Object.entries(raw.classes ?? {})) {
     const at = `approvals.classes.${name}`
     if (!CLASS_NAME.test(name))
-      return { error: `${at}: a class name is lowercase letters, digits, . - and _` }
+      return {
+        error: `${at}: a class name is lowercase letters, digits, . - and _`,
+      }
     if (!isObject(c)) return { error: `${at} must be an object` }
     if (c.level !== 1 && c.level !== 2 && c.level !== 3)
       return { error: `${at}.level must be 1, 2 or 3` }
@@ -68,7 +70,11 @@ export function parseApprovals(
     const maxTtl = c.maxTtl ?? 600
     if (!int(maxTtl, 10, 3600))
       return { error: `${at}.maxTtl must be 10 to 3600 seconds` }
-    classes[name] = { level: c.level, channels: channels as string[], maxTtl: maxTtl as number }
+    classes[name] = {
+      level: c.level,
+      channels: channels as string[],
+      maxTtl: maxTtl as number,
+    }
   }
 
   const callers: ApprovalsConfig["callers"] = {}
@@ -91,7 +97,8 @@ export function parseApprovals(
 
   const limits = { ...DEFAULT_LIMITS }
   if (raw.limits !== undefined) {
-    if (!isObject(raw.limits)) return { error: "approvals.limits must be an object" }
+    if (!isObject(raw.limits))
+      return { error: "approvals.limits must be an object" }
     for (const k of ["pending", "perHour", "global"] as const) {
       const v = raw.limits[k]
       if (v === undefined) continue

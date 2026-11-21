@@ -609,6 +609,64 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
       },
     }),
     sub({
+      name: "approvals",
+      title: "Approvals",
+      description:
+        "Approvals for local tools: show the service, pair or revoke a caller, enrol the code seed (QR shown once), rotate the signing key.",
+      group: "Instance",
+      args: [
+        {
+          name: "action",
+          kind: "enum",
+          title: "Approvals",
+          placeholder:
+            "status|pair-caller|revoke-caller|totp|replace-totp|rotate-key|unlock",
+          options: () => [
+            {
+              value: "status",
+              title: "Status",
+              description: "socket, keys, callers",
+            },
+            {
+              value: "pair-caller",
+              title: "Pair a caller",
+              description: "make its key file",
+            },
+            { value: "revoke-caller", title: "Revoke a caller" },
+            {
+              value: "totp",
+              title: "Enrol the code seed",
+              description: "QR shown once",
+            },
+            {
+              value: "replace-totp",
+              title: "Replace the code seed",
+              description: "the old codes stop working",
+            },
+            {
+              value: "rotate-key",
+              title: "Rotate the signing key",
+              description: "callers are re-paired by file",
+            },
+            {
+              value: "unlock",
+              title: "Unlock the Keychain items",
+              description: "after upgrading OpenCode",
+            },
+          ],
+        },
+        {
+          name: "name",
+          kind: "text",
+          title: "Caller name",
+          placeholder: "caller name or hours",
+          optional: true,
+        },
+      ],
+      run: (v) =>
+        approvalsCommand(ctx, app, v.action ?? "status", v.name?.trim()),
+    }),
+    sub({
       name: "status",
       title: "Status",
       description:
@@ -792,6 +850,71 @@ async function pair(
     else toast(ctx, "Pairing code expired", "warning")
   })
   return closed
+}
+
+async function approvalsCommand(
+  ctx: Context,
+  app: App,
+  action: string,
+  name: string | undefined,
+): Promise<void> {
+  const replace = action === "replace-totp"
+  const out = await app.pilot.approvals({
+    action: replace ? "totp" : action,
+    name: action === "rotate-key" ? undefined : name,
+    hours: action === "rotate-key" && name ? Number(name) : undefined,
+    replace,
+  })
+  if (!out) return toast(ctx, "No answer", "warning")
+  if (!out.ok) return toast(ctx, out.text ?? "Failed", "warning")
+  const d = (out.data ?? {}) as Record<string, unknown>
+  if (action === "totp" || replace) {
+    const lines = [
+      "Scan this in an authenticator app kept on another device than the phone that answers approvals.",
+    ]
+    const qr = renderQr(String(d.uri))
+    const w = terminal(ctx)
+    if (!w || (w.cols >= qr.width + 10 && w.rows >= qr.height + 12))
+      lines.push("", ...qr.lines)
+    lines.push(
+      "",
+      "Or type this secret in:",
+      String(d.secret),
+      "",
+      "It is not shown again.",
+    )
+    return void (await ctx.ui.dialog.alert({
+      title: `${TITLE}: code seed`,
+      message: lines.join("\n"),
+    }))
+  }
+  if (action === "status") {
+    const s = d as {
+      state?: string
+      reason?: string
+      socket?: string
+      signing?: boolean
+      totp?: boolean
+      callers?: string[]
+      pending?: number
+      mode?: string
+      keychain?: string
+    }
+    return void (await ctx.ui.dialog.alert({
+      title: `${TITLE}: approvals`,
+      message: [
+        s.state === "listening"
+          ? `Listening on ${s.socket}`
+          : `Not listening: ${s.reason}`,
+        `Mode: ${s.mode} (${s.mode === "afk" ? "the phone is asked first" : "the machine is asked first"})`,
+        `Signing key: ${s.signing ? "ready" : "none or unreadable"}${s.keychain ? ` (${s.keychain})` : ""}`,
+        `Code seed: ${s.totp ? "enrolled" : "not enrolled"}`,
+        `Callers: ${s.callers?.length ? s.callers.join(", ") : "none"}`,
+        `Pending: ${s.pending ?? 0}`,
+      ].join("\n"),
+    }))
+  }
+  toast(ctx, out.text ?? "Done", "success")
 }
 
 /** Terminal size when the renderer reports it. */

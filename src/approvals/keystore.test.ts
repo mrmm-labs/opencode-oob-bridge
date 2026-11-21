@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { KeychainStore, KeyStoreUnavailable, MemoryKeyStore } from "./keystore.ts"
+import {
+  KeychainStore,
+  KeyStoreUnavailable,
+  MemoryKeyStore,
+} from "./keystore.ts"
 
 describe("keystore", () => {
   it("memory store sets, gets and deletes", async () => {

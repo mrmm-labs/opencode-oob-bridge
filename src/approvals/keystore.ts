@@ -6,7 +6,8 @@
  */
 
 export interface KeyStore {
-  get(name: string): Promise<string | undefined>
+  /** A read never raises a macOS prompt unless `prompt` is set (the `unlock` command, typed at the Mac). */
+  get(name: string, o?: { prompt?: boolean }): Promise<string | undefined>
   /** Creates or replaces. Reachable only from the TUI. */
   set(name: string, value: string): Promise<void>
   delete(name: string): Promise<void>
@@ -32,6 +33,7 @@ const CF = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
 const LIBC = "/usr/lib/libSystem.B.dylib"
 const UTF8 = 0x08000100
 const NOT_FOUND = -25300
+const NO_UI = -25308
 const RTLD_DEFAULT = 0xfffffffffffffffen
 
 type Fn = (...a: unknown[]) => never
@@ -53,7 +55,10 @@ export class KeychainStore implements KeyStore {
   private readonly load: () => Promise<Ffi>
   private api: Promise<Api> | undefined
 
-  constructor(service = "opencode-oob-bridge.approvals", load?: () => Promise<Ffi>) {
+  constructor(
+    service = "opencode-oob-bridge.approvals",
+    load?: () => Promise<Ffi>,
+  ) {
     this.service = service
     this.load =
       load ??
@@ -75,8 +80,11 @@ export class KeychainStore implements KeyStore {
     return this.api
   }
 
-  async get(name: string): Promise<string | undefined> {
-    return (await this.open()).read(this.service, name)
+  async get(
+    name: string,
+    o?: { prompt?: boolean },
+  ): Promise<string | undefined> {
+    return (await this.open()).read(this.service, name, o?.prompt === true)
   }
 
   async set(name: string, value: string): Promise<void> {
@@ -89,7 +97,7 @@ export class KeychainStore implements KeyStore {
 }
 
 type Api = {
-  read(service: string, account: string): string | undefined
+  read(service: string, account: string, prompt: boolean): string | undefined
   write(service: string, account: string, value: string): void
   remove(service: string, account: string): void
 }
@@ -171,14 +179,19 @@ function makeApi(ffi: Ffi): Api {
     return { keep, own, str, dict, cell, done }
   }
 
-  const query = (s: ReturnType<typeof scope>, service: string, account: string) => [
-    [s.str("class"), s.str("genp")],
-    [s.str("svce"), s.str(service)],
-    [s.str("acct"), s.str(account)],
-  ] as Array<[bigint, bigint]>
+  const query = (
+    s: ReturnType<typeof scope>,
+    service: string,
+    account: string,
+  ) =>
+    [
+      [s.str("class"), s.str("genp")],
+      [s.str("svce"), s.str(service)],
+      [s.str("acct"), s.str(account)],
+    ] as Array<[bigint, bigint]>
 
   return {
-    read(service, account) {
+    read(service, account, prompt) {
       const s = scope()
       try {
         const res = s.cell()
@@ -187,10 +200,20 @@ function makeApi(ffi: Ffi): Api {
             ...query(s, service, account),
             [s.str("r_Data"), valueOf("kCFBooleanTrue")],
             [s.str("m_Limit"), s.str("m_LimitOne")],
+            // A prompt would block the whole server until someone answers at the Mac.
+            ...(prompt
+              ? []
+              : ([[s.str("u_AuthUI"), s.str("u_AuthUIF")]] as Array<
+                  [bigint, bigint]
+                >)),
           ]),
           P(res),
         ) as unknown as number
         if (rc === NOT_FOUND) return undefined
+        if (rc === NO_UI)
+          throw new KeyStoreUnavailable(
+            "the Keychain wants an answer at the Mac: run /oob approvals unlock",
+          )
         if (rc !== 0) return fail("read", rc)
         s.own(res[0])
         const len = Number(cf.symbols.CFDataGetLength(res[0]) as never)
@@ -214,7 +237,12 @@ function makeApi(ffi: Ffi): Api {
         s.keep.push(arr)
         const list = s.own(
           u(
-            cf.symbols.CFArrayCreate(0n, P(arr), 1, symbol("kCFTypeArrayCallBacks")),
+            cf.symbols.CFArrayCreate(
+              0n,
+              P(arr),
+              1,
+              symbol("kCFTypeArrayCallBacks"),
+            ),
           ),
         )
         const access = s.cell()
@@ -227,12 +255,18 @@ function makeApi(ffi: Ffi): Api {
         s.own(access[0])
         const secret = Buffer.from(value)
         s.keep.push(secret)
-        const data = s.own(u(cf.symbols.CFDataCreate(0n, P(secret), secret.length)))
+        const data = s.own(
+          u(cf.symbols.CFDataCreate(0n, P(secret), secret.length)),
+        )
         const base = query(s, service, account)
         rc = sec.symbols.SecItemDelete(s.dict(base)) as unknown as number
         if (rc !== 0 && rc !== NOT_FOUND) fail("replace", rc)
         rc = sec.symbols.SecItemAdd(
-          s.dict([...base, [s.str("v_Data"), data], [s.str("sacc"), access[0]]]),
+          s.dict([
+            ...base,
+            [s.str("v_Data"), data],
+            [s.str("sacc"), access[0]],
+          ]),
           0n,
         ) as unknown as number
         if (rc !== 0) fail("write", rc)

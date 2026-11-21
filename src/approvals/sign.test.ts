@@ -56,7 +56,8 @@ describe("signed answers", () => {
       '{"a":[{"c":null}],"b":1}',
     ))
 
-  it("verifies a good answer", () => assert.deepEqual(check(answer()), { ok: true }))
+  it("verifies a good answer", () =>
+    assert.deepEqual(check(answer()), { ok: true }))
 
   it("fails when the decision is changed after signing", () =>
     assert.deepEqual(check(answer({ decision: "deny" })), {
@@ -65,7 +66,10 @@ describe("signed answers", () => {
     }))
 
   it("fails when the level is raised after signing", () =>
-    assert.equal((check(answer({ level: 2 })) as { reason: string }).reason, "bad_signature"))
+    assert.equal(
+      (check(answer({ level: 2 })) as { reason: string }).reason,
+      "bad_signature",
+    ))
 
   it("fails with a key it does not trust", () => {
     const other = newSigningKey()
@@ -92,22 +96,33 @@ describe("signed answers", () => {
     ))
 
   it("fails on a time outside send time and now", () => {
-    const late = answer({ ...signAnswer(key, {
-      id: request.id,
-      request_hash: requestHash(request),
-      decision: "approve",
-      level: 1,
-      mode: "afk",
-      approver: "42",
-      decided_at: "2026-11-21T13:00:00.000Z",
-    }) })
+    const late = answer({
+      ...signAnswer(key, {
+        id: request.id,
+        request_hash: requestHash(request),
+        decision: "approve",
+        level: 1,
+        mode: "afk",
+        approver: "42",
+        decided_at: "2026-11-21T13:00:00.000Z",
+      }),
+    })
     assert.deepEqual(check(late), { ok: false, reason: "time" })
   })
 
   it("fails below the required level, outside afk mode, and when spent", () => {
-    assert.deepEqual(check(answer(), { minLevel: 2 }), { ok: false, reason: "level" })
-    assert.deepEqual(check(answer(), { mode: "present" }), { ok: false, reason: "mode" })
-    assert.deepEqual(check(answer(), { spent: () => true }), { ok: false, reason: "spent" })
+    assert.deepEqual(check(answer(), { minLevel: 2 }), {
+      ok: false,
+      reason: "level",
+    })
+    assert.deepEqual(check(answer(), { mode: "present" }), {
+      ok: false,
+      reason: "mode",
+    })
+    assert.deepEqual(check(answer(), { spent: () => true }), {
+      ok: false,
+      reason: "spent",
+    })
   })
 
   it("accepts both keys during a rotation overlap, then only the new one", () => {

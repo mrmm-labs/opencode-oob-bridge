@@ -16,7 +16,7 @@ The bridge SHALL serve approval requests on a unix socket in a directory with mo
 
 ### Requirement: Every caller proves who it is
 
-A request SHALL carry the caller's name, a timestamp and an HMAC over the method, path, timestamp and body hash with the caller's key. The bridge SHALL refuse an unknown caller, a bad HMAC and a timestamp more than 60 seconds off.
+A request SHALL carry the caller's name, a timestamp and an HMAC over the method, path, timestamp and body hash with the caller's key. The bridge SHALL refuse an unknown caller, a bad HMAC and a timestamp more than 60 seconds off. The proof of a POST SHALL work once inside its window; a repeated read or withdrawal changes nothing and is not refused.
 
 #### Scenario: Bad MAC
 
@@ -27,6 +27,11 @@ A request SHALL carry the caller's name, a timestamp and an HMAC over the method
 
 - **WHEN** a request's timestamp is 90 seconds old
 - **THEN** it is refused
+
+#### Scenario: Replayed POST
+
+- **WHEN** the same signed POST is sent a second time inside the window
+- **THEN** it is refused as unauthenticated
 
 ### Requirement: A class not configured for the caller is refused
 
@@ -72,7 +77,7 @@ In `afk` mode the phone SHALL be asked first. In `present` mode the bridge SHALL
 
 ### Requirement: Only the paired operator counts
 
-The bridge SHALL accept an approval tap or code only from the Telegram user id stored at pairing, not from the chat id. Other members of a group SHALL be ignored.
+The bridge SHALL accept an approval tap or code only from the Telegram user id stored at pairing, not from the chat id. Other members of a group SHALL be ignored. A chat paired before the user id was stored counts its owner only when it is a private chat (the chat id is then the user id); a group paired earlier has no operator until it is paired again, and requests fail as `not_paired`.
 
 #### Scenario: Another member taps
 
@@ -109,7 +114,7 @@ An answer SHALL be signed with Ed25519 over a string that holds the answer versi
 
 ### Requirement: Keys live in the Keychain and nowhere else
 
-The signing key and the TOTP seed SHALL be stored in the macOS Keychain through the Security framework from the host process, with an access rule that names the host executable only. They SHALL NOT be written to a file or passed to the `security` command. When the Keychain cannot be used the service SHALL report `unavailable` and SHALL NOT fall back to another store.
+The signing key and the TOTP seed SHALL be stored in the macOS Keychain through the Security framework from the host process, with an access rule that names the host executable only. They SHALL NOT be written to a file or passed to the `security` command. When the Keychain cannot be used the service SHALL report `unavailable` and SHALL NOT fall back to another store. Keys and the seed SHALL be created, replaced or deleted only by a command typed in the TUI at the Mac, never by the socket or a chat. A read made by the server SHALL NOT raise a macOS prompt that would block it: it fails, and an `unlock` command typed in the TUI makes the prompt appear at the Mac.
 
 #### Scenario: Keychain unusable
 
@@ -164,7 +169,7 @@ Pending requests SHALL be kept in memory. A restart SHALL expire them with the r
 
 ### Requirement: Channels declare what they can prove
 
-A class SHALL list the channels it accepts, default Telegram only. A channel SHALL declare whether it has buttons, whether it identifies the approver and whether it takes typed text, and a request SHALL fail at once with `unavailable` when no accepted channel can reach the level.
+A class SHALL list the channels it accepts, default Telegram only. A channel SHALL declare whether it has buttons, whether it identifies the approver and whether it takes typed text, and a request SHALL fail at once with `unavailable` when no accepted channel can reach the level. Telegram is the only channel that declares approvals in this release; ntfy declares none, because a tap there proves nobody and its buttons would need a listener (the weak L1 path of the document is deferred).
 
 #### Scenario: ntfy for an L2 class
 
@@ -173,7 +178,7 @@ A class SHALL list the channels it accepts, default Telegram only. A channel SHA
 
 ### Requirement: Phone permission replies use the levels
 
-When approvals are enabled and `permissions.remote` is not off, a phone Allow once SHALL need the level of the class `permission.<action>` and Always SHALL need level 2.
+When approvals are enabled and `permissions.remote` is not off, a phone Allow once SHALL need the level of the class `permission.<action>` and Always SHALL need level 2. Without such a class, read-like actions (read, list, glob, grep, webfetch, websearch, codesearch, lsp, skill) SHALL be level 1 and every other action level 2. Only the paired operator's tap SHALL count. A client of the core API, which cannot type a code in the chat, SHALL be refused for level 2.
 
 #### Scenario: Always from the phone
 

@@ -28,7 +28,11 @@ const T0 = Date.parse("2026-11-21T12:00:00.000Z")
 class Chan implements ChannelPort {
   id = "tg"
   type = "telegram"
-  caps: ChannelPort["caps"] = { buttons: true, approver: "verified", replyText: true }
+  caps: ChannelPort["caps"] = {
+    buttons: true,
+    approver: "verified",
+    replyText: true,
+  }
   isUp = true
   op: string | undefined = "42"
   sent: ApprovalView[] = []
@@ -79,7 +83,12 @@ const cfg = (over: Partial<ApprovalsConfig> = {}): ApprovalsConfig => ({
 })
 
 function setup(over: Partial<ApprovalsConfig> = {}) {
-  const t = { now: T0, mode: "afk" as Mode, seed: SEED as Uint8Array | undefined, ready: true }
+  const t = {
+    now: T0,
+    mode: "afk" as Mode,
+    seed: SEED as Uint8Array | undefined,
+    ready: true,
+  }
   const key: SigningKey = newSigningKey()
   const ch = new Chan()
   const store = new RecordStore()
@@ -112,14 +121,30 @@ const body = (over: Record<string, unknown> = {}) => ({
   reason: "deploy",
   ...over,
 })
-type Created = { id: string; state: string; request: RequestRecord; answer?: Answer; reason_code?: string; request_hash: string }
-const made = async (s: ReturnType<typeof setup>, over: Record<string, unknown> = {}, caller = "secrets-tool") => {
+type Created = {
+  id: string
+  state: string
+  request: RequestRecord
+  answer?: Answer
+  reason_code?: string
+  request_hash: string
+}
+const made = async (
+  s: ReturnType<typeof setup>,
+  over: Record<string, unknown> = {},
+  caller = "secrets-tool",
+) => {
   const r = await s.a.create(caller, body(over))
   return { r, b: r.body as Created }
 }
-const tap = (s: ReturnType<typeof setup>, id: string, action: "approve" | "deny" = "approve", userId = "42") =>
-  s.a.tap({ channel: "tg", userId, id, nonce: "nonce", action })
-const err = (r: { status: number; body: unknown }) => (r.body as { error: string }).error
+const tap = (
+  s: ReturnType<typeof setup>,
+  id: string,
+  action: "approve" | "deny" = "approve",
+  userId = "42",
+) => s.a.tap({ channel: "tg", userId, id, nonce: "nonce", action })
+const err = (r: { status: number; body: unknown }) =>
+  (r.body as { error: string }).error
 
 describe("approvals: refusals", () => {
   it("is off unless enabled", async () => {
@@ -130,7 +155,11 @@ describe("approvals: refusals", () => {
   it("refuses an unlisted class and a class not listed for the caller", async () => {
     const s = setup()
     assert.equal((await made(s, { action_class: "nope" })).r.status, 403)
-    const r = await made(s, { action_class: "secrets.write", idempotency_key: "k2" }, "other")
+    const r = await made(
+      s,
+      { action_class: "secrets.write", idempotency_key: "k2" },
+      "other",
+    )
     assert.equal(err(r.r), "forbidden_class")
     assert.equal(s.ch.sent.length, 0)
   })
@@ -151,7 +180,10 @@ describe("approvals: refusals", () => {
 
   it("never lets a request ask for a lower level than its class", async () => {
     const s = setup()
-    const r = await made(s, { action_class: "secrets.write", required_level: 1 })
+    const r = await made(s, {
+      action_class: "secrets.write",
+      required_level: 1,
+    })
     assert.equal(r.r.status, 400)
   })
 
@@ -169,23 +201,49 @@ describe("approvals: refusals", () => {
     const s = setup()
     s.t.mode = "present"
     const r = await made(s)
-    assert.deepEqual(r.r.body, { error: "needs_local", retryable: false, reason: "present" })
+    assert.deepEqual(r.r.body, {
+      error: "needs_local",
+      retryable: false,
+      reason: "present",
+    })
     assert.equal(s.ch.sent.length, 0)
   })
 
   it("fails at once when no accepted channel can reach the level", async () => {
     const s = setup()
-    assert.equal(err((await made(s, { action_class: "ntfy.only" })).r), "unavailable")
+    assert.equal(
+      err((await made(s, { action_class: "ntfy.only" })).r),
+      "unavailable",
+    )
     s.t.seed = undefined
-    assert.equal(err((await made(s, { action_class: "secrets.write", idempotency_key: "k3" })).r), "unavailable")
+    assert.equal(
+      err(
+        (
+          await made(s, {
+            action_class: "secrets.write",
+            idempotency_key: "k3",
+          })
+        ).r,
+      ),
+      "unavailable",
+    )
     s.ch.isUp = false
-    assert.equal(err((await made(s, { idempotency_key: "k4" })).r), "unavailable")
+    assert.equal(
+      err((await made(s, { idempotency_key: "k4" })).r),
+      "unavailable",
+    )
     s.ch.isUp = true
     s.t.ready = false
-    assert.equal(err((await made(s, { idempotency_key: "k5" })).r), "unavailable")
+    assert.equal(
+      err((await made(s, { idempotency_key: "k5" })).r),
+      "unavailable",
+    )
     s.t.ready = true
     s.ch.fail = true
-    assert.equal(err((await made(s, { idempotency_key: "k6" })).r), "unavailable")
+    assert.equal(
+      err((await made(s, { idempotency_key: "k6" })).r),
+      "unavailable",
+    )
   })
 
   it("says not_paired when the channel has no operator yet", async () => {
@@ -212,7 +270,7 @@ describe("approvals: L1", () => {
     s.t.now += 20_000
     const out = await tap(s, b.id)
     assert.equal(out.ok, true)
-    const got = (s.a.get("secrets-tool", b.id).body as Created)
+    const got = s.a.get("secrets-tool", b.id).body as Created
     assert.equal(got.state, "approved")
     const answer = got.answer!
     assert.equal(answer.decision, "approve")
@@ -247,16 +305,28 @@ describe("approvals: L1", () => {
     const { b } = await made(s)
     const out = await tap(s, b.id, "approve", "99")
     assert.equal(out.ok, false)
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "pending")
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "pending",
+    )
     assert.equal(s.ch.settled.length, 0)
   })
 
   it("ignores a tap with a wrong nonce", async () => {
     const s = setup()
     const { b } = await made(s)
-    const out = await s.a.tap({ channel: "tg", userId: "42", id: b.id, nonce: "other", action: "approve" })
+    const out = await s.a.tap({
+      channel: "tg",
+      userId: "42",
+      id: b.id,
+      nonce: "other",
+      action: "approve",
+    })
     assert.equal(out.ok, false)
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "pending")
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "pending",
+    )
   })
 
   it("denies at any level with no code asked", async () => {
@@ -285,7 +355,11 @@ describe("approvals: L1", () => {
   })
 
   it("caps the ttl per class and defaults it", async () => {
-    const s = setup({ classes: { "secrets.read": { level: 1, channels: ["telegram"], maxTtl: 60 } } })
+    const s = setup({
+      classes: {
+        "secrets.read": { level: 1, channels: ["telegram"], maxTtl: 60 },
+      },
+    })
     const { b } = await made(s, { ttl: 600 })
     const view = s.ch.sent[0]
     assert.equal(view.expiresAt - T0, 60_000)
@@ -294,7 +368,9 @@ describe("approvals: L1", () => {
 
   it("masks a token shape in the message", async () => {
     const s = setup()
-    await made(s, { scope_summary: "key ghp_abcdefghijklmnopqrstuvwxyz0123456789" })
+    await made(s, {
+      scope_summary: "key ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    })
     assert.doesNotMatch(s.ch.sent[0].scope, /ghp_abcdefghijklmnopqrstuvwxyz/)
   })
 })
@@ -318,7 +394,10 @@ describe("approvals: presence", () => {
     s.t.mode = "present"
     const out = await tap(s, b.id)
     assert.equal(out.ok, false)
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).reason_code, "present")
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).reason_code,
+      "present",
+    )
   })
 })
 
@@ -371,36 +450,60 @@ describe("approvals: idempotency, cooldown and limits", () => {
     const s = setup()
     const { b } = await made(s)
     await tap(s, b.id, "deny")
-    const other = await made(s, { idempotency_key: "k2", scope_summary: "item 9" })
+    const other = await made(s, {
+      idempotency_key: "k2",
+      scope_summary: "item 9",
+    })
     assert.equal(other.b.state, "pending")
   })
 
   it("allows 3 pending per caller and refuses the fourth", async () => {
     const s = setup()
-    for (const k of ["a", "b", "c"]) assert.equal((await made(s, { idempotency_key: k })).r.status, 201)
+    for (const k of ["a", "b", "c"])
+      assert.equal((await made(s, { idempotency_key: k })).r.status, 201)
     const r = await made(s, { idempotency_key: "d" })
     assert.equal(r.r.status, 429)
     assert.deepEqual(r.r.body, { error: "rate_limited", retryable: true })
-    assert.equal((await made(s, { idempotency_key: "e" }, "other")).r.status, 201)
+    assert.equal(
+      (await made(s, { idempotency_key: "e" }, "other")).r.status,
+      201,
+    )
   })
 
   it("allows 12 an hour per caller and a global cap", async () => {
     const s = setup({ limits: { pending: 99, perHour: 12, global: 14 } })
     for (let i = 0; i < 12; i++) {
-      const { b } = await made(s, { idempotency_key: `k${i}`, scope_summary: `s${i}` })
+      const { b } = await made(s, {
+        idempotency_key: `k${i}`,
+        scope_summary: `s${i}`,
+      })
       await tap(s, b.id)
     }
     assert.equal((await made(s, { idempotency_key: "x" })).r.status, 429)
     for (let i = 0; i < 2; i++)
-      assert.equal((await made(s, { idempotency_key: `o${i}`, scope_summary: `o${i}` }, "other")).r.status, 201)
-    assert.equal((await made(s, { idempotency_key: "o9", scope_summary: "o9" }, "other")).r.status, 429)
+      assert.equal(
+        (
+          await made(
+            s,
+            { idempotency_key: `o${i}`, scope_summary: `o${i}` },
+            "other",
+          )
+        ).r.status,
+        201,
+      )
+    assert.equal(
+      (await made(s, { idempotency_key: "o9", scope_summary: "o9" }, "other")).r
+        .status,
+      429,
+    )
     s.t.now += 3_600_001
     assert.equal((await made(s, { idempotency_key: "late" })).r.status, 201)
   })
 })
 
 describe("approvals: L2", () => {
-  const l2 = (s: ReturnType<typeof setup>) => made(s, { action_class: "secrets.write" })
+  const l2 = (s: ReturnType<typeof setup>) =>
+    made(s, { action_class: "secrets.write" })
 
   it("asks for a code after Approve, and approves on a valid one", async () => {
     const s = setup()
@@ -408,7 +511,10 @@ describe("approvals: L2", () => {
     const out = await tap(s, b.id)
     assert.equal(out.next, "code")
     assert.equal(s.ch.asked.length, 1)
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "awaiting_code")
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "awaiting_code",
+    )
     const typed = await s.a.typed({
       channel: "tg",
       userId: "42",
@@ -420,7 +526,10 @@ describe("approvals: L2", () => {
     assert.equal(got.state, "approved")
     assert.equal(got.answer?.level, 2)
     assert.ok(s.ch.removed.includes("u1"))
-    assert.ok(s.ch.removed.includes("c1") || s.ch.removed.some((x) => x.startsWith("c")))
+    assert.ok(
+      s.ch.removed.includes("c1") ||
+        s.ch.removed.some((x) => x.startsWith("c")),
+    )
   })
 
   it("denies after three wrong codes with bad_code", async () => {
@@ -429,7 +538,12 @@ describe("approvals: L2", () => {
     await tap(s, b.id)
     for (let i = 0; i < 3; i++) {
       assert.equal(
-        await s.a.typed({ channel: "tg", userId: "42", text: "000000", messageRef: `u${i}` }),
+        await s.a.typed({
+          channel: "tg",
+          userId: "42",
+          text: "000000",
+          messageRef: `u${i}`,
+        }),
         "consumed",
       )
     }
@@ -445,33 +559,80 @@ describe("approvals: L2", () => {
     await tap(s, one.b.id)
     const c = code(SEED, step(T0))
     await s.a.typed({ channel: "tg", userId: "42", text: c })
-    assert.equal((s.a.get("secrets-tool", one.b.id).body as Created).state, "approved")
-    const two = await made(s, { action_class: "secrets.write", idempotency_key: "k2", scope_summary: "other" })
+    assert.equal(
+      (s.a.get("secrets-tool", one.b.id).body as Created).state,
+      "approved",
+    )
+    const two = await made(s, {
+      action_class: "secrets.write",
+      idempotency_key: "k2",
+      scope_summary: "other",
+    })
     await tap(s, two.b.id)
     await s.a.typed({ channel: "tg", userId: "42", text: c })
-    assert.equal((s.a.get("secrets-tool", two.b.id).body as Created).state, "awaiting_code")
-    await s.a.typed({ channel: "tg", userId: "42", text: code(SEED, step(T0) + 1) })
-    assert.equal((s.a.get("secrets-tool", two.b.id).body as Created).state, "approved")
+    assert.equal(
+      (s.a.get("secrets-tool", two.b.id).body as Created).state,
+      "awaiting_code",
+    )
+    await s.a.typed({
+      channel: "tg",
+      userId: "42",
+      text: code(SEED, step(T0) + 1),
+    })
+    assert.equal(
+      (s.a.get("secrets-tool", two.b.id).body as Created).state,
+      "approved",
+    )
   })
 
   it("accepts one step of tolerance and no more", async () => {
     const s = setup()
     const { b } = await l2(s)
     await tap(s, b.id)
-    await s.a.typed({ channel: "tg", userId: "42", text: code(SEED, step(T0) - 2) })
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "awaiting_code")
-    await s.a.typed({ channel: "tg", userId: "42", text: code(SEED, step(T0) - 1) })
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "approved")
+    await s.a.typed({
+      channel: "tg",
+      userId: "42",
+      text: code(SEED, step(T0) - 2),
+    })
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "awaiting_code",
+    )
+    await s.a.typed({
+      channel: "tg",
+      userId: "42",
+      text: code(SEED, step(T0) - 1),
+    })
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "approved",
+    )
   })
 
   it("ignores digits typed by someone else, or when nothing waits for a code", async () => {
     const s = setup()
-    assert.equal(await s.a.typed({ channel: "tg", userId: "42", text: "123456" }), "ignored")
+    assert.equal(
+      await s.a.typed({ channel: "tg", userId: "42", text: "123456" }),
+      "ignored",
+    )
     const { b } = await l2(s)
     await tap(s, b.id)
-    assert.equal(await s.a.typed({ channel: "tg", userId: "99", text: code(SEED, step(T0)) }), "ignored")
-    assert.equal(await s.a.typed({ channel: "tg", userId: "42", text: "hello" }), "ignored")
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "awaiting_code")
+    assert.equal(
+      await s.a.typed({
+        channel: "tg",
+        userId: "99",
+        text: code(SEED, step(T0)),
+      }),
+      "ignored",
+    )
+    assert.equal(
+      await s.a.typed({ channel: "tg", userId: "42", text: "hello" }),
+      "ignored",
+    )
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "awaiting_code",
+    )
   })
 
   it("expires while waiting for a code", async () => {
@@ -480,7 +641,10 @@ describe("approvals: L2", () => {
     await tap(s, b.id)
     s.t.now += 130_000
     await s.a.sweep()
-    assert.equal((s.a.get("secrets-tool", b.id).body as Created).state, "expired")
+    assert.equal(
+      (s.a.get("secrets-tool", b.id).body as Created).state,
+      "expired",
+    )
     assert.ok(s.ch.removed.some((x) => x.startsWith("c")))
   })
 
@@ -492,7 +656,8 @@ describe("approvals: L2", () => {
     assert.equal(await p, "approved")
     const q = s.a.codeGate({ channel: "tg", summary: "bash rm" })
     await new Promise((r) => setImmediate(r))
-    for (let i = 0; i < 3; i++) await s.a.typed({ channel: "tg", userId: "42", text: "000000" })
+    for (let i = 0; i < 3; i++)
+      await s.a.typed({ channel: "tg", userId: "42", text: "000000" })
     assert.equal(await q, "denied")
     const e = s.a.codeGate({ channel: "tg", summary: "bash rm", ttl: 10 })
     await new Promise((r) => setImmediate(r))
@@ -500,7 +665,10 @@ describe("approvals: L2", () => {
     await s.a.sweep()
     assert.equal(await e, "expired")
     s.t.seed = undefined
-    assert.equal(await s.a.codeGate({ channel: "tg", summary: "x" }), "unavailable")
+    assert.equal(
+      await s.a.codeGate({ channel: "tg", summary: "x" }),
+      "unavailable",
+    )
   })
 })
 
@@ -523,13 +691,19 @@ describe("approvals: restart, events and status", () => {
     const s = setup()
     const { b } = await made(s)
     const ev = s.a.events("secrets-tool", b.id)!
-    assert.deepEqual(ev.replay.map((e) => e.type), ["pending"])
+    assert.deepEqual(
+      ev.replay.map((e) => e.type),
+      ["pending"],
+    )
     const seen: string[] = []
     ev.subscribe((e) => seen.push(e.type))
     await tap(s, b.id)
     assert.deepEqual(seen, ["answer"])
     const late = s.a.events("secrets-tool", b.id, 1)!
-    assert.deepEqual(late.replay.map((e) => e.type), ["answer"])
+    assert.deepEqual(
+      late.replay.map((e) => e.type),
+      ["answer"],
+    )
     assert.equal(s.a.events("other", b.id), undefined)
   })
 

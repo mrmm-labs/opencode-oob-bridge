@@ -176,6 +176,7 @@ export async function fakeTelegram(token = "123456:TESTTOKEN") {
       replyTo?: number,
       thread?: number,
       chatExtra: Record<string, unknown> = {},
+      sender?: number,
     ) {
       updates.push({
         update_id: ++updateSeq,
@@ -183,6 +184,7 @@ export async function fakeTelegram(token = "123456:TESTTOKEN") {
           message_id: ++messageSeq,
           date: Math.floor(Date.now() / 1000),
           text,
+          from: { id: sender ?? chat },
           chat: { id: chat, ...chatExtra },
           message_thread_id: thread,
           reply_to_message: replyTo ? { message_id: replyTo } : undefined,
@@ -220,12 +222,19 @@ export async function fakeTelegram(token = "123456:TESTTOKEN") {
       })
       wake()
     },
-    callback(chat: number, messageID: number, data: string, thread?: number) {
+    callback(
+      chat: number,
+      messageID: number,
+      data: string,
+      thread?: number,
+      sender?: number,
+    ) {
       updates.push({
         update_id: ++updateSeq,
         callback_query: {
           id: `cbq${updateSeq}`,
           data,
+          from: { id: sender ?? chat },
           message: {
             message_id: messageID,
             message_thread_id: thread,

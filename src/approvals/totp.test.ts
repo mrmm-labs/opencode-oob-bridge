@@ -41,7 +41,7 @@ describe("totp", () => {
     assert.equal(seed.length, 20)
     assert.match(
       otpauth(seed, "me", "OpenCode OOB"),
-      /^otpauth:\/\/totp\/OpenCode%20OOB:me\?secret=[A-Z2-7]+&issuer=OpenCode%20OOB&/,
+      /^otpauth:\/\/totp\/OpenCode%20OOB:me\?secret=[A-Z2-7]{32}&issuer=OpenCode%20OOB$/,
     )
   })
 })

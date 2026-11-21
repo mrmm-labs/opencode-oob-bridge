@@ -64,7 +64,13 @@ export const requestHash = (r: RequestRecord): string =>
 export const signedString = (
   a: Pick<
     Answer,
-    "id" | "request_hash" | "decision" | "level" | "mode" | "approver" | "decided_at"
+    | "id"
+    | "request_hash"
+    | "decision"
+    | "level"
+    | "mode"
+    | "approver"
+    | "decided_at"
   >,
 ): string =>
   [
@@ -95,9 +101,7 @@ export function newSigningKey(): SigningKey {
 
 export const kidOf = (publicPem: string): string =>
   createHash("sha256")
-    .update(
-      createPublicKey(publicPem).export({ type: "spki", format: "der" }),
-    )
+    .update(createPublicKey(publicPem).export({ type: "spki", format: "der" }))
     .digest("hex")
     .slice(0, 16)
 

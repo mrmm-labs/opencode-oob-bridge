@@ -18,6 +18,11 @@ import {
   validMenu,
   type MenuCommand,
 } from "../commandmenu.ts"
+import type {
+  ApprovalHandler,
+  ApprovalView,
+  Settled,
+} from "../approvals/types.ts"
 import { filterSecrets } from "../filter.ts"
 import { parseReply, type Question } from "../inbound.ts"
 import { log } from "../logger.ts"
@@ -37,6 +42,8 @@ import { closeFences, splitReply } from "./telegram-markdown.ts"
 import {
   esc,
   keycap,
+  renderApproval,
+  renderApprovalCode,
   renderPush,
   renderStatus,
   renderStepper,
@@ -131,8 +138,10 @@ export type TelegramOptions = {
   offsetFile?: string
   /** Where session topics of a forum chat are remembered across restarts. */
   topicsFile?: string
-  /** Called with the chat id once pairing succeeds, to store it. */
-  onPaired?: (chatId: string) => void
+  /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
+  operator?: string
+  /** Called with the chat id, and the id of the person who paired, once pairing succeeds, to store them. */
+  onPaired?: (chatId: string, userId?: string) => void
   /** Keeps the key of the command list last registered, across restarts. */
   menuStore?: { get(): string | undefined; set(key: string): void }
   fetch?: typeof fetch
@@ -168,6 +177,7 @@ type Message = MediaMessage & {
   text?: string
   caption?: string
   chat: { id: number; title?: string; is_forum?: boolean }
+  from?: { id: number }
   message_thread_id?: number
   reply_to_message?: { message_id: number }
 }
@@ -178,6 +188,7 @@ type Update = {
   callback_query?: {
     id: string
     data?: string
+    from?: { id: number }
     message?: {
       message_id: number
       message_thread_id?: number
@@ -266,12 +277,15 @@ export class TelegramConnector implements Connector {
     pairing: true,
     inboundPrompt: true,
     foldable: true,
+    approvals: { buttons: true, approver: "verified", replyText: true },
   }
   readonly id: string
   readonly notify: { finished: boolean; failed: boolean }
   enabled: boolean
 
   private chatId: string | undefined
+  private userId: string | undefined
+  private approvals: ApprovalHandler | undefined
   private connected: boolean | undefined
   private lastError: string | undefined
   private onInbound: OnInbound | undefined
@@ -356,6 +370,7 @@ export class TelegramConnector implements Connector {
     this.id = opts.name ?? "telegram"
     this.enabled = enabled
     this.chatId = opts.chatId
+    this.userId = opts.operator
     this.fetch = opts.fetch ?? globalThis.fetch
     this.now = opts.now ?? Date.now
     this.notify = {
@@ -1195,10 +1210,23 @@ export class TelegramConnector implements Connector {
     if (media) return this.onMedia(u, m, media)
     const text = m.text?.trim()
     if (!text) return
-    if (await this.tryPair(m.chat, text)) return
+    if (await this.tryPair(m.chat, text, m.from?.id)) return
     if (String(m.chat.id) !== this.chatId) {
       this.rejected("message")
       return log("telegram_ignored", { kind: "message" })
+    }
+    // A code typed for an approval is the operator's alone and never reaches a session.
+    if (this.approvals && m.from && /^\d{6}$/.test(text)) {
+      const r = await this.approvals.typed({
+        channel: this.id,
+        userId: String(m.from.id),
+        text,
+        messageRef: String(m.message_id),
+        replyTo: m.reply_to_message
+          ? String(m.reply_to_message.message_id)
+          : undefined,
+      })
+      if (r === "consumed") return
     }
     const base = {
       kind: "answer",
@@ -1370,6 +1398,7 @@ export class TelegramConnector implements Connector {
   private async tryPair(
     chat: NonNullable<Update["message"]>["chat"],
     text: string,
+    from?: number,
   ): Promise<boolean> {
     const pr = this.pairing
     const code = /^(?:\/start(?:@\w+)?\s+)?([A-Za-z0-9]{6})$/.exec(text)?.[1]
@@ -1377,7 +1406,8 @@ export class TelegramConnector implements Connector {
     const id = String(chat.id)
     this.chatId = id
     this.forum = chat.is_forum === true ? true : undefined
-    this.opts.onPaired?.(id)
+    this.userId = from === undefined ? undefined : String(from)
+    this.opts.onPaired?.(id, this.userId)
     pr.finish(id)
     void this.register(true)
     const what = chat.title
@@ -1395,6 +1425,107 @@ export class TelegramConnector implements Connector {
     return true
   }
 
+  private async onApprovalTap(
+    cb: NonNullable<Update["callback_query"]>,
+    id: string,
+    nonce: string,
+    approve: boolean,
+  ): Promise<void> {
+    if (!this.approvals || cb.from === undefined)
+      return this.toast(cb.id, "Approvals are off.")
+    const r = await this.approvals.tap({
+      channel: this.id,
+      userId: String(cb.from.id),
+      id,
+      nonce,
+      action: approve ? "approve" : "deny",
+    })
+    return this.toast(cb.id, r.text)
+  }
+
+  operator(): string | undefined {
+    if (this.userId !== undefined) return this.userId
+    // The id of a private chat is the id of its person.
+    return this.chatId && Number(this.chatId) > 0 ? this.chatId : undefined
+  }
+
+  onApproval(h: ApprovalHandler): void {
+    this.approvals = h
+  }
+
+  async approvalRequest(v: ApprovalView): Promise<string | undefined> {
+    if (!this.chatId) return undefined
+    try {
+      const m = await this.call<{ message_id: number }>("sendMessage", {
+        chat_id: this.chatId,
+        text: renderApproval(v, undefined, this.now()),
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "Approve", callback_data: `ap:${v.id}:${v.nonce}:y` },
+              { text: "Deny", callback_data: `ap:${v.id}:${v.nonce}:n` },
+            ],
+          ],
+        },
+      })
+      return String(m.message_id)
+    } catch (err) {
+      this.fail(err)
+      return undefined
+    }
+  }
+
+  async approvalCode(v: ApprovalView): Promise<string | undefined> {
+    if (!this.chatId) return undefined
+    try {
+      const m = await this.call<{ message_id: number }>("sendMessage", {
+        chat_id: this.chatId,
+        text: renderApprovalCode(v),
+        parse_mode: "HTML",
+        reply_markup: { force_reply: true, input_field_placeholder: "123456" },
+      })
+      return String(m.message_id)
+    } catch (err) {
+      this.fail(err)
+      return undefined
+    }
+  }
+
+  async approvalSettle(
+    ref: string,
+    v: ApprovalView,
+    s: Settled,
+  ): Promise<void> {
+    if (!this.chatId) return
+    try {
+      await this.call("editMessageText", {
+        chat_id: this.chatId,
+        message_id: Number(ref),
+        text: renderApproval(v, s, this.now()),
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_markup: { inline_keyboard: [] },
+      })
+    } catch (err) {
+      if (!/not modified|not found/i.test((err as Error).message))
+        this.fail(err)
+    }
+  }
+
+  async deleteMessage(ref: string): Promise<void> {
+    if (!this.chatId) return
+    try {
+      await this.call("deleteMessage", {
+        chat_id: this.chatId,
+        message_id: Number(ref),
+      })
+    } catch (err) {
+      log("telegram_delete_failed", { message: (err as Error).message })
+    }
+  }
+
   private async onCallback(
     cb: NonNullable<Update["callback_query"]>,
   ): Promise<void> {
@@ -1402,6 +1533,10 @@ export class TelegramConnector implements Connector {
       this.rejected("callback")
       return log("telegram_ignored", { kind: "callback" })
     }
+    const ap = /^ap:([0-9A-Z]{26}):([A-Za-z0-9_-]{8}):(y|n)$/.exec(
+      cb.data ?? "",
+    )
+    if (ap) return this.onApprovalTap(cb, ap[1], ap[2], ap[3] === "y")
     if (cb.data === "chatoff") {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
@@ -1445,6 +1580,7 @@ export class TelegramConnector implements Connector {
         decision,
         text: decision,
         from: { connector: this.id, chat: String(cb.message.chat.id) },
+        userId: cb.from ? String(cb.from.id) : undefined,
         inline: true,
       })
     }
@@ -2364,6 +2500,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
 
   create(env, o) {
     const stored = env.settings.get().chatId
+    const operator = env.settings.get().userId
     return new TelegramConnector({
       name: env.name,
       token: lazyToken(o.token),
@@ -2379,7 +2516,8 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       media: o.media,
       offsetFile: join(env.dir, `${env.name}-offset.json`),
       topicsFile: join(env.dir, `${env.name}-topics.json`),
-      onPaired: (chatId) => env.settings.set({ chatId }),
+      operator: typeof operator === "string" ? operator : undefined,
+      onPaired: (chatId, userId) => env.settings.set({ chatId, userId }),
       menuStore: {
         get: () => {
           const k = env.settings.get().menu

@@ -16,36 +16,9 @@ import {
 } from "./sign.ts"
 import { RecordStore, sha, terminal, type Rec, type State } from "./store.ts"
 import { match } from "./totp.ts"
+import type { ApprovalView, ChannelCaps, Settled, TapResult } from "./types.ts"
 
-export type ChannelCaps = {
-  buttons: boolean
-  approver: "verified" | "none"
-  replyText: boolean
-}
-
-/** What a channel shows about a request. Already masked. */
-export type ApprovalView = {
-  id: string
-  short: string
-  nonce: string
-  caller: string
-  requester: { session_id?: string; agent?: string; tool?: string }
-  action_class: string
-  level: number
-  scope: string
-  reason: string
-  expiresAt: number
-  /** Set on a view that asks for a code only. */
-  code?: boolean
-}
-
-export type Settled = {
-  decision: Decision
-  level: number
-  reason?: string
-  /** Who answered. */
-  by?: string
-}
+export type { ApprovalView, ChannelCaps, Settled, TapResult }
 
 export interface ChannelPort {
   id: string
@@ -124,8 +97,6 @@ type Live = {
   events: Ev[]
   subs: Set<(e: Ev) => void>
 }
-
-export type TapResult = { ok: boolean; text: string; next?: "code" }
 
 const str = (v: unknown, max: number) =>
   typeof v === "string" && v.length <= max ? v : undefined
@@ -229,14 +200,26 @@ export class Approvals {
       ttlIn !== undefined &&
       !(typeof ttlIn === "number" && Number.isInteger(ttlIn) && ttlIn >= 10)
     )
-      return fail(400, "invalid_request", false, { detail: "ttl is seconds, 10 or more" })
+      return fail(400, "invalid_request", false, {
+        detail: "ttl is seconds, 10 or more",
+      })
     const asked = b.required_level
     if (asked !== undefined && asked !== 1 && asked !== 2 && asked !== 3)
-      return fail(400, "invalid_request", false, { detail: "required_level is 1, 2 or 3" })
+      return fail(400, "invalid_request", false, {
+        detail: "required_level is 1, 2 or 3",
+      })
 
     const now = this.d.now()
     const bodyHash = sha(
-      JSON.stringify([key, cls, scope, reason, requester, ttlIn ?? null, asked ?? null]),
+      JSON.stringify([
+        key,
+        cls,
+        scope,
+        reason,
+        requester,
+        ttlIn ?? null,
+        asked ?? null,
+      ]),
     )
     const prior = this.d.store.get(caller, key)
     if (prior) {
@@ -250,7 +233,8 @@ export class Approvals {
       return fail(403, "forbidden_class")
     if (asked !== undefined && asked < c.level)
       return fail(400, "invalid_request", false, {
-        detail: "a request may ask for a higher level than its class, never a lower one",
+        detail:
+          "a request may ask for a higher level than its class, never a lower one",
       })
     const level = Math.max(c.level, asked ?? 0)
     if (level >= 3) return fail(409, "needs_local", false, { reason: "level" })
@@ -260,7 +244,10 @@ export class Approvals {
 
     const scopeHash = sha(scope)
     const id = this.d.id?.() ?? ulid(now)
-    const ttl = Math.min((ttlIn as number | undefined) ?? cfg.defaultTtl, c.maxTtl)
+    const ttl = Math.min(
+      (ttlIn as number | undefined) ?? cfg.defaultTtl,
+      c.maxTtl,
+    )
     const record: RequestRecord = {
       id,
       caller,
@@ -294,10 +281,14 @@ export class Approvals {
     }
 
     const lim = cfg.limits
-    const open = [...this.live.values()].filter((l) => l.rec.caller === caller).length
+    const open = [...this.live.values()].filter(
+      (l) => l.rec.caller === caller,
+    ).length
     const hour = this.d.store
       .all()
-      .filter((r) => now - r.createdAt < 3_600_000 && r.reasonCode !== "cooldown")
+      .filter(
+        (r) => now - r.createdAt < 3_600_000 && r.reasonCode !== "cooldown",
+      )
     if (
       open >= lim.pending ||
       hour.filter((r) => r.caller === caller).length >= lim.perHour ||
@@ -308,7 +299,9 @@ export class Approvals {
     const seed = level >= 2 ? await this.d.seed() : undefined
     const wanted = this.d
       .channels()
-      .filter((ch) => c.channels.includes(ch.id) || c.channels.includes(ch.type))
+      .filter(
+        (ch) => c.channels.includes(ch.id) || c.channels.includes(ch.type),
+      )
     const ch = wanted.find(
       (x) =>
         x.up() &&
@@ -331,13 +324,28 @@ export class Approvals {
     const ref = await ch.request(l.view)
     if (!ref) {
       this.live.delete(id)
-      this.log("approval_undelivered", { id, caller, class: cls, channel: ch.id })
+      this.log("approval_undelivered", {
+        id,
+        caller,
+        class: cls,
+        channel: ch.id,
+      })
       return fail(503, "unavailable", true)
     }
     rec.channel.ref = ref
     this.d.store.put(rec)
-    this.emit(l, "pending", { id, state: "pending", expires_at: iso(rec.expiresAt) })
-    this.log("approval_created", { id, caller, class: cls, level, channel: ch.id })
+    this.emit(l, "pending", {
+      id,
+      state: "pending",
+      expires_at: iso(rec.expiresAt),
+    })
+    this.log("approval_created", {
+      id,
+      caller,
+      class: cls,
+      level,
+      channel: ch.id,
+    })
     return { status: 201, body: this.view(rec) }
   }
 
@@ -413,9 +421,19 @@ export class Approvals {
     if (!rec || rec.caller !== caller) return undefined
     const l = this.live.get(id)
     const all: Ev[] = l?.events ?? [
-      { id: 1, type: "pending", data: { id, state: "pending", expires_at: iso(rec.expiresAt) } },
+      {
+        id: 1,
+        type: "pending",
+        data: { id, state: "pending", expires_at: iso(rec.expiresAt) },
+      },
       ...(terminal(rec.state)
-        ? [{ id: 2, type: "answer" as const, data: rec.answer ?? { id, state: rec.state } }]
+        ? [
+            {
+              id: 2,
+              type: "answer" as const,
+              data: rec.answer ?? { id, state: rec.state },
+            },
+          ]
         : []),
     ]
     return {
@@ -467,7 +485,11 @@ export class Approvals {
     const ch = this.d.channels().find((c) => c.id === t.channel)
     const op = ch?.operator()
     if (!ch || op === undefined || op !== t.userId) {
-      this.log("approval_ignored", { id: t.id, reason: "not_operator", channel: t.channel })
+      this.log("approval_ignored", {
+        id: t.id,
+        reason: "not_operator",
+        channel: t.channel,
+      })
       return { ok: false, text: "Only the paired operator can answer." }
     }
     const l = this.live.get(t.id)
@@ -475,11 +497,15 @@ export class Approvals {
       const rec = this.d.store.byId(t.id)
       return {
         ok: false,
-        text: rec && terminal(rec.state) ? `Already ${rec.state}.` : "Unknown request.",
+        text:
+          rec && terminal(rec.state)
+            ? `Already ${rec.state}.`
+            : "Unknown request.",
       }
     }
     const rec = l.rec
-    if (terminal(rec.state) || l.deciding) return { ok: false, text: `Already ${rec.state}.` }
+    if (terminal(rec.state) || l.deciding)
+      return { ok: false, text: `Already ${rec.state}.` }
     if (this.d.now() >= rec.expiresAt) {
       await this.finish(l, "expired", 0, "bridge", "timeout")
       return { ok: false, text: "Expired." }
@@ -516,12 +542,20 @@ export class Approvals {
     replyTo?: string
   }): Promise<"consumed" | "ignored"> {
     const ch = this.d.channels().find((c) => c.id === t.channel)
-    if (!ch || ch.operator() === undefined || ch.operator() !== t.userId) return "ignored"
+    if (!ch || ch.operator() === undefined || ch.operator() !== t.userId)
+      return "ignored"
     if (!/^\d{6}$/.test(t.text.trim())) return "ignored"
     const waiting = [
       ...[...this.live.values()]
-        .filter((l) => l.rec.state === "awaiting_code" && l.rec.channel?.id === t.channel)
-        .map((l) => ({ id: l.rec.request.id, ref: l.codeRef, at: l.rec.createdAt })),
+        .filter(
+          (l) =>
+            l.rec.state === "awaiting_code" && l.rec.channel?.id === t.channel,
+        )
+        .map((l) => ({
+          id: l.rec.request.id,
+          ref: l.codeRef,
+          at: l.rec.createdAt,
+        })),
       ...[...this.gates.entries()]
         .filter(([, g]) => g.channel.id === t.channel)
         .map(([id, g]) => ({ id, ref: g.codeRef, at: 0 })),
@@ -582,20 +616,22 @@ export class Approvals {
           expiresAt: this.d.now() + (o.ttl ?? 120) * 1000,
           code: true,
         }
-        return await new Promise<"approved" | "denied" | "expired">((resolve) => {
-          const gate = {
-            channel: ch,
-            view,
-            wrong: 0,
-            codeRef: undefined as string | undefined,
-            done: resolve,
-          }
-          this.gates.set(id, gate)
-          void ch.askCode(view).then((ref) => {
-            gate.codeRef = ref
-            if (!ref) this.endGate(id, "expired")
-          })
-        })
+        return await new Promise<"approved" | "denied" | "expired">(
+          (resolve) => {
+            const gate = {
+              channel: ch,
+              view,
+              wrong: 0,
+              codeRef: undefined as string | undefined,
+              done: resolve,
+            }
+            this.gates.set(id, gate)
+            void ch.askCode(view).then((ref) => {
+              gate.codeRef = ref
+              if (!ref) this.endGate(id, "expired")
+            })
+          },
+        )
       },
       () => "unavailable" as const,
     )
@@ -613,13 +649,13 @@ export class Approvals {
   async sweep(): Promise<void> {
     const now = this.d.now()
     const present = this.d.mode() === "present"
-    for (const l of [...this.live.values()]) {
+    for (const l of this.live.values()) {
       if (terminal(l.rec.state) || l.deciding) continue
       if (present) await this.finish(l, "expired", 0, "bridge", "present")
       else if (now >= l.rec.expiresAt)
         await this.finish(l, "expired", 0, "bridge", "timeout")
     }
-    for (const [id, g] of [...this.gates])
+    for (const [id, g] of this.gates)
       if (now >= g.view.expiresAt || present) this.endGate(id, "expired")
   }
 
@@ -663,11 +699,17 @@ export class Approvals {
         mode: rec.request.mode,
         approver,
         decided_at: decidedAt,
-        channel: rec.channel && { type: rec.channel.type, message_ref: rec.channel.ref },
+        channel: rec.channel && {
+          type: rec.channel.type,
+          message_ref: rec.channel.ref,
+        },
         ...(reasonCode ? { reason_code: reasonCode } : {}),
       })
     } catch (err) {
-      this.log("approval_unsigned", { id: rec.request.id, message: (err as Error).message })
+      this.log("approval_unsigned", {
+        id: rec.request.id,
+        message: (err as Error).message,
+      })
     }
     rec.state = answer ? state : "expired"
     rec.decidedAt = now
@@ -709,7 +751,11 @@ function same(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
-export function levels(ch: ChannelPort, signing: boolean, seed: boolean): number[] {
+export function levels(
+  ch: ChannelPort,
+  signing: boolean,
+  seed: boolean,
+): number[] {
   if (!signing || !ch.up() || ch.operator() === undefined) return []
   if (!ch.caps.buttons || ch.caps.approver !== "verified") return []
   return ch.caps.replyText && seed ? [1, 2] : [1]
