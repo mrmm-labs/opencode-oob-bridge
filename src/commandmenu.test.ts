@@ -31,7 +31,7 @@ describe("the command menu", () => {
     )
     for (const n of ["undo", "resume", "digest"])
       assert.ok(!names.includes(n), n)
-    for (const n of ["status", "afk", "help", "new"])
+    for (const n of ["status", "afk", "version", "help", "new"])
       assert.ok(names.includes(n), n)
   })
 

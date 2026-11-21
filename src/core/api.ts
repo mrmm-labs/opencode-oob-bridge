@@ -16,6 +16,7 @@ import { ACTIONS, type Actions } from "./actions.ts"
 import type { TokenStore } from "./auth.ts"
 import type { Views } from "./views.ts"
 
+export const API_VERSION = "v1"
 const KEEP_ALIVE_MS = 25_000
 const RING = 500
 const MAX_BODY = 64 * 1024
@@ -148,7 +149,7 @@ export function handler(d: ApiDeps) {
 
     if (get && a === "meta" && p.length === 2)
       return send(res, 200, {
-        api: "v1",
+        api: API_VERSION,
         version: d.version,
         actions: d.actions.available(),
         fields: d.views.fields(),

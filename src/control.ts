@@ -24,6 +24,15 @@ import {
 } from "./overnight.ts"
 import type { Afk, SettingsStore } from "./settings.ts"
 import { formatDuration, isObject } from "./util.ts"
+import {
+  activeConfigPath,
+  mismatches,
+  readInstalled,
+  reportLines,
+  type Installed,
+  type VersionReport,
+} from "./version.ts"
+import { API_VERSION } from "./core/api.ts"
 
 /** A TUI that has not reported for this long is gone. */
 export const PRESENCE_MS = 45_000
@@ -97,6 +106,8 @@ export type ControlOptions = {
   overnight?: OvernightStore
   /** Whether the dead-man receiver acknowledged the last heartbeat. */
   deadman?: () => "ok" | "unconfigured" | "unacked"
+  /** Reads the version on disk; tests replace it. */
+  installed?: () => Promise<Installed>
   stuckMs?: number
   scanMs?: number
   probeMs?: number
@@ -111,6 +122,10 @@ export class Control {
   private readonly o: ControlOptions
   private readonly now: () => number
   private readonly tuis = new Map<string, number>()
+  /** The version each attached TUI says it runs. */
+  private readonly tuiVersions = new Map<string, string>()
+  private installed: Installed | undefined
+  private installedAt = -Infinity
   private readonly waiting = new Map<string, Waiting>()
   private readonly probed = new Map<
     string,
@@ -152,6 +167,7 @@ export class Control {
       })),
     )
     o.bridge.onWaiting((id) => this.waitingCount(id))
+    o.bridge.onVersion(() => this.versionText())
     o.bridge.subscribe(() => this.v++)
     const bridge = o.bridge
     const anyUp = () =>
@@ -217,8 +233,60 @@ export class Control {
   /** TUIs that reported within the presence window. */
   attached(): number {
     const cut = this.now() - PRESENCE_MS
-    for (const [id, at] of this.tuis) if (at < cut) this.tuis.delete(id)
+    for (const [id, at] of this.tuis)
+      if (at < cut) {
+        this.tuis.delete(id)
+        this.tuiVersions.delete(id)
+      }
     return this.tuis.size
+  }
+
+  /** The version on disk, read again at most once a minute unless `force` is set. */
+  async refreshInstalled(force = false): Promise<Installed | undefined> {
+    if (force || this.now() - this.installedAt >= 60_000) {
+      this.installedAt = this.now()
+      this.installed = await (this.o.installed ?? readInstalled)()
+      this.v++
+    }
+    return this.installed
+  }
+
+  private tuiList(): string[] {
+    this.attached()
+    return [...this.tuiVersions.values()]
+  }
+
+  /** What this server half runs and what is installed; the warnings compare the two and the TUIs. */
+  async versionReport(force = true): Promise<VersionReport> {
+    const inst = await this.refreshInstalled(force)
+    const { owner, version } = this.o
+    const core = this.core?.status()
+    return {
+      running: version,
+      installed: inst?.version,
+      describe: inst?.describe,
+      dir: inst?.dir ?? "",
+      pid: owner.pid,
+      startedAt: owner.startedAt,
+      ownerId: owner.id,
+      config: await activeConfigPath(),
+      core: {
+        api: API_VERSION,
+        state: core?.state ?? "off",
+        address: core?.address,
+      },
+      tuis: this.tuiList(),
+      warnings: mismatches({
+        installed: [inst?.version],
+        server: version,
+        tuis: this.tuiList(),
+      }),
+    }
+  }
+
+  /** The text of `/version` in a chat. */
+  async versionText(): Promise<string> {
+    return reportLines(await this.versionReport()).join("\n")
   }
 
   /** The attached TUI that reported most recently: the one to hand a form reply to. */
@@ -231,9 +299,11 @@ export class Control {
   }
 
   /** A TUI is alive; `inputAt` is when its operator last typed or clicked. */
-  heartbeat(tui: string, inputAt?: number): void {
+  heartbeat(tui: string, inputAt?: number, version?: string): void {
     const before = this.attached()
     this.tuis.set(tui, this.now())
+    if (typeof version === "string" && version)
+      this.tuiVersions.set(tui, version.slice(0, 40))
     if (inputAt !== undefined && Number.isFinite(inputAt))
       this.o.router.touch(Math.min(inputAt, this.now()))
     if (before !== this.attached()) this.o.bridge.notify()
@@ -249,6 +319,11 @@ export class Control {
       this.timers.push(t)
     }
     tick(() => this.scan(), this.o.scanMs ?? SCAN_MS)
+    void this.refreshInstalled(true).catch(() => {})
+    tick(
+      async () => void (await this.refreshInstalled()),
+      this.o.scanMs ?? SCAN_MS,
+    )
     if (this.o.probe) {
       void this.refreshProbe()
       tick(() => this.refreshProbe(), this.o.probeMs ?? PROBE_MS)
@@ -480,6 +555,7 @@ export class Control {
       v: this.v,
       at: this.now(),
       owner: { ...this.o.owner, version: this.o.version },
+      versions: { installed: this.installed?.version, tuis: this.tuiList() },
       afk: {
         mode: router.afkMode(),
         away: router.away(),
@@ -710,6 +786,8 @@ export class Control {
             })
           return this.done({ ok: true, data: this.core.status() })
         }
+        case "version":
+          return this.done({ ok: true, data: await this.versionReport() })
         case "test":
           return this.done({ ok: true, data: await bridge.test() })
         case "pair": {

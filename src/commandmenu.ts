@@ -40,6 +40,7 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
   { command: "steer", description: "Inject a message into the running turn" },
   { command: "rename", description: "Rename this session" },
   { command: "chat", description: "/chat off stops chatting with it" },
+  { command: "version", description: "Plugin version installed and running" },
   { command: "help", description: "What the commands do here" },
 ]
 

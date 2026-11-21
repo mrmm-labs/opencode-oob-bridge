@@ -56,6 +56,10 @@ OpenCode, and check `/oob status` (it shows the owner pid). Settings and the Tel
 over. The sidebar size now lives in `tui.json` in the state directory, seeded from the old
 `settings.json`. A server that is not running the plugin shows `bridge offline` in the sidebar.
 
+### Checking which version is loaded
+
+After an upgrade the files on disk change at once, but the server and each TUI keep running the code they loaded. `/oob version` (or `/version` in Telegram) shows both sides: the version in `package.json` and `git describe` of the install directory, the version the server half and this TUI half have in memory, the server's pid, start time and owner instance id, the config file in use and the core API version. When any two differ it prints a `⚠` line such as `the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode`, and the sidebar shows the same line under its header. The running version is read once when the plugin is loaded, never from disk again.
+
 ## Install
 
 Needs OpenCode 2 and Node 24 to build.
@@ -438,6 +442,7 @@ In a session's topic (they act on that session, and need chat on):
 | `/undo`               | Asks, then reverts the last turn through an open OpenCode window (it says so when none is open).                                                 |
 | `/resume`             | Wakes this session when it is stuck with messages waiting.                                                                                       |
 | `/afk`                | Shows the away mode, whether you count as away, and the overnight state. Changes nothing.                                                        |
+| `/version`            | The installed version, what the server and each open TUI run, and a warning when they differ.                                                    |
 | `/night`              | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                                                            |
 | `/stop`               | Stops the running turn.                                                                                                                          |
 | `/compact`            | Compacts the session.                                                                                                                            |
@@ -454,6 +459,7 @@ In General, or a private chat:
 | `/sessions`               | The mirrored sessions, with a link to each topic.                                                                   |
 | `/resume`                 | Lists the stuck sessions with a button each, or says none is stuck.                                                 |
 | `/afk`                    | The same read-only away status as in a topic.                                                                       |
+| `/version`                | The same version report as in a topic.                                                                              |
 | `/night`                  | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                               |
 | `/digest`                 | Sends the digest on request; answers that it is not enabled until it is.                                            |
 | `/projects`               | The projects `/new` can use.                                                                                        |
@@ -518,6 +524,7 @@ the value. Bare `/oob` (and `/ntfy`) stays the picker.
 | `/oob restart`                                                                            | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                           |
 | `/oob core <status\|rotate>`                                                              | Show the core API (address and token file), or replace its token: the old token is refused at once.                                |
 | `/oob status`                                                                             | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                                   |
+| `/oob version`                                                                            | Show the installed version, what the server and this TUI run, the config file and the core API, and warn when they differ.         |
 | `/oob help`                                                                               | List every sub-command with its usage.                                                                                             |
 
 ## Sidebar
