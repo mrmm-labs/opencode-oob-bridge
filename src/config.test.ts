@@ -174,6 +174,7 @@ describe("parseConfig channels", () => {
       streamMs: 1000,
       streamBudget: 30,
       delivery: "queue",
+      queueSteerSeconds: 30,
       redact: { mode: "full" },
       projects: {},
       models: [],

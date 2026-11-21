@@ -61,7 +61,8 @@ async function chatRig(
   })
   const cfg = parseConfig({
     channels: { telegram: { token: { env: "X" } } },
-    chat: o.chat,
+    // These tests are about the host's own queue; the held-message path has its own file.
+    chat: { queueSteerSeconds: 0, ...o.chat },
     redact: o.redact,
   }) as Config
   const prompts: Array<{
