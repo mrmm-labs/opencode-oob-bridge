@@ -383,7 +383,10 @@ How it behaves:
   characters, and gets its final formatting when the turn ends. At most three messages: anything
   longer is also attached as `reply.md` ("📄 Full reply"). Only the assistant's text is posted,
   never tool calls or reasoning. Markdown becomes Telegram HTML (code blocks, inline code, bold,
-  italic, links, lists), with everything else escaped.
+  italic, links, lists, tables), with everything else escaped. A table up to about 40 characters
+  wide becomes an aligned monospace grid (inline markdown removed); a wider one becomes a block
+  per row: the first column in bold, then `header: value` for the others. A long table is split
+  between rows, each message with its header.
 - **How the text streams** depends on the chat. In a group (and any topic of it) it is the edited message above, kept inside Telegram's limits: a 429 pauses edits for as long as it asks and doubles the gap up to 8 seconds (halved again after 30 quiet seconds), updates during a pause are merged so only the newest text is sent, and at most `chat.streamBudget` edits go out a minute (default 30). In a **private chat**, with `draft: true` on the Telegram channel (off by default until it has been checked against a live bot), the bot uses Telegram's native draft preview (`sendMessageDraft`): one draft per reply with the whole text so far, sent again every 20 seconds while the model is silent, and replaced by the final message. A refused draft switches that chat to edits for ten minutes and is logged. Both paths show the same text: redaction, secret masking, Markdown to HTML and splitting happen first.
 - **`redact` applies** to what is posted, and known secret shapes are masked.
 

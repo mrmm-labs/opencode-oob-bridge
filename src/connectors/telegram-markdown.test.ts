@@ -128,3 +128,103 @@ describe("splitReply", () => {
     for (const m of r.messages) assert.ok(m.length <= 4096)
   })
 })
+
+describe("tables", () => {
+  const narrow =
+    "| Name | Qty |\n| --- | ---: |\n| apples | 3 |\n| **figs** | 12 |"
+
+  it("renders a narrow table as an aligned grid without inline markdown", () => {
+    const html = markdownToHtml(narrow)
+    assert.equal(
+      html,
+      "<pre>Name    Qty\n──────  ───\napples    3\nfigs     12</pre>",
+    )
+    wellFormed(html)
+  })
+
+  it("renders a wide table as one block per row, first column bold, inline markdown kept", () => {
+    const md = [
+      "| Service | Status | Notes |",
+      "| --- | --- | --- |",
+      "| `api` | **up** | answers on the public edge and the private one |",
+      "| worker | down | restarting after the last deploy, see the log |",
+    ].join("\n")
+    const html = markdownToHtml(md)
+    assert.equal(
+      html,
+      [
+        "<b><code>api</code></b>",
+        "Status: <b>up</b>",
+        "Notes: answers on the public edge and the private one",
+        "",
+        "<b>worker</b>",
+        "Status: down",
+        "Notes: restarting after the last deploy, see the log",
+      ].join("\n"),
+    )
+    wellFormed(html)
+  })
+
+  it("keeps a pipe inside a code span or after a backslash in its cell", () => {
+    const md =
+      "| cmd | meaning |\n|---|---|\n| `a | b` | pipe |\n| x \\| y | escaped |"
+    const html = markdownToHtml(md)
+    assert.match(html, /a \| b {2}pipe/)
+    assert.match(html, /x \| y {2}escaped/)
+    wellFormed(html)
+  })
+
+  it("escapes HTML in cells", () => {
+    const html = markdownToHtml("| a | b |\n|---|---|\n| <i>x</i> | & |")
+    assert.match(html, /&lt;i&gt;x&lt;\/i&gt;/)
+    wellFormed(html)
+  })
+
+  it("leaves text around a table, and a lone pipe line, alone", () => {
+    const html = markdownToHtml(`before\n\n${narrow}\n\nafter | not a table`)
+    assert.match(html, /^before\n<pre>/)
+    assert.match(html, /<\/pre>\nafter \| not a table$/)
+  })
+
+  it("is well formed at every point of a streamed reply, and settles on the table", () => {
+    const md = `Here:\n\n${narrow}\n\nDone.`
+    for (let i = 1; i <= md.length; i++)
+      wellFormed(markdownToHtml(md.slice(0, i)))
+    const mid = markdownToHtml(md.slice(0, md.indexOf("figs") + 3))
+    assert.match(mid, /<pre>/)
+    assert.equal(markdownToHtml(md), `Here:\n${markdownToHtml(narrow)}\nDone.`)
+  })
+
+  it("splits a long table between rows, each message with its header, within the limit", () => {
+    const rows = Array.from(
+      { length: 400 },
+      (_, i) =>
+        `| row-${i} | value number ${i} that is long enough to push the width past the grid | ok |`,
+    )
+    const md = ["| Key | Detail | State |", "|---|---|---|", ...rows].join("\n")
+    const out = splitReply(md, 20)
+    assert.equal(out.rest, undefined)
+    assert.ok(out.messages.length > 1, "more than one message")
+    const seen: string[] = []
+    for (const m of out.messages) {
+      assert.ok(m.length <= 4096, "within the limit")
+      wellFormed(m)
+      for (const mm of m.matchAll(/<b>(row-\d+)<\/b>/g)) seen.push(mm[1])
+    }
+    assert.deepEqual(
+      seen,
+      rows.map((_, i) => `row-${i}`),
+      "every row once, in order",
+    )
+  })
+
+  it("splits a long narrow table too, repeating the header", () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => `| ${i} | x |`)
+    const out = splitReply(["| n | v |", "|---|---|", ...rows].join("\n"), 20)
+    assert.ok(out.messages.length > 1)
+    for (const m of out.messages) {
+      assert.ok(m.length <= 4096)
+      assert.match(m, /^<pre>n +v\n/)
+    }
+  })
+})
