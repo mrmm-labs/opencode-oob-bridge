@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.22.0...v0.23.0) (2026-11-21)
+
+
+### Features
+
+* overnight plan, timed away and return summary ([#73](https://github.com/mrmm-labs/opencode-oob-bridge/issues/73)) ([c97f289](https://github.com/mrmm-labs/opencode-oob-bridge/commit/c97f28954ccb171c695a9324f79dc35ac25b6464))
+
 ## [0.22.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.21.0...v0.22.0) (2026-11-21)
 
 
