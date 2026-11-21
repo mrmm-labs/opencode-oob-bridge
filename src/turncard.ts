@@ -59,6 +59,7 @@ export function header(c: TurnCard): string {
       "+" + c.changes.added + " −" + c.changes.removed,
     )
   if (c.duration) parts.push(c.duration.replace(/ /g, ""))
+  if (c.origin) parts.push(c.origin === "mac" ? "🖥 Mac" : "📱 Telegram")
   return parts.join(" · ")
 }
 

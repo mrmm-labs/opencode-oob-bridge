@@ -54,6 +54,8 @@ export type CardQuestion = {
 /** What a finished turn did. Already redacted. */
 export type TurnCard = {
   failed: boolean
+  /** Where the prompt of the turn came from, when known. */
+  origin?: "mac" | "telegram"
   /** e.g. "3m 12s" */
   duration?: string
   /** Absent when the changes cannot be read: no number is made up. */
@@ -93,6 +95,8 @@ export type Card =
       answer?: string
       /** Where it was answered: a connector name, or "TUI". */
       via: string
+      /** At the Mac (the TUI) or in Telegram, when it is one of those. */
+      origin?: "mac" | "telegram"
       /** hh:mm, local time. */
       time: string
       /** What was asked, to keep on the message. */

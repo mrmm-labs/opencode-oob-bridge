@@ -500,10 +500,7 @@ describe("Bridge with telegram and another channel", () => {
     const toast = b.tg.of("answerCallbackQuery")[0].body.text
     assert.equal(toast, "Answered: Yes")
     const edit = b.tg.of("editMessageText")[0].body
-    assert.match(
-      edit.text,
-      /Answered<\/b> · Yes\n<i>via telegram · \d\d:\d\d<\/i>/,
-    )
+    assert.match(edit.text, /Answered in Telegram<\/b>: Yes\n<i>\d\d:\d\d<\/i>/)
     assert.deepEqual(edit.reply_markup, { inline_keyboard: [] })
     // The other channel is marked after the edit: wait for it.
     await b.tg.waitFor(() => b.stub.updates[0])
@@ -554,7 +551,7 @@ describe("Bridge with telegram and another channel", () => {
     })
     assert.match(
       b.tg.of("editMessageText")[0].body.text,
-      /Answered<\/b>\n<i>via TUI/,
+      /Answered at the Mac<\/b>\n<i>\d\d:\d\d<\/i>/,
     )
     assert.match(b.stub.updates[0].message, /Answered in the TUI/)
     b.tg.callback(CHAT, 501, `${id}:1`)
@@ -973,7 +970,7 @@ describe("Telegram: message layout", () => {
     const e = await b.tg.waitFor(() => b.tg.of("editMessageText")[0])
     assert.match(
       e.body.text,
-      /^✅ <b>Answered<\/b> · Ship it \(Recommended\)\n<i>via telegram · \d\d:\d\d<\/i>\n\n<blockquote>Go\?<\/blockquote>$/,
+      /^✅ <b>Answered in Telegram<\/b>: Ship it \(Recommended\)\n<i>\d\d:\d\d<\/i>\n\n<blockquote>Go\?<\/blockquote>$/,
     )
     await b.done()
   })
@@ -1025,7 +1022,10 @@ describe("Telegram: closing a question", () => {
     const edit = b.tg.of("editMessageText")
     assert.equal(edit.length, 1)
     assert.equal(edit[0].body.message_id, 501)
-    assert.match(edit[0].body.text, /^✅ <b>Answered<\/b>\n<i>via TUI · /)
+    assert.match(
+      edit[0].body.text,
+      /^✅ <b>Answered at the Mac<\/b>\n<i>\d\d:\d\d<\/i>/,
+    )
     assert.deepEqual(edit[0].body.reply_markup, { inline_keyboard: [] })
     assert.equal(b.tg.of("sendMessage").length, 1, "no follow-up")
     await b.done()

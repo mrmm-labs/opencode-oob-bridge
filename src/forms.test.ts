@@ -196,7 +196,7 @@ describe("forms: the stepper", () => {
     const e = await r.tg.waitFor(() =>
       r.edits().find((x) => /Answered/.test(x.text)),
     )
-    assert.match(e.text, /TUI/)
+    assert.match(e.text, /Answered at the Mac/)
     assert.deepEqual(e.reply_markup, { inline_keyboard: [] })
     await r.done()
   })
@@ -256,7 +256,7 @@ describe("forms: permissions", () => {
     const e = await r.tg.waitFor(() =>
       r.edits().find((x) => /Allowed once/.test(x.text)),
     )
-    assert.match(e.text, /via telegram/)
+    assert.match(e.text, /Answered in Telegram/)
     await r.done()
   })
 
