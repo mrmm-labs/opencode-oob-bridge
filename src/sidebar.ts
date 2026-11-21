@@ -29,7 +29,14 @@ export type Row = { id: RowId; label: string; value: string; tone: Tone }
 export type SidebarModel =
   | { mode: "off" }
   | { mode: "compact"; parts: Part[] }
-  | { mode: "full"; title: string; channel: string; rows: Row[] }
+  | {
+      mode: "full"
+      title: string
+      channel: string
+      rows: Row[]
+      /** A version mismatch, shown under the header. */
+      warning?: string
+    }
 
 export type PendingItem = Pick<
   Pending,
@@ -75,6 +82,8 @@ export type BridgeState = {
   windows?: number
   /** The first enabled channel that is not connected or last failed. */
   problem?: string
+  /** Where two versions differ (installed, server, TUI). */
+  versionWarnings?: string[]
   stuck: Array<{ id: string; title?: string; pending: number; since: number }>
 }
 
@@ -107,7 +116,10 @@ export function sidebarState(app: App, root: string): SidebarState {
     awayMinutes: b.awayMinutes(),
     pending: b.openPromptList(root),
     now: Date.now(),
-    bridge: bridgeState(b.instance(), b.status().channels),
+    bridge: {
+      ...bridgeState(b.instance(), b.status().channels),
+      versionWarnings: b.versionWarnings(),
+    },
   }
 }
 
@@ -268,8 +280,23 @@ export function compactParts(s: SidebarState): Part[] {
 
 export function sidebarModel(s: SidebarState, mode: SidebarMode): SidebarModel {
   if (mode === "off") return { mode }
-  if (mode === "compact") return { mode, parts: compactParts(s) }
-  return { mode, title: TITLE, channel: s.channel, rows: sidebarRows(s) }
+  const warn = s.bridge.versionWarnings?.[0]
+  if (mode === "compact") {
+    const parts = compactParts(s)
+    return {
+      mode,
+      parts: warn
+        ? [{ text: "⚠ restart OpenCode · ", tone: "warn" }, ...parts]
+        : parts,
+    }
+  }
+  return {
+    mode,
+    title: TITLE,
+    channel: s.channel,
+    rows: sidebarRows(s),
+    warning: warn,
+  }
 }
 
 const age = (ms: number) => {

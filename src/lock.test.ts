@@ -18,6 +18,12 @@ describe("owner lock", () => {
     assert.equal(b.held, false)
     assert.equal(b.owner?.pid, process.pid)
     assert.equal(JSON.parse(await readFile(f, "utf8")).pid, process.pid)
+    assert.match(a.held ? (a.owner.id ?? "") : "", /^[0-9a-f]{8}$/)
+    assert.equal(
+      b.owner?.id,
+      a.held ? a.owner.id : undefined,
+      "the loser is told the owner's id",
+    )
     if (a.held) await a.release()
     const c = await acquire(f, { beatMs: 1e9 })
     assert.equal(c.held, true, "free again after release")

@@ -3,12 +3,14 @@
  * directory, refreshes it while it lives, and a second loader (another
  * location of the same server, another process) does nothing.
  */
+import { randomUUID } from "node:crypto"
 import { mkdir, open, readFile, unlink, utimes } from "node:fs/promises"
 import { dirname } from "node:path"
 
 import { log } from "./logger.ts"
 
-export type Owner = { pid: number; startedAt: number }
+/** `id` names this holder; a lock file written by an older version has none. */
+export type Owner = { pid: number; startedAt: number; id?: string }
 
 export const BEAT_MS = 10_000
 export const STALE_MS = 30_000
@@ -36,7 +38,12 @@ export async function read(
     const v = JSON.parse(text) as Partial<Owner>
     if (typeof v.pid !== "number" || typeof v.startedAt !== "number")
       return undefined
-    return { pid: v.pid, startedAt: v.startedAt, at: st.mtimeMs }
+    return {
+      pid: v.pid,
+      startedAt: v.startedAt,
+      id: typeof v.id === "string" ? v.id : undefined,
+      at: st.mtimeMs,
+    }
   } catch {
     return undefined
   }
@@ -57,7 +64,11 @@ export async function acquire(
   const now = o.now ?? Date.now
   const staleMs = o.staleMs ?? STALE_MS
   await mkdir(dirname(file), { recursive: true })
-  const mine: Owner = { pid: process.pid, startedAt: now() }
+  const mine: Owner = {
+    pid: process.pid,
+    startedAt: now(),
+    id: randomUUID().slice(0, 8),
+  }
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -97,7 +108,7 @@ export async function acquire(
     if (!stale)
       return {
         held: false,
-        owner: cur && { pid: cur.pid, startedAt: cur.startedAt },
+        owner: cur && { pid: cur.pid, startedAt: cur.startedAt, id: cur.id },
       }
     await unlink(file).catch(() => {})
   }

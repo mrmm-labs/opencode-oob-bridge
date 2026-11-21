@@ -616,6 +616,21 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
       group: "Plugin",
       run: () => status(ctx, app),
     }),
+    sub({
+      name: "version",
+      title: "Version",
+      description:
+        "Show the installed version, what the server and this TUI run, the config file and the core API, and warn when they differ.",
+      group: "Plugin",
+      run: async () => {
+        const lines = await app.pilot.versionLines()
+        if (!lines) return toast(ctx, "The bridge does not answer", "warning")
+        await ctx.ui.dialog.alert({
+          title: `${TITLE}: version`,
+          message: lines.join("\n"),
+        })
+      },
+    }),
   ]
   cmds.push(
     sub({

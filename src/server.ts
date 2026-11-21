@@ -6,7 +6,7 @@
  * chat is handed to an attached TUI, which makes the reply.
  */
 import { randomUUID } from "node:crypto"
-import { access, readFile } from "node:fs/promises"
+import { access } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import type { Plugin } from "@opencode/plugin"
 
@@ -33,6 +33,7 @@ import { Router } from "./routing.ts"
 import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
 import { isObject, sleep } from "./util.ts"
+import { RUNNING } from "./version.ts"
 
 type Context = Plugin.Context
 
@@ -366,17 +367,6 @@ export function serverHost(
   }
 }
 
-async function version(): Promise<string> {
-  try {
-    const p = JSON.parse(
-      await readFile(new URL("../package.json", import.meta.url), "utf8"),
-    ) as { version?: string }
-    return p.version ?? "unknown"
-  } catch {
-    return "unknown"
-  }
-}
-
 type Running = { control: Control; stop(): Promise<void> }
 
 /** The answer the TUI's status call gives: JSON values only. */
@@ -504,7 +494,7 @@ async function boot(
     cfg,
     host,
     owner: lock.owner,
-    version: await version(),
+    version: RUNNING,
     restart,
     probe,
     overnight: nightStore,
@@ -521,7 +511,7 @@ async function boot(
     bridge,
     host,
     control,
-    version: await version(),
+    version: RUNNING,
     sources: {
       tail: [
         ["server", host.messages && ((id, n) => host.messages!(id, n))],
@@ -542,7 +532,7 @@ async function boot(
   const deadman = await startDeadman({
     cfg,
     dir,
-    version: await version(),
+    version: RUNNING,
     control,
     bridge,
     rpcRegistered,
@@ -707,11 +697,16 @@ class Hub {
           tui?: string
           inputAt?: number
           roots?: unknown
+          version?: unknown
         }
         const roots = Array.isArray(i.roots)
           ? i.roots.filter((r): r is string => typeof r === "string")
           : []
-        ctl().heartbeat(String(i.tui ?? "tui"), i.inputAt)
+        ctl().heartbeat(
+          String(i.tui ?? "tui"),
+          i.inputAt,
+          typeof i.version === "string" ? i.version : undefined,
+        )
         ctl().watch(roots)
         return statusSnapshot(ctl(), roots) as never
       }),

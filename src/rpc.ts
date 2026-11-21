@@ -80,7 +80,9 @@ export type Snapshot = {
   /** Grows with every change, so a view can tell a new snapshot from the one it has. */
   v: number
   at: number
-  owner: { pid: number; startedAt: number; version: string }
+  owner: { pid: number; startedAt: number; version: string; id?: string }
+  /** What is on disk, and what each attached TUI says it runs. */
+  versions: { installed?: string; tuis: string[] }
   afk: {
     mode: Afk
     away: boolean

@@ -22,6 +22,8 @@ async function rig(
     busy?: boolean
     probe?: Probe
     route?: boolean
+    version?: string
+    installed?: string
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -71,8 +73,13 @@ async function rig(
     settings,
     cfg,
     host,
-    owner: { pid: 1, startedAt: now() },
-    version: "t",
+    owner: { pid: 1, startedAt: now(), id: "abc12345" },
+    version: o.version ?? "t",
+    installed: async () => ({
+      version: o.installed ?? o.version ?? "t",
+      describe: "v9.9.9-0-gdeadbee",
+      dir: "/opt/plugin",
+    }),
     now,
     probe: o.probe,
   })
@@ -571,6 +578,73 @@ describe("timed away and the overnight plan", () => {
     const s = r.control.snapshot()
     assert.match(s.back!.text, /Away 2h/)
     assert.match(s.back!.text, /0 pushes sent/)
+    await r.done()
+  })
+})
+
+describe("version", () => {
+  it("is clean when the disk, the server and the windows run the same version", async () => {
+    const r = await rig({ version: "0.23.0" })
+    r.control.heartbeat("a", r.clock.t, "0.23.0")
+    const rep = await r.control.versionReport()
+    assert.equal(rep.running, "0.23.0")
+    assert.equal(rep.installed, "0.23.0")
+    assert.equal(rep.describe, "v9.9.9-0-gdeadbee")
+    assert.equal(rep.ownerId, "abc12345")
+    assert.equal(rep.pid, 1)
+    assert.deepEqual(rep.tuis, ["0.23.0"])
+    assert.equal(rep.core.api, "v1")
+    assert.deepEqual(rep.warnings, [])
+    assert.match(await r.control.versionText(), /All versions match\./)
+    await r.done()
+  })
+
+  it("warns to restart when the disk was upgraded and the server still runs the old version", async () => {
+    const r = await rig({ version: "0.22.0", installed: "0.23.0" })
+    const rep = await r.control.versionReport()
+    assert.deepEqual(rep.warnings, [
+      "⚠ the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode",
+    ])
+    const text = await r.control.versionText()
+    assert.match(text, /Installed: 0\.23\.0 \(git v9\.9\.9-0-gdeadbee\)/)
+    assert.match(text, /Server runs: 0\.22\.0, pid 1, started /)
+    assert.match(
+      text,
+      /⚠ the server runs 0\.22\.0 but 0\.23\.0 is installed: restart OpenCode/,
+    )
+    assert.doesNotMatch(text, /All versions match/)
+    await r.done()
+  })
+
+  it("warns about a window that runs another version, and says so in the snapshot", async () => {
+    const r = await rig({ version: "0.23.0" })
+    r.control.heartbeat("old", r.clock.t, "0.22.0")
+    r.control.heartbeat("new", r.clock.t, "0.23.0")
+    const rep = await r.control.versionReport()
+    assert.deepEqual(rep.warnings, [
+      "⚠ a TUI runs 0.22.0 but 0.23.0 is installed: restart OpenCode",
+    ])
+    const s = r.control.snapshot()
+    assert.deepEqual(s.versions, {
+      installed: "0.23.0",
+      tuis: ["0.22.0", "0.23.0"],
+    })
+    assert.equal(s.owner.version, "0.23.0")
+    r.clock.t += PRESENCE_MS + 1
+    assert.deepEqual((await r.control.versionReport()).tuis, [])
+    await r.done()
+  })
+
+  it("answers the version op with the report, and /version in a chat with the text", async () => {
+    const r = await rig({ version: "0.22.0", installed: "0.23.0" })
+    const out = await r.control.op("version")
+    assert.equal(out.ok, true)
+    assert.equal((out.data as { running: string }).running, "0.22.0")
+    r.tg.message(CHAT, "/version")
+    const sent = await r.tg.waitFor(() =>
+      r.sends().find((b) => /Server runs/.test(b.text)),
+    )
+    assert.match(sent.text, /restart OpenCode/)
     await r.done()
   })
 })

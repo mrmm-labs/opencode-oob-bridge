@@ -45,6 +45,11 @@ function Block(p: Parameters<SidebarView>[0]) {
               {full()!.channel}
             </text>
           </box>
+          {full()!.warning && (
+            <text fg={color("warn")} wrapMode="none" truncate>
+              {full()!.warning}
+            </text>
+          )}
           <For each={full()!.rows}>
             {(row: Row) => (
               <box
