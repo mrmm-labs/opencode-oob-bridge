@@ -1,6 +1,6 @@
 ## 1. Spike
 
-- [ ] 1.1 From a server plugin, create, read and delete a Keychain item restricted to the host executable. Verify: recorded output of the three calls and of a read by another process being refused or prompting. If it fails, stop and report.
+- [x] 1.1 From a server plugin, create, read and delete a Keychain item restricted to the host executable. Verify: recorded output of the three calls and of a read by another process being refused or prompting. If it fails, stop and report.
 
 ## 2. Service
 

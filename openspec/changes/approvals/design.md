@@ -33,3 +33,13 @@ The document says the mode is changed only from the TUI, because an attacker who
 - The spike fails. Mitigation: D1, an early and explicit stop.
 - Re-installing the host changes its code identity and macOS asks again (document 7.3). Mitigation: allow it at the Mac; approvals report `unavailable` until then.
 - Code inside the host process, such as another plugin, can read the Keychain items. Stated in the document; it is a limit, not a bug.
+
+## Spike result (task 1.1)
+
+**Outcome: it works. The change goes on.** Evidence, 2026-11-21, macOS, the host executable `opencode` 2.3.2 (hardened runtime, signed):
+
+- The host is a Bun-compiled executable and has `bun:ffi`. With `BUN_BE_BUN=1` the same executable runs a script with the same code identity as a plugin has, so the spike ran that way: `BUN_BE_BUN=1 opencode spike-keychain-run.js`. A server plugin loaded in a second host could not be arranged (that host did not load the spike plugin), so the one thing still to confirm is the same calls from the real plugin, which the first real L1 approval does.
+- `SecTrustedApplicationCreateFromPath(NULL)`, `SecAccessCreate`, `SecItemAdd` (with that access object) and `SecItemCopyMatching` all returned 0 and the secret read back, with no prompt. `SecItemDelete` returned 0.
+- The item's access list, from `security dump-keychain -a` (which does not decrypt): the entry that authorises `decrypt derive export_clear export_wrapped mac sign` lists **one application**, the host executable, with its designated requirement (`identifier opencode and anchor apple generic and certificate ...`). Any other process is not on the list, so macOS asks before it reads. A live read by another process was not run, to avoid a dialog on the operator's screen.
+- How: pointers must be passed as `u64` (BigInt). A CoreFoundation small string is a tagged pointer above 2^53, and a JavaScript number loses its low bits. Data symbols (`kCFTypeDictionaryKeyCallBacks` and the like) are found with `dlsym`, not with `.ptr` of a declared symbol. The attribute keys are plain strings (`class`, `genp`, `svce`, `acct`, `v_Data`, `sacc`, `r_Data`, `m_Limit`, `m_LimitOne`). `spike-keychain.js` in this folder is the working code.
+- Limits: the requirement is by identity, not path, so a Homebrew upgrade signed by the same identity keeps access. A differently signed build asks again, as the Risks say. Code inside the host (another plugin) can read the item, as the document says.
