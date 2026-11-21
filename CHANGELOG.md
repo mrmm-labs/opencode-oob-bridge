@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.35.0...v0.36.0) (2026-11-21)
+
+
+### Features
+
+* oob_send_file tool sends a file to the session topic ([#120](https://github.com/mrmm-labs/opencode-oob-bridge/issues/120)) ([03da3d7](https://github.com/mrmm-labs/opencode-oob-bridge/commit/03da3d7f60d0252aa7c774092416c82d91c6d289))
+
 ## [0.35.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.34.0...v0.35.0) (2026-11-21)
 
 
