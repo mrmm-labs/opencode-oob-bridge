@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.35.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.34.0...v0.35.0) (2026-11-21)
+
+
+### Features
+
+* show where prompts and answers came from in a Telegram topic ([#118](https://github.com/mrmm-labs/opencode-oob-bridge/issues/118)) ([2d1a9a5](https://github.com/mrmm-labs/opencode-oob-bridge/commit/2d1a9a5379fa6519c1b08bde340e470781a90ada))
+
 ## [0.34.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.33.0...v0.34.0) (2026-11-21)
 
 
