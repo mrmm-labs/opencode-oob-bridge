@@ -91,11 +91,16 @@ export interface Pilot {
     replace?: boolean
     hours?: number
   }): Promise<OpResult | undefined>
+  /** One line for each place two versions differ; empty when all match. */
+  versionWarnings(): string[]
+  /** The `/oob version` lines; undefined when the bridge does not answer. */
+  versionLines(): Promise<string[] | undefined>
 }
 
 export type InstanceView = {
   online: boolean
   owner?: { pid: number; startedAt: number; version: string }
+  versions?: { installed?: string; tuis: string[] }
   afk?: {
     mode: Afk
     away: boolean

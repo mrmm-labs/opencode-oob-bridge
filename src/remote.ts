@@ -12,6 +12,14 @@ import { log } from "./logger.ts"
 import type { FormRelay, OpResult, SessionRow, Snapshot } from "./rpc.ts"
 import type { Afk } from "./settings.ts"
 import { isObject } from "./util.ts"
+import {
+  mismatches,
+  readInstalled,
+  reportLines,
+  RUNNING,
+  type Installed,
+  type VersionReport,
+} from "./version.ts"
 import type {
   ChannelView,
   InstanceView,
@@ -36,6 +44,11 @@ export class Remote implements Pilot {
   private readonly now: () => number
   private readonly roots: () => string[]
   private readonly pollMs: number
+  /** What this TUI half runs, from memory. */
+  private readonly version: string
+  private readonly readLocal: () => Promise<Installed>
+  private local: Installed | undefined
+  private polls = 0
   private snap: Snapshot | undefined
   private key = ""
   private online = false
@@ -50,6 +63,9 @@ export class Remote implements Pilot {
     now?: () => number
     roots?: () => string[]
     pollMs?: number
+    /** The version this half runs, and a read of the disk, for tests. */
+    version?: string
+    installed?: () => Promise<Installed>
     /** Told once what happened while the operator was away, when they are back. */
     onBack?: (text: string) => void
   }) {
@@ -58,6 +74,8 @@ export class Remote implements Pilot {
     this.now = o.now ?? Date.now
     this.roots = o.roots ?? (() => [])
     this.pollMs = o.pollMs ?? POLL_MS
+    this.version = o.version ?? RUNNING
+    this.readLocal = o.installed ?? readInstalled
     this.lastInput = this.now()
   }
 
@@ -76,13 +94,22 @@ export class Remote implements Pilot {
     this.timer = undefined
   }
 
+  /** Reads the install directory again, now and about once a minute. */
+  private async refreshLocal(): Promise<void> {
+    const before = this.local?.version
+    this.local = await this.readLocal().catch(() => undefined)
+    if (this.local?.version !== before) this.emit()
+  }
+
   async poll(): Promise<void> {
+    if (this.polls++ % 20 === 0) await this.refreshLocal()
     try {
       this.take(
         (await this.call("status", {
           tui: this.id,
           inputAt: this.lastInput,
           roots: this.roots(),
+          version: this.version,
         })) as Snapshot,
       )
     } catch (err) {
@@ -173,6 +200,28 @@ export class Remote implements Pilot {
       channels: this.snap?.channels ?? [],
       pending: this.snap?.pending ?? 0,
     }
+  }
+
+  /** One line for each place two versions differ: disk, server half, this TUI half. */
+  versionWarnings(): string[] {
+    const s = this.snap
+    if (!s || !this.online) return []
+    return mismatches({
+      installed: [this.local?.version, s.versions?.installed],
+      server: s.owner.version,
+      tuis: [this.version],
+    })
+  }
+
+  /** The `/oob version` text: the server's report, with this half's own version and disk. */
+  async versionLines(): Promise<string[] | undefined> {
+    await this.refreshLocal()
+    const r = await this.op("version")
+    if (!r?.ok || !isObject(r.data)) return undefined
+    return reportLines(r.data as unknown as VersionReport, {
+      running: this.version,
+      installed: this.local,
+    })
   }
 
   defaultChannel = () => this.snap?.defaultChannel ?? "all"

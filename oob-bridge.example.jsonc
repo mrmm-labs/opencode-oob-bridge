@@ -114,6 +114,17 @@
   // Only 3 (push only) is supported.
   "permissions": { "tier": 3 },
 
+  // Approvals for local tools over a unix socket (docs/approvals.md). Off by
+  // default. A class or caller that is not listed is refused. Levels: 1 tap,
+  // 2 tap plus the authenticator code, 3 at the Mac only.
+  // "approvals": {
+  //   "enabled": true,
+  //   "defaultTtl": 120,
+  //   "cooldown": 120,
+  //   "classes": { "secrets.read": { "level": 1, "channels": ["telegram"] } },
+  //   "callers": { "secrets-tool": { "classes": ["secrets.read"] } },
+  // },
+
   // OpenTelemetry (OTLP/HTTP JSON). Off unless an endpoint is set here or in
   // OTEL_EXPORTER_OTLP_ENDPOINT (and OTEL_EXPORTER_OTLP_HEADERS). Spans and
   // metrics carry ids, kinds, counts and timings: never message text, titles,

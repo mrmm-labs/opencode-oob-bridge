@@ -56,6 +56,10 @@ OpenCode, and check `/oob status` (it shows the owner pid). Settings and the Tel
 over. The sidebar size now lives in `tui.json` in the state directory, seeded from the old
 `settings.json`. A server that is not running the plugin shows `bridge offline` in the sidebar.
 
+### Checking which version is loaded
+
+After an upgrade the files on disk change at once, but the server and each TUI keep running the code they loaded. `/oob version` (or `/version` in Telegram) shows both sides: the version in `package.json` and `git describe` of the install directory, the version the server half and this TUI half have in memory, the server's pid, start time and owner instance id, the config file in use and the core API version. When any two differ it prints a `⚠` line such as `the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode`, and the sidebar shows the same line under its header. The running version is read once when the plugin is loaded, never from disk again.
+
 ## Install
 
 Needs OpenCode 2 and Node 24 to build.
@@ -438,6 +442,7 @@ In a session's topic (they act on that session, and need chat on):
 | `/undo`               | Asks, then reverts the last turn through an open OpenCode window (it says so when none is open).                                                 |
 | `/resume`             | Wakes this session when it is stuck with messages waiting.                                                                                       |
 | `/afk`                | Shows the away mode, whether you count as away, and the overnight state. Changes nothing.                                                        |
+| `/version`            | The installed version, what the server and each open TUI run, and a warning when they differ.                                                    |
 | `/night`              | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                                                            |
 | `/stop`               | Stops the running turn.                                                                                                                          |
 | `/compact`            | Compacts the session.                                                                                                                            |
@@ -454,6 +459,7 @@ In General, or a private chat:
 | `/sessions`               | The mirrored sessions, with a link to each topic.                                                                   |
 | `/resume`                 | Lists the stuck sessions with a button each, or says none is stuck.                                                 |
 | `/afk`                    | The same read-only away status as in a topic.                                                                       |
+| `/version`                | The same version report as in a topic.                                                                              |
 | `/night`                  | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                               |
 | `/digest`                 | Sends the digest on request; answers that it is not enabled until it is.                                            |
 | `/projects`               | The projects `/new` can use.                                                                                        |
@@ -500,25 +506,27 @@ The host completes only slash names, so every sub-command is also its own slash 
 their usage. `/oob-chat on` does exactly what `/oob chat on` does, and `/oob-chat` alone asks for
 the value. Bare `/oob` (and `/ntfy`) stays the picker.
 
-| Command                                                                                   | What it does                                                                                                                       |
-| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `/oob on [<channel\|all>]`                                                                | Push this session's questions and notices now, through one channel or all.                                                         |
-| `/oob off`                                                                                | Never push this session.                                                                                                           |
-| `/oob auto`                                                                               | Push this session after the away time without input, if the rules pick it.                                                         |
-| `/oob chat <on\|off>`                                                                     | Let messages in the session's topic reach it, or stop taking them.                                                                 |
-| `/oob delivery <queue\|steer\|default>`                                                   | How your messages from a channel reach a busy session: queue, steer, or the config's default.                                      |
-| `/oob channel <channel> <on\|off>`                                                        | Turn a channel on or off for every session; kept across restarts.                                                                  |
-| `/oob pair <channel>`                                                                     | Show the code or link that binds a channel to a chat (the name can be left out when only one can pair).                            |
-| `/oob test`                                                                               | Push a test message through every enabled channel.                                                                                 |
-| `/oob sidebar <full\|compact\|off>`                                                       | How big the section in the session sidebar is: full, compact or off.                                                               |
-| `/oob afk <on\|off\|auto> [<8h>]`                                                         | When you count as away, for the whole OpenCode instance: on, off, or auto after the away time without input in any window.         |
-| `/oob overnight <status\|add\|start\|end\|clear> [<<session> task=... \| <until> [yes]>]` | Keep sessions moving while you are away: add a brief for each session, start with an end time, or end the plan. Started here only. |
-| `/oob session <session> <on\|off\|auto\|chat\|chat-off>`                                  | Notify and chat settings of any session of this instance: on, off, auto, chat or chat-off.                                         |
-| `/oob resume <session>`                                                                   | Wake a session that is suspended with messages waiting in its inbox.                                                               |
-| `/oob restart`                                                                            | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                           |
-| `/oob core <status\|rotate>`                                                              | Show the core API (address and token file), or replace its token: the old token is refused at once.                                |
-| `/oob status`                                                                             | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                                   |
-| `/oob help`                                                                               | List every sub-command with its usage.                                                                                             |
+| Command                                                                                                                | What it does                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/oob on [<channel\|all>]`                                                                                             | Push this session's questions and notices now, through one channel or all.                                                         |
+| `/oob off`                                                                                                             | Never push this session.                                                                                                           |
+| `/oob auto`                                                                                                            | Push this session after the away time without input, if the rules pick it.                                                         |
+| `/oob chat <on\|off>`                                                                                                  | Let messages in the session's topic reach it, or stop taking them.                                                                 |
+| `/oob delivery <queue\|steer\|default>`                                                                                | How your messages from a channel reach a busy session: queue, steer, or the config's default.                                      |
+| `/oob channel <channel> <on\|off>`                                                                                     | Turn a channel on or off for every session; kept across restarts.                                                                  |
+| `/oob pair <channel>`                                                                                                  | Show the code or link that binds a channel to a chat (the name can be left out when only one can pair).                            |
+| `/oob test`                                                                                                            | Push a test message through every enabled channel.                                                                                 |
+| `/oob sidebar <full\|compact\|off>`                                                                                    | How big the section in the session sidebar is: full, compact or off.                                                               |
+| `/oob afk <on\|off\|auto> [<8h>]`                                                                                      | When you count as away, for the whole OpenCode instance: on, off, or auto after the away time without input in any window.         |
+| `/oob overnight <status\|add\|start\|end\|clear> [<<session> task=... \| <until> [yes]>]`                              | Keep sessions moving while you are away: add a brief for each session, start with an end time, or end the plan. Started here only. |
+| `/oob session <session> <on\|off\|auto\|chat\|chat-off>`                                                               | Notify and chat settings of any session of this instance: on, off, auto, chat or chat-off.                                         |
+| `/oob resume <session>`                                                                                                | Wake a session that is suspended with messages waiting in its inbox.                                                               |
+| `/oob restart`                                                                                                         | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                           |
+| `/oob core <status\|rotate>`                                                                                           | Show the core API (address and token file), or replace its token: the old token is refused at once.                                |
+| `/oob status`                                                                                                          | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                                   |
+| `/oob approvals <status\|pair-caller\|revoke-caller\|totp\|replace-totp\|rotate-key\|unlock> [<caller name or hours>]` | Approvals for local tools: show the service, pair or revoke a caller, enrol the code seed (QR shown once), rotate the signing key. |
+| `/oob version`                                                                                                         | Show the installed version, what the server and this TUI run, the config file and the core API, and warn when they differ.         |
+| `/oob help`                                                                                                            | List every sub-command with its usage.                                                                                             |
 
 ## Sidebar
 
@@ -737,6 +745,44 @@ or a webhook, so the bridge stays the only consumer of the bot. A sleeping lapto
 crash; the alert says "no heartbeat" and does not guess why. `src/deadman.test-util.ts` is a
 reference implementation of the receiver side.
 
+## Approvals for local tools
+
+A local tool can ask you to approve one action from your phone. The bridge listens on a unix socket in its state directory (`approvals.sock`, directory `0700`, socket `0600`); there is no TCP listener. The tool sends a request, waits for the answer, and checks that the answer is signed. Telegram is the only channel for approvals; ntfy cannot say who tapped.
+
+| Level | You do                                                                           |
+| ----- | -------------------------------------------------------------------------------- |
+| 1     | Tap Approve in the Telegram chat.                                                |
+| 2     | Tap Approve, then type the six-digit code of your authenticator app in the chat. |
+| 3     | Answer at the Mac only. The phone cannot.                                        |
+
+Presence decides where a request goes. With AFK on, the phone is asked first. With AFK off you are at the Mac, so a request from the phone side is refused with `needs_local` and the tool asks you locally; switching to present withdraws what is pending. AFK cannot be changed from Telegram or the socket.
+
+```jsonc
+"approvals": {
+  "enabled": true,
+  "defaultTtl": 120, // seconds, 10 to 600
+  "cooldown": 120, // seconds a deny blocks the next request
+  "classes": {
+    "secrets.read": { "level": 1, "channels": ["telegram"] },
+    "secrets.write": { "level": 2, "channels": ["telegram"] },
+  },
+  "callers": {
+    "secrets-tool": { "classes": ["secrets.read", "secrets.write"] },
+  },
+}
+```
+
+A class that is not listed, or not listed for the calling tool, is refused. A request lasts two minutes by default, is answered once, and never carries secret values: only names and identifiers.
+
+`/oob approvals` sets it up:
+
+1. `/oob approvals pair-caller <name>` makes the pairing key for a tool and writes it to a file (`0600`) for that tool. Add the tool under `approvals.callers` or every request is refused. `revoke-caller` removes it.
+2. `/oob approvals totp` makes the code seed for level 2 and shows its QR code and secret once. Scan it into your authenticator app. `replace-totp` makes a new one.
+3. `/oob approvals rotate-key [hours]` replaces the signing key; the old one still verifies for that many hours.
+4. `/oob approvals status` shows the service, the callers and which levels can be reached now.
+
+The signing key (Ed25519) and the code seed live in the macOS Keychain, read through the Security framework, never in a plain file. If the Keychain is locked, `/oob approvals unlock` asks macOS at the Mac. Only the paired Telegram user answers, and a group's other members cannot. The full design is in [docs/approvals.md](docs/approvals.md).
+
 ## Security
 
 - ntfy `http` buttons are sent by the app with no identity: **anyone who can publish to
@@ -752,7 +798,7 @@ reference implementation of the receiver side.
 - This is why permissions stay tier 3 by default: a hijacked chat could otherwise grant them. `permissions.remote` is the opt-in, and every answer is logged.
 - Telegram answers come only from the paired chat, found by its numeric chat id. Anyone who can
   send messages as that chat (or take over that Telegram account) can answer questions.
-- Never route production approvals through this plugin.
+- Approvals for local tools (above) are a second factor on your phone, not a replacement for the tool's own rules. Level 1 is one tap: use level 2 for anything that writes, and level 3 for production.
 
 ## Limitations
 

@@ -239,6 +239,24 @@ describe("sidebarModel", () => {
 
   it("off draws nothing", async () => {
     assert.deepEqual(sidebarModel(state(), "off"), { mode: "off" })
+    const warn =
+      "⚠ the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode"
+    const stale = state({
+      bridge: { ...state().bridge, versionWarnings: [warn] },
+    })
+    const full = sidebarModel(stale, "full")
+    assert.equal(full.mode === "full" && full.warning, warn)
+    assert.equal(
+      sidebarModel(state(), "full").mode === "full" &&
+        (sidebarModel(state(), "full") as { warning?: string }).warning,
+      undefined,
+    )
+    const compact = sidebarModel(stale, "compact")
+    assert.equal(compact.mode === "compact" && compact.parts[0].tone, "warn")
+    assert.match(
+      compact.mode === "compact" ? compact.parts[0].text : "",
+      /⚠ restart OpenCode/,
+    )
   })
 })
 
@@ -328,7 +346,13 @@ describe("rowDialog", () => {
 
 async function rig(
   chat: Record<string, unknown> = {},
-  o: { canChat?: boolean } = {},
+  o: {
+    canChat?: boolean
+    sidebar?: string
+    version?: string
+    installed?: string
+    tui?: string
+  } = {},
 ) {
   const cfg = parseConfig({
     channels: { telegram: { token: { env: "X" } } },
@@ -373,15 +397,27 @@ async function rig(
     cfg,
     host,
     owner: { pid: 42, startedAt: Date.now() },
-    version: "test",
+    version: o.version ?? "test",
+    installed: async () => ({
+      version: o.installed ?? o.version ?? "test",
+      dir: "/opt/plugin",
+    }),
   })
   const call: Transport = async (method, input) => {
     if (method === "op")
       return control.op(String(input.op), input.args as Record<string, never>)
-    control.heartbeat("t", Date.now())
+    control.heartbeat("t", Date.now(), String(input.version))
     return control.snapshot(["root"])
   }
-  const remote = new Remote({ call, roots: () => ["root"] })
+  const remote = new Remote({
+    call,
+    roots: () => ["root"],
+    version: o.tui ?? o.version ?? "test",
+    installed: async () => ({
+      version: o.installed ?? o.version ?? "test",
+      dir: "/opt/plugin",
+    }),
+  })
   await remote.poll()
   const tui = new SettingsStore()
   const app = { pilot: remote, settings: tui, router, bridge } as App & {
@@ -390,6 +426,56 @@ async function rig(
   }
   return { app, store, bridge, router, settings, tui, remote, control }
 }
+
+describe("version mismatch in the sidebar and in /oob version", () => {
+  it("shows no warning when the disk, the server and the TUI agree", async () => {
+    const { app, control } = await rig({}, { version: "0.23.0" })
+    await control.refreshInstalled(true)
+    await app.pilot.refresh()
+    assert.deepEqual(app.pilot.versionWarnings(), [])
+    assert.deepEqual(sidebarState(app, "root").bridge.versionWarnings, [])
+    const m = sidebarModel(sidebarState(app, "root"), "full")
+    assert.equal(m.mode === "full" && m.warning, undefined)
+    const lines = (await app.pilot.versionLines())!
+    assert.ok(lines.includes("All versions match."), lines.join("\n"))
+  })
+
+  it("warns in the header and in /oob version when the server runs an older version than the disk", async () => {
+    const { app, control } = await rig(
+      {},
+      { version: "0.22.0", installed: "0.23.0", tui: "0.23.0" },
+    )
+    await control.refreshInstalled(true)
+    await app.pilot.refresh()
+    const want =
+      "⚠ the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode"
+    assert.deepEqual(app.pilot.versionWarnings(), [want])
+    const s = sidebarState(app, "root")
+    const m = sidebarModel(s, "full")
+    assert.equal(m.mode === "full" && m.warning, want)
+    const lines = (await app.pilot.versionLines())!
+    assert.ok(lines.includes(want), lines.join("\n"))
+    assert.ok(lines.includes("TUI runs: 0.23.0"))
+    assert.ok(lines.some((l) => l.startsWith("Server runs: 0.22.0, pid 42")))
+  })
+
+  it("warns when this TUI runs an older version than the disk", async () => {
+    const { app, control } = await rig(
+      {},
+      { version: "0.23.0", installed: "0.23.0", tui: "0.22.0" },
+    )
+    await control.refreshInstalled(true)
+    await app.pilot.refresh()
+    assert.deepEqual(app.pilot.versionWarnings(), [
+      "⚠ a TUI runs 0.22.0 but 0.23.0 is installed: restart OpenCode",
+    ])
+    // The server learned the TUI's version from its heartbeat, so a chat says so too.
+    assert.match(
+      await control.versionText(),
+      /a TUI runs 0\.22\.0 but 0\.23\.0 is installed/,
+    )
+  })
+})
 
 describe("sidebarState and applyPick", () => {
   const go = (ok = true) => {

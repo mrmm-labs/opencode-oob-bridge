@@ -395,6 +395,7 @@ export class Bridge {
   readonly actions: Actions
   private watchListener: ((root: string) => void) | undefined
   private waitingSource: ((id: string) => number) | undefined
+  private versionSource: (() => Promise<string>) | undefined
   private night: NightSource | undefined
   private readonly tally = { pushes: 0, answered: 0, finished: 0, failed: 0 }
   private resumeListener: ((root: string, outcome: string) => void) | undefined
@@ -466,6 +467,7 @@ export class Bridge {
         this.onState(root, working ? "working" : undefined),
       sessions: () => this.activeSessions(),
       afk: () => this.afkStatus(),
+      version: async () => (await this.versionSource?.()) ?? "Version: unknown",
       digest: () => this.digestNow(),
       stuck: () => this.stuckSource?.() ?? [],
       resume: (root) => this.resume(root),
@@ -589,6 +591,11 @@ export class Bridge {
   /** How many messages wait on a session, to tell a resume that took them from one that did nothing. */
   onWaiting(fn: (id: string) => number): void {
     this.waitingSource = fn
+  }
+
+  /** What `/version` answers in a chat. */
+  onVersion(fn: () => Promise<string>): void {
+    this.versionSource = fn
   }
 
   /** What `/afk` answers in a chat: the state, never a way to change it. */

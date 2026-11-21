@@ -321,3 +321,68 @@ describe("forms: permissions", () => {
     await r.done()
   })
 })
+
+describe("permissions with an approvals gate", () => {
+  it("asks the gate with the action, the decision and the sender, and a refusal reaches nobody", async () => {
+    const r = await rig({ permissions: { remote: "all" } })
+    const asked: unknown[] = []
+    r.bridge.setPermissionGate((o) => {
+      asked.push({ action: o.action, decision: o.decision, id: o.channel?.id })
+      return { kind: "refuse", text: "This one is answered at the Mac." }
+    })
+    await r.ev("permission.asked", permission)
+    await r.tg.waitFor(() => r.sends().find((b) => /bash/.test(b.text)))
+    r.tap(`p:${r.store.list()[0].id}:a`)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
+    assert.deepEqual(asked, [
+      { action: "bash", decision: "always", id: "telegram" },
+    ])
+    assert.match(
+      r.tg.of("answerCallbackQuery")[0].body.text,
+      /answered at the Mac/,
+    )
+    assert.equal(r.seen.permissions.length, 0)
+    assert.equal(r.store.list()[0].state, "pending")
+    await r.done()
+  })
+
+  it("allow answers at once", async () => {
+    const r = await rig({ permissions: { remote: "once" } })
+    r.bridge.setPermissionGate(() => ({ kind: "allow" }))
+    await r.ev("permission.asked", permission)
+    await r.tg.waitFor(() => r.sends().find((b) => /bash/.test(b.text)))
+    r.tap(`p:${r.store.list()[0].id}:o`)
+    await r.tg.waitFor(() => r.seen.permissions[0])
+    assert.deepEqual(r.seen.permissions, [
+      { requestID: "per_1", decision: "once" },
+    ])
+    await r.done()
+  })
+
+  it("a code gate waits for the code, applies once it is approved, and never applies when it is not", async () => {
+    const r = await rig({ permissions: { remote: "once" } })
+    let release: (v: "approved" | "denied") => void = () => {}
+    r.bridge.setPermissionGate(() => ({
+      kind: "code",
+      wait: new Promise<"approved" | "denied">((res) => (release = res)),
+    }))
+    await r.ev("permission.asked", permission)
+    await r.tg.waitFor(() => r.sends().find((b) => /bash/.test(b.text)))
+    r.tap(`p:${r.store.list()[0].id}:o`)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
+    assert.equal(r.seen.permissions.length, 0, "nothing before the code")
+    release("denied")
+    await r.tg.waitFor(() =>
+      r.sends().find((b) => /no valid code, not applied/.test(b.text)),
+    )
+    assert.equal(r.seen.permissions.length, 0)
+    r.tap(`p:${r.store.list()[0].id}:o`)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[1])
+    release("approved")
+    await r.tg.waitFor(() => r.seen.permissions[0])
+    assert.deepEqual(r.seen.permissions, [
+      { requestID: "per_1", decision: "once" },
+    ])
+    await r.done()
+  })
+})

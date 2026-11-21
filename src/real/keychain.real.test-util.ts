@@ -25,8 +25,13 @@ await step("read before", () => store.get(name))
 await step("set", () => store.set(name, "first-value").then(() => "ok"))
 await step("read", async () => (await store.get(name)) === "first-value")
 await step("replace", () => store.set(name, "second-value").then(() => "ok"))
-await step("read after replace", async () => (await store.get(name)) === "second-value")
+await step(
+  "read after replace",
+  async () => (await store.get(name)) === "second-value",
+)
 await step("delete", () => store.delete(name).then(() => "ok"))
 await step("read after delete", () => store.get(name))
-console.log(JSON.stringify({ exec: process.execPath, bun: process.versions.bun, steps }))
+console.log(
+  JSON.stringify({ exec: process.execPath, bun: process.versions.bun, steps }),
+)
 process.exit(failed ? 1 : 0)
