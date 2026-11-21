@@ -2,7 +2,12 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import WebSocket from "ws"
 
-import { seal, sealUpgrade, type Down } from "./shared/frame.ts"
+import {
+  LINK_KEY_HEADER,
+  seal,
+  sealUpgrade,
+  type Down,
+} from "./shared/frame.ts"
 import { FakeBridge, rig, SECRET } from "./rig.test-util.ts"
 
 describe("the link face", () => {
@@ -48,6 +53,65 @@ describe("the link face", () => {
     assert.ok(refused.replay >= 1 && refused.mac >= 1 && refused.format >= 1)
     assert.ok(Object.keys(refused).some((k) => k.startsWith("clock skew")))
     assert.equal(r.link.up(), false)
+    await r.done()
+  })
+
+  it("with LINK_KEY set, refuses a missing or wrong key with 401 before the HMAC, and logs without the key", async () => {
+    const KEY = "p".repeat(40)
+    const r = await rig({ env: { LINK_KEY: KEY } })
+    const good = { ...sealUpgrade(SECRET), [LINK_KEY_HEADER]: KEY }
+    for (const headers of [
+      sealUpgrade(SECRET),
+      { ...sealUpgrade(SECRET), [LINK_KEY_HEADER]: "x".repeat(40) },
+      { ...sealUpgrade(SECRET), [LINK_KEY_HEADER]: "" },
+      { ...sealUpgrade(SECRET), [LINK_KEY_HEADER]: KEY + "x" },
+    ])
+      await assert.rejects(
+        FakeBridge.connect(r.linkUrl, SECRET, headers),
+        /refused 401/,
+      )
+    assert.equal(r.link.up(), false)
+    assert.equal(r.link.refused().key, 4)
+    assert.equal(
+      r.lines.filter((l) => /"reason":"key"/.test(l)).length,
+      1,
+      "one log line, the rest suppressed",
+    )
+    assert.ok(!r.lines.join("\n").includes(KEY), "no key material in the log")
+    const b = await FakeBridge.connect(r.linkUrl, SECRET, good)
+    assert.equal(r.link.up(), true)
+    b.close()
+    await r.done()
+  })
+
+  it("with LINK_KEY set the HMAC is still required", async () => {
+    const KEY = "p".repeat(40)
+    const r = await rig({ env: { LINK_KEY: KEY } })
+    await assert.rejects(
+      FakeBridge.connect(r.linkUrl, SECRET, {
+        [LINK_KEY_HEADER]: KEY,
+      }),
+      /refused 401/,
+    )
+    await assert.rejects(
+      FakeBridge.connect(r.linkUrl, SECRET, {
+        ...sealUpgrade("w".repeat(48)),
+        [LINK_KEY_HEADER]: KEY,
+      }),
+      /refused 401/,
+    )
+    assert.equal(r.link.up(), false)
+    await r.done()
+  })
+
+  it("without LINK_KEY a key header is ignored and nothing changes", async () => {
+    const r = await rig()
+    const b = await FakeBridge.connect(r.linkUrl, SECRET, {
+      ...sealUpgrade(SECRET),
+      [LINK_KEY_HEADER]: "anything",
+    })
+    assert.equal(r.link.up(), true)
+    b.close()
     await r.done()
   })
 

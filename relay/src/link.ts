@@ -2,7 +2,7 @@
  * The link face: one authenticated bridge at a time, dialing in over a
  * WebSocket. Requests go down as frames, responses come back as frames.
  */
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 import {
   createServer,
   type IncomingMessage,
@@ -14,6 +14,7 @@ import { WebSocketServer, type WebSocket } from "ws"
 
 import {
   describe,
+  LINK_KEY_HEADER,
   LINK_PATH,
   MAX_CHUNK_BYTES,
   MAX_FRAME_BYTES,
@@ -57,6 +58,8 @@ type Pending = {
 
 export type LinkOptions = {
   secret: string
+  /** When set, the upgrade must carry it in X-OOB-Link-Key, checked before the HMAC. */
+  key?: string
   maxSkewMs: number
   now?: () => number
   keepAliveMs: number
@@ -107,6 +110,29 @@ export class Link {
     return { ...this.refusals }
   }
 
+  private keyOk(headers: IncomingMessage["headers"]): boolean {
+    const got = headers[LINK_KEY_HEADER.toLowerCase()]
+    if (typeof got !== "string") return false
+    const digest = (s: string) => createHash("sha256").update(s).digest()
+    return timingSafeEqual(digest(got), digest(this.o.key!))
+  }
+
+  private keyLoggedAt = 0
+  private keySuppressed = 0
+
+  /** One line a minute at most: a scan of the link port must not fill the log. */
+  private keyLog(): void {
+    const at = this.now()
+    if (at - this.keyLoggedAt < 60_000) return void this.keySuppressed++
+    log("link_refused", {
+      what: "upgrade",
+      reason: "key",
+      suppressed: this.keySuppressed,
+    })
+    this.keyLoggedAt = at
+    this.keySuppressed = 0
+  }
+
   private refuse(what: string, reason: string): void {
     this.refusals[reason] = (this.refusals[reason] ?? 0) + 1
     log("link_refused", { what, reason })
@@ -131,6 +157,11 @@ export class Link {
     }
     if ((req.url ?? "").split("?")[0] !== LINK_PATH)
       return deny(404, "Not Found")
+    if (this.o.key !== undefined && !this.keyOk(req.headers)) {
+      this.refusals.key = (this.refusals.key ?? 0) + 1
+      this.keyLog()
+      return deny(401, "Unauthorized")
+    }
     const r = this.verifier.openUpgrade(req.headers)
     if (!r.ok) {
       this.refuse("upgrade", describe(r))

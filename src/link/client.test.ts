@@ -5,6 +5,7 @@ import { describe, it } from "node:test"
 import { WebSocketServer, type WebSocket } from "ws"
 
 import { LinkClient } from "./client.ts"
+import { startLink } from "./start.ts"
 import { seal, Verifier, type Down, type Up } from "./frame.ts"
 import type { Handler } from "./serve.ts"
 
@@ -17,10 +18,12 @@ async function relay(o: { port?: number } = {}) {
   const conns: WebSocket[] = []
   const frames: Up[] = []
   const refused: string[] = []
+  const headers: Array<Record<string, string | string[] | undefined>> = []
   let attempts = 0
   const server = createServer()
   server.on("upgrade", (req, socket, head) => {
     attempts++
+    headers.push(req.headers)
     const r = verify.openUpgrade(req.headers)
     if (!r.ok) {
       refused.push(r.reason)
@@ -45,6 +48,7 @@ async function relay(o: { port?: number } = {}) {
     conns,
     frames,
     refused,
+    headers,
     attempts: () => attempts,
     sendDown,
     sendRaw: (t: string) => conns.at(-1)!.send(t),
@@ -116,6 +120,106 @@ describe("the outbound link", () => {
     )
     assert.equal(r.attempts(), 0)
     await r.close()
+  })
+
+  it("sends the key header on the dial when link.key is set, and not otherwise", async () => {
+    const KEY = "k".repeat(40)
+    const r = await relay()
+    const withKey = new LinkClient({
+      url: r.url,
+      secret: async () => SECRET,
+      key: async () => KEY,
+      handler: ok,
+      backoff: fast,
+    })
+    withKey.start()
+    await r.waitFor(() => withKey.up())
+    assert.equal(r.headers[0]["x-oob-link-key"], KEY)
+    await withKey.stop()
+    const plain = client(r.url)
+    plain.start()
+    await r.waitFor(() => plain.up())
+    assert.equal(r.headers.at(-1)!["x-oob-link-key"], undefined)
+    await plain.stop()
+    await r.close()
+  })
+
+  it("trims the newline a key command prints, so the header equals the relay's key", async () => {
+    const KEY = "k".repeat(40)
+    const r = await relay()
+    const c = startLink({
+      cfg: {
+        link: {
+          url: r.url,
+          allowHosts: [],
+          secret: { command: ["printf", SECRET + "\n"] },
+          key: { command: ["printf", KEY + " \n\n"] },
+        },
+      } as never,
+      core: { handle: ok } as never,
+      edge: { refresh: async () => {}, edge: {} } as never,
+    })!
+    await r.waitFor(() => c.up())
+    assert.equal(r.headers[0]["x-oob-link-key"], KEY)
+    await c.stop()
+    await r.close()
+  })
+
+  it("waits with 'no key' while the key cannot be read, and never logs it", async () => {
+    const KEY = "k".repeat(40)
+    const r = await relay()
+    let key: string | undefined
+    const c = new LinkClient({
+      url: r.url,
+      secret: async () => SECRET,
+      key: async () => key,
+      handler: ok,
+      backoff: fast,
+    })
+    c.start()
+    await r.waitFor(() => c.status().reason === "no key")
+    assert.equal(r.attempts(), 0)
+    key = KEY
+    await r.waitFor(() => c.up())
+    assert.ok(!JSON.stringify(c.status()).includes(KEY))
+    await c.stop()
+    await r.close()
+  })
+
+  it("dials a host listed in allowHosts over wss, and refuses it over ws", async () => {
+    const dialed: string[] = []
+    class Stub {
+      readyState = 0
+      onopen = null
+      onmessage = null
+      onclose = null
+      onerror = null
+      constructor(url: string) {
+        dialed.push(url)
+      }
+      send() {}
+      close() {}
+    }
+    const mk = (url: string) =>
+      new LinkClient({
+        url,
+        allowHosts: ["oob-link.home.example.test"],
+        secret: async () => SECRET,
+        handler: ok,
+        backoff: fast,
+        socket: Stub as never,
+      })
+    const good = mk("wss://oob-link.home.example.test/link")
+    good.start()
+    await new Promise((x) => setTimeout(x, 50))
+    assert.deepEqual(dialed, ["wss://oob-link.home.example.test/link"])
+    assert.notEqual(good.status().state, "refused")
+    await good.stop()
+    const bad = mk("ws://oob-link.home.example.test/link")
+    bad.start()
+    assert.equal(bad.status().state, "refused")
+    assert.match(bad.status().reason ?? "", /needs wss/)
+    assert.equal(dialed.length, 1)
   })
 
   it("stays down with a reason while there is no secret, and connects when it appears", async () => {

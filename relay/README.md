@@ -54,34 +54,35 @@ The image runs as user 65532 with a read-only root file system, so it needs no w
 
 Every setting is an environment variable. A secret may instead be read from a file: set `NAME_FILE` to a path (for example a mounted secret) and leave `NAME` unset.
 
-| Variable                    | Default                    | Meaning                                                                                                                                                                |
-| --------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LINK_SECRET`               | required                   | Shared key for the link, at least 32 characters. Also `LINK_SECRET_FILE`.                                                                                              |
-| `OPERATOR_USER_ID`          | unset                      | Your numeric Telegram user id. Unset or not a number: every `/v1` request is refused with 503.                                                                         |
-| `TELEGRAM_BOT_TOKEN_VERIFY` | unset                      | Token of the bot that owns the Mini App, used only to check the init data signature. Unset: the relay checks shape, user and age, and the bridge checks the signature. |
-| `MAX_AGE_SECONDS`           | 3600                       | Oldest init data accepted, by its `auth_date`.                                                                                                                         |
-| `HEARTBEAT_TOKEN`           | unset                      | Bearer token for `POST /beat`, at least 32 characters. Unset: `/beat` is off.                                                                                          |
-| `TELEGRAM_BOT_TOKEN`        | unset                      | Bot that sends dead-man alerts. Only `sendMessage` is called, never `getUpdates`.                                                                                      |
-| `TELEGRAM_CHAT_ID`          | unset                      | Chat that receives the alerts. Either of the two unset: alerts are only logged.                                                                                        |
-| `TELEGRAM_API_BASE`         | `https://api.telegram.org` | Telegram API base, for tests or a local Bot API server.                                                                                                                |
-| `PORT`                      | 8080                       | Public listener.                                                                                                                                                       |
-| `LINK_PORT`                 | 8081                       | Link listener (`/link` only).                                                                                                                                          |
-| `METRICS_PORT`              | 9090                       | Metrics listener (`/metrics` only).                                                                                                                                    |
-| `BIND_ADDRESS`              | `0.0.0.0`                  | Address for all three listeners.                                                                                                                                       |
-| `LINK_MAX_SKEW_SECONDS`     | 60                         | Clock difference tolerated on the link (1 to 60).                                                                                                                      |
-| `MAX_BODY_BYTES`            | 262144                     | Largest request body, 256 KiB at most.                                                                                                                                 |
-| `SSE_KEEPALIVE_SECONDS`     | 25                         | Comment line sent on idle event streams.                                                                                                                               |
-| `REQUEST_TIMEOUT_SECONDS`   | 60                         | How long a request waits for the bridge.                                                                                                                               |
-| `CLIENT_IP_HEADER`          | unset                      | Header your proxy sets with the real client address, for rate limits. Unset: the socket address is used.                                                               |
-| `RATE_LIMIT_PER_SECOND`     | 20                         | Sustained requests per client.                                                                                                                                         |
-| `RATE_LIMIT_BURST`          | 40                         | Burst allowance per client.                                                                                                                                            |
-| `BEAT_RATE_PER_SECOND`      | 5                          | Limit on `POST /beat`.                                                                                                                                                 |
-| `MAX_IN_FLIGHT_PER_CLIENT`  | 20                         | Open requests per client.                                                                                                                                              |
-| `MAX_IN_FLIGHT_TOTAL`       | 16                         | Open requests in all, matching what the bridge accepts.                                                                                                                |
-| `INTERVAL_SECONDS`          | 30                         | Heartbeat interval the bridge uses; silence is judged against it.                                                                                                      |
-| `MISSED_BEATS`              | 3                          | Intervals of silence before the alert.                                                                                                                                 |
-| `STOPPING_GRACE_SECONDS`    | 300                        | How long a clean stop is tolerated before it counts as silence.                                                                                                        |
-| `REMINDER_SECONDS`          | 1800                       | Gap between repeated alerts while silent.                                                                                                                              |
+| Variable                    | Default                    | Meaning                                                                                                                                                                                                                                    |
+| --------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `LINK_SECRET`               | required                   | Shared key for the link, at least 32 characters. Also `LINK_SECRET_FILE`.                                                                                                                                                                  |
+| `LINK_KEY`                  | unset                      | Optional second lock for the link: a pre-shared key, at least 32 characters (the relay refuses to start with a shorter one), that the bridge sends in the `X-OOB-Link-Key` header. Also `LINK_KEY_FILE`. Unset: the header is not checked. |
+| `OPERATOR_USER_ID`          | unset                      | Your numeric Telegram user id. Unset or not a number: every `/v1` request is refused with 503.                                                                                                                                             |
+| `TELEGRAM_BOT_TOKEN_VERIFY` | unset                      | Token of the bot that owns the Mini App, used only to check the init data signature. Unset: the relay checks shape, user and age, and the bridge checks the signature.                                                                     |
+| `MAX_AGE_SECONDS`           | 3600                       | Oldest init data accepted, by its `auth_date`.                                                                                                                                                                                             |
+| `HEARTBEAT_TOKEN`           | unset                      | Bearer token for `POST /beat`, at least 32 characters. Unset: `/beat` is off.                                                                                                                                                              |
+| `TELEGRAM_BOT_TOKEN`        | unset                      | Bot that sends dead-man alerts. Only `sendMessage` is called, never `getUpdates`.                                                                                                                                                          |
+| `TELEGRAM_CHAT_ID`          | unset                      | Chat that receives the alerts. Either of the two unset: alerts are only logged.                                                                                                                                                            |
+| `TELEGRAM_API_BASE`         | `https://api.telegram.org` | Telegram API base, for tests or a local Bot API server.                                                                                                                                                                                    |
+| `PORT`                      | 8080                       | Public listener.                                                                                                                                                                                                                           |
+| `LINK_PORT`                 | 8081                       | Link listener (`/link` only).                                                                                                                                                                                                              |
+| `METRICS_PORT`              | 9090                       | Metrics listener (`/metrics` only).                                                                                                                                                                                                        |
+| `BIND_ADDRESS`              | `0.0.0.0`                  | Address for all three listeners.                                                                                                                                                                                                           |
+| `LINK_MAX_SKEW_SECONDS`     | 60                         | Clock difference tolerated on the link (1 to 60).                                                                                                                                                                                          |
+| `MAX_BODY_BYTES`            | 262144                     | Largest request body, 256 KiB at most.                                                                                                                                                                                                     |
+| `SSE_KEEPALIVE_SECONDS`     | 25                         | Comment line sent on idle event streams.                                                                                                                                                                                                   |
+| `REQUEST_TIMEOUT_SECONDS`   | 60                         | How long a request waits for the bridge.                                                                                                                                                                                                   |
+| `CLIENT_IP_HEADER`          | unset                      | Header your proxy sets with the real client address, for rate limits. Unset: the socket address is used.                                                                                                                                   |
+| `RATE_LIMIT_PER_SECOND`     | 20                         | Sustained requests per client.                                                                                                                                                                                                             |
+| `RATE_LIMIT_BURST`          | 40                         | Burst allowance per client.                                                                                                                                                                                                                |
+| `BEAT_RATE_PER_SECOND`      | 5                          | Limit on `POST /beat`.                                                                                                                                                                                                                     |
+| `MAX_IN_FLIGHT_PER_CLIENT`  | 20                         | Open requests per client.                                                                                                                                                                                                                  |
+| `MAX_IN_FLIGHT_TOTAL`       | 16                         | Open requests in all, matching what the bridge accepts.                                                                                                                                                                                    |
+| `INTERVAL_SECONDS`          | 30                         | Heartbeat interval the bridge uses; silence is judged against it.                                                                                                                                                                          |
+| `MISSED_BEATS`              | 3                          | Intervals of silence before the alert.                                                                                                                                                                                                     |
+| `STOPPING_GRACE_SECONDS`    | 300                        | How long a clean stop is tolerated before it counts as silence.                                                                                                                                                                            |
+| `REMINDER_SECONDS`          | 1800                       | Gap between repeated alerts while silent.                                                                                                                                                                                                  |
 
 The relay logs one JSON line per event. Warnings for unset values appear at start-up.
 
@@ -115,7 +116,18 @@ To register the Mini App, message BotFather: `/newapp`, pick the bot, and give i
    }
    ```
 
-   The link URL must be loopback, a tailnet address or a `*.ts.net` name. The bridge refuses anything else.
+   The link URL must be loopback, a tailnet address or a `*.ts.net` name, or a host you list in `link.allowHosts` (exact hostnames, `wss://` only; `ws://` stays loopback and tailnet). The bridge refuses anything else. For a LAN-only ingress with TLS:
+
+   ```jsonc
+   "link": {
+     "url": "wss://oob-link.home.example.test/link",
+     "allowHosts": ["oob-link.home.example.test"],
+     "secret": { "command": ["security", "find-generic-password", "-s", "oob-relay-link", "-w"] },
+     "key": { "command": ["security", "find-generic-password", "-s", "oob-relay-link-key", "-w"] }
+   }
+   ```
+
+   `link.key` is optional and pairs with the relay's `LINK_KEY`: generate it the same way as the secret, store it on both sides, and the bridge sends it as `X-OOB-Link-Key` on every dial. Trailing whitespace and newlines from the command are trimmed. It is never logged.
 
 4. Restart the bridge. `/oob status` shows `Relay link: up`.
 
@@ -133,6 +145,7 @@ Dead-man state is in memory. After a relay restart it stays quiet until the firs
 
 - **Init data is checked at both ends.** The relay verifies the Telegram signature, the age (`MAX_AGE_SECONDS`) and the user id. The bridge verifies them again, so a compromised relay cannot act as you.
 - **The link is authenticated.** The upgrade and every frame carry an HMAC keyed by the shared secret, a timestamp and a nonce. Replays and frames in the wrong direction are dropped. A second bridge replaces the first.
+- **An optional key before the upgrade.** With `LINK_KEY` set, `/link` checks the `X-OOB-Link-Key` header before the WebSocket upgrade, with a constant-time compare. A missing or wrong key gets 401 and no upgrade, and one log line a minute at most (counted in the refusals, never holding the key). The HMAC handshake is still required after it, so the key is a second lock, not a replacement. Send it only over `wss://` or a private network: it is a plain header.
 - **A narrow public surface.** Only `/app/`, `/v1/`, `GET /healthz` and `POST /beat` are answered. Anything else is 404 before it touches the link.
 - **Bearer tokens never cross.** The bridge refuses its own bearer token on the link; only init data is accepted there.
 - **No `getUpdates`.** The relay sends with `sendMessage` only.

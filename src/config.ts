@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises"
+import { isIP } from "node:net"
 
 import { parseApprovals, type ApprovalsConfig } from "./approvals/config.ts"
 import { legacyConfigPath, configPath, legacy } from "./paths.ts"
@@ -91,7 +92,13 @@ export type Config = {
   miniApp: { url?: string; link?: string; maxAgeSeconds: number }
   /** The dead-man heartbeat: off unless `url` is set. */
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
-  link: { url?: string; secret?: TokenSource }
+  /** `allowHosts`: exact hostnames, besides loopback and the tailnet, the link may dial over wss. `key`: sent as X-OOB-Link-Key. */
+  link: {
+    url?: string
+    secret?: TokenSource
+    key?: TokenSource
+    allowHosts: string[]
+  }
   /** Approvals for local tools over a unix socket: off unless `enabled`. */
   approvals: ApprovalsConfig
   /** The card posted when a turn ends with changes or after a long turn. */
@@ -280,9 +287,9 @@ function parseDeadman(raw: unknown): Config["deadman"] | { error: string } {
 }
 
 function parseLink(raw: unknown): Config["link"] | { error: string } {
-  if (raw === undefined) return {}
+  if (raw === undefined) return { allowHosts: [] }
   if (!isObject(raw)) return { error: "link must be an object" }
-  const { url, secret } = raw
+  const { url, secret, key, allowHosts } = raw
   if (url !== undefined && (typeof url !== "string" || url.trim() === ""))
     return { error: "link.url must be a URL" }
   const source = secret === undefined ? undefined : parseTokenSource(secret)
@@ -290,7 +297,31 @@ function parseLink(raw: unknown): Config["link"] | { error: string } {
     return {
       error: 'link.secret must be { "env": NAME } or { "command": [...] }',
     }
-  return { url: url?.trim(), secret: source }
+  const keySource = key === undefined ? undefined : parseTokenSource(key)
+  if (key !== undefined && !keySource)
+    return {
+      error: 'link.key must be { "env": NAME } or { "command": [...] }',
+    }
+  const hosts: string[] = []
+  if (allowHosts !== undefined) {
+    if (!Array.isArray(allowHosts))
+      return { error: "link.allowHosts must be a list of hostnames" }
+    for (const h of allowHosts) {
+      const host = typeof h === "string" ? h.trim().toLowerCase() : ""
+      if (
+        !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(
+          host,
+        ) ||
+        isIP(host)
+      )
+        return {
+          error:
+            "link.allowHosts entries must be exact hostnames: no wildcard, scheme, port, path or address",
+        }
+      hosts.push(host)
+    }
+  }
+  return { url: url?.trim(), secret: source, key: keySource, allowHosts: hosts }
 }
 
 export const DEFAULT_CORE_PORT = 7842

@@ -21,6 +21,27 @@ describe("relay config", () => {
     assert.match(bad({ LINK_SECRET: "short" }), /at least 32/)
   })
 
+  it("takes an optional LINK_KEY of 32 characters, also from LINK_KEY_FILE", () => {
+    assert.equal(ok(base).config.linkKey, undefined)
+    assert.match(
+      bad({ ...base, LINK_KEY: "short" }),
+      /LINK_KEY must be at least 32/,
+    )
+    assert.equal(
+      ok({ ...base, LINK_KEY: "p".repeat(32) }).config.linkKey,
+      "p".repeat(32),
+    )
+    const r = loadConfig(
+      { ...base, LINK_KEY_FILE: "/run/secrets/key" },
+      () => "q".repeat(40) + "\n",
+    )
+    assert.ok(!("error" in r) && r.config.linkKey === "q".repeat(40))
+    const e = loadConfig({ ...base, LINK_KEY_FILE: "/nope" }, () => {
+      throw new Error("ENOENT")
+    })
+    assert.ok("error" in e && /LINK_KEY_FILE cannot be read/.test(e.error))
+  })
+
   it("has the documented defaults", () => {
     const { config: c } = ok(base)
     assert.deepEqual(

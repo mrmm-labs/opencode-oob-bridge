@@ -59,8 +59,17 @@ export function startLink(o: {
   const url = o.cfg.link.url
   if (!url) return undefined
   let secret: string | undefined
+  let key: string | undefined
   const client = new LinkClient({
     url,
+    allowHosts: o.cfg.link.allowHosts,
+    key: o.cfg.link.key
+      ? async () => {
+          if (key) return key
+          key = await resolveToken(o.cfg.link.key!)
+          return key
+        }
+      : undefined,
     secret: async () => {
       await o.edge.refresh()
       if (secret) return secret
