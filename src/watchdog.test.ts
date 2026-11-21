@@ -68,11 +68,10 @@ describe("the receive-loop watchdog", () => {
 describe("a wedged Telegram loop", () => {
   it("shows as silent while sends still work, and the dead-man check turns degraded", async () => {
     const tg = await fakeTelegram()
-    let calls = 0
+    let hung = false
     const channel = new TelegramConnector({
-      // The second token request never returns, as a hung secret command would.
-      token: async () =>
-        ++calls > 2 ? new Promise<string>(() => {}) : tg.token,
+      // Once set, a token request never returns, as a hung secret command would.
+      token: async () => (hung ? new Promise<string>(() => {}) : tg.token),
       chatId: "42",
       apiBase: tg.url,
       pollSeconds: 1,
@@ -82,7 +81,8 @@ describe("a wedged Telegram loop", () => {
     channel.start(async () => undefined, ac.signal)
     await tg.waitFor(() => channel.status().pollOkAt)
     assert.ok(channel.status().pollOkAt)
-    await sleep(120)
+    hung = true
+    await sleep(1500)
     const st = channel.status()
     assert.ok((st.silentMs ?? 0) >= 100, "the loop made no step since")
     const wedged = {
