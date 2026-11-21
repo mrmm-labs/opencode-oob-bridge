@@ -6,6 +6,7 @@
 import type { Pairing } from "./connectors/types.ts"
 import type { Delivery, SidebarMode } from "./config.ts"
 import type { OpResult, Snapshot } from "./rpc.ts"
+import type { NightView } from "./overnight.ts"
 import type { Afk } from "./settings.ts"
 
 export type ChannelView = {
@@ -76,7 +77,10 @@ export interface Pilot {
 
   /** The bridge's own state: who runs it, how the operator counts as away, which sessions are stuck, which are watched. */
   instance(): InstanceView | undefined
-  setAfk(mode: Afk): Promise<Outcome>
+  /** `span` (8h) limits a forced `on`. */
+  setAfk(mode: Afk, span?: string): Promise<Outcome>
+  /** The overnight plan: add a brief, start, end, clear or status. The TUI only: a chat can end a plan, never start one. */
+  overnight(args: Record<string, unknown>): Promise<Outcome>
   resume(root: string): Promise<Outcome>
   restart(): Promise<Outcome>
   /** The core API: its state, or a new token. */
@@ -92,7 +96,9 @@ export type InstanceView = {
     minutes: number
     tuis: number
     lastInputAt: number
+    until?: number
   }
+  night?: NightView
   core?: Snapshot["core"]
   eventsSeen?: number
   lastEventAt?: number

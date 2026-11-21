@@ -85,6 +85,8 @@ const group = (titles: string[]): string[] => {
 export function digestText(o: {
   records: DigestRecord[]
   waiting: string[]
+  /** The night section of an overnight plan. */
+  night?: string[]
 }): string {
   const of = (k: DigestRecord["k"]) =>
     o.records.filter((r) => r.k === k).map((r) => r.title ?? "a session")
@@ -101,6 +103,7 @@ export function digestText(o: {
           ...o.waiting.map((w) => "• " + w),
         ]
       : []),
+    ...(o.night ?? []),
   ]
   return out.join("\n")
 }

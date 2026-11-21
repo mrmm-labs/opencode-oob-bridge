@@ -30,6 +30,7 @@ import { resolveOtel, Telemetry } from "./otel.ts"
 import { PendingStore } from "./pending.ts"
 import { definition, type FormRelay } from "./rpc.ts"
 import { Router } from "./routing.ts"
+import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
 import { isObject, sleep } from "./util.ts"
 
@@ -279,6 +280,14 @@ export function serverHost(
         resume: true,
       })
     },
+    synthetic: async (sessionID, text, resume) => {
+      await ctx.session.synthetic({
+        sessionID,
+        text,
+        description: "Overnight scope",
+        resume,
+      })
+    },
     undo: async (sessionID) => {
       const last = list<{ id?: string; type?: string }>(
         await ctx.session.context({ sessionID }),
@@ -430,6 +439,9 @@ async function boot(
   const tel = new Telemetry(resolveOtel(cfg.otel))
   const settings = new SettingsStore(join(dir, "settings.json"))
   await settings.load()
+  const nightStore = new OvernightStore(join(dir, "overnight.json"))
+  await nightStore.load()
+  let deadmanRef: Deadman | undefined
   const connectors: Connector[] = Object.entries(cfg.channels).map(
     ([name, c]) => {
       const connector = connectorTypes[c.type].create(
@@ -495,6 +507,13 @@ async function boot(
     version: await version(),
     restart,
     probe,
+    overnight: nightStore,
+    deadman: () =>
+      !cfg.deadman.url
+        ? "unconfigured"
+        : deadmanRef?.acknowledged()
+          ? "ok"
+          : "unacked",
   })
   const core = new Core({
     cfg,
@@ -528,6 +547,7 @@ async function boot(
     bridge,
     rpcRegistered,
   })
+  deadmanRef = deadman
   for (const [id, v] of Object.entries(settings.sessions())) {
     if (v.chat) bridge.restoreChat(id)
     if (v.delivery === "queue" || v.delivery === "steer")

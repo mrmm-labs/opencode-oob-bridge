@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode/plugin/tui"
 
 import type { Delivery, SidebarMode } from "./config.ts"
 import { renderQr } from "./qr.ts"
+import { parseBriefWords } from "./overnight.ts"
 import type { Afk, SettingsStore } from "./settings.ts"
 import type { ChannelView, Outcome, Pilot } from "./view.ts"
 import { rowDialog, sidebarState, TITLE } from "./sidebar.ts"
@@ -354,14 +355,117 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
           ],
           current: () => app.pilot.instance()?.afk?.mode,
         },
+        {
+          name: "for",
+          kind: "text",
+          title: "For how long",
+          placeholder: "8h",
+          optional: true,
+        },
       ],
       run: async (v) => {
-        const out = await app.pilot.setAfk(v.state as Afk)
+        const out = await app.pilot.setAfk(
+          v.state as Afk,
+          v.for?.trim() || undefined,
+        )
         toast(
           ctx,
-          out.ok ? `Away: ${v.state}` : out.text,
+          out.ok ? `Away: ${v.state}${v.for ? ` for ${v.for}` : ""}` : out.text,
           out.ok ? "success" : "warning",
         )
+      },
+    }),
+    sub({
+      name: "overnight",
+      title: "Overnight plan",
+      description:
+        "Keep sessions moving while you are away: add a brief for each session, start with an end time, or end the plan. Started here only.",
+      group: "Instance",
+      args: [
+        {
+          name: "action",
+          kind: "enum",
+          title: "Overnight",
+          placeholder: "status|add|start|end|clear",
+          options: () => [
+            {
+              value: "status",
+              title: "Status",
+              description: "the plan and the checklist",
+            },
+            { value: "add", title: "Add a session", description: "its brief" },
+            {
+              value: "start",
+              title: "Start",
+              description: "run the checklist, then the plan",
+            },
+            {
+              value: "end",
+              title: "End",
+              description: "stop all automation now",
+            },
+            {
+              value: "clear",
+              title: "Clear",
+              description: "forget the briefs not yet started",
+            },
+          ],
+        },
+        {
+          name: "details",
+          kind: "text",
+          title: "Details",
+          placeholder: "<session> task=... | <until> [yes]",
+          optional: true,
+        },
+      ],
+      run: async (v) => {
+        const rest = (v.details ?? "").trim()
+        if (v.action === "add") {
+          const p = parseBriefWords(rest)
+          if ("error" in p) return toast(ctx, p.error, "warning")
+          const ref = p.session.toLowerCase()
+          const hits = (app.pilot.instance()?.sessions ?? []).filter(
+            (s) =>
+              s.id === p.session ||
+              s.id.startsWith(p.session) ||
+              [s.name, s.title].some((t) => t?.toLowerCase().includes(ref)),
+          )
+          if (hits.length !== 1)
+            return toast(
+              ctx,
+              hits.length
+                ? "More than one session matches: be more exact."
+                : "No such session.",
+              "warning",
+            )
+          const out = await app.pilot.overnight({
+            action: "add",
+            root: hits[0].id,
+            ...p.brief,
+          })
+          return toast(ctx, out.text, out.ok ? "success" : "warning")
+        }
+        if (v.action === "start") {
+          const [until, yes] = rest.split(/\s+/)
+          const out = await app.pilot.overnight({
+            action: "start",
+            until,
+            yes: yes === "yes",
+          })
+          if (out.ok) return toast(ctx, out.text, "success")
+          return void (await ctx.ui.dialog.alert({
+            title: "Overnight",
+            message: out.text,
+          }))
+        }
+        const out = await app.pilot.overnight({ action: v.action })
+        if (v.action === "status")
+          return void (await ctx.ui.dialog.alert({
+            title: "Overnight",
+            message: out.text,
+          }))
+        toast(ctx, out.text, out.ok ? "success" : "warning")
       },
     }),
     sub({
@@ -593,7 +697,13 @@ function instanceLines(app: App): string[] {
     )
   if (i.afk)
     lines.push(
-      `Away: ${i.afk.away ? "away" : "here"} (${i.afk.mode}), ${i.afk.tuis} window${i.afk.tuis === 1 ? "" : "s"}, last input ${ago(Date.now() - i.afk.lastInputAt)}`,
+      `Away: ${i.afk.away ? "away" : "here"} (${i.afk.mode}${i.afk.until ? `, ${ago(i.afk.until - Date.now()).replace(" ago", "")} left` : ""}), ${i.afk.tuis} window${i.afk.tuis === 1 ? "" : "s"}, last input ${ago(Date.now() - i.afk.lastInputAt)}`,
+    )
+  if (i.night)
+    lines.push(
+      i.night.ended
+        ? `Overnight: ended (${i.night.ended})`
+        : `Overnight: ${i.night.sessions.length} session(s) until ${new Date(i.night.until).toTimeString().slice(0, 5)}`,
     )
   for (const s of i.stuck)
     lines.push(

@@ -757,7 +757,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
   it("lists the operator's commands first, and leaves out what is off", async () => {
     const r = await rig({ host: withUndo })
     const c = await r.tg.waitFor(() => r.tg.of("setMyCommands")[0])
-    assert.deepEqual(names(c).slice(0, 9), [
+    assert.deepEqual(names(c).slice(0, 10), [
       "status",
       "stop",
       "model",
@@ -766,6 +766,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
       "undo",
       "resume",
       "afk",
+      "night",
       "new",
     ])
     assert.ok(!names(c).includes("digest"), "the digest is off")
@@ -918,6 +919,15 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
     const m = await r.answered(/Away mode:/)
     assert.match(m.body.text, /changed at the Mac/)
     assert.equal(r.router.afkMode(), before)
+    await r.done()
+  })
+
+  it("/night shows the plan and ends it, and cannot start one", async () => {
+    const r = await rig()
+    r.say("/night")
+    await r.answered(/not planned/)
+    r.say("/night end")
+    await r.answered(/no overnight plan running/i)
     await r.done()
   })
 

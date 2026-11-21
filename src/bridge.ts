@@ -22,6 +22,7 @@ import type {
   TurnCard,
 } from "./connectors/types.ts"
 import { buildMenu } from "./commandmenu.ts"
+import type { NightSource } from "./overnight.ts"
 import { DigestLog, digestText } from "./digest.ts"
 import { digestDue, isQuiet } from "./quiet.ts"
 import { Actions, Refused, type Result } from "./core/actions.ts"
@@ -117,6 +118,8 @@ export interface Host {
   ): Promise<void>
   /** Wakes a session that holds messages it is not working on. Absent when the host cannot. */
   resume?(sessionID: string): Promise<void>
+  /** A message the session reads as an instruction; it wakes the session when `resume` is true. */
+  synthetic?(sessionID: string, text: string, resume: boolean): Promise<void>
   /** The tail of a session's conversation, oldest first. Absent when the host cannot read it. */
   messages?(
     sessionID: string,
@@ -382,6 +385,9 @@ export class Bridge {
   readonly actions: Actions
   private watchListener: ((root: string) => void) | undefined
   private waitingSource: ((id: string) => number) | undefined
+  private night: NightSource | undefined
+  private readonly tally = { pushes: 0, answered: 0, finished: 0, failed: 0 }
+  private resumeListener: ((root: string, outcome: string) => void) | undefined
   /** The alert sent for each stuck session, and whether its button was used. */
   private readonly alerts = new Map<
     string,
@@ -453,6 +459,11 @@ export class Bridge {
       digest: () => this.digestNow(),
       stuck: () => this.stuckSource?.() ?? [],
       resume: (root) => this.resume(root),
+      night: () => this.night?.status() ?? "Overnight: not planned",
+      endNight: async () =>
+        (await this.night?.end("chat"))
+          ? yes("The overnight plan is ended: nothing acts automatically now.")
+          : no("There is no overnight plan running."),
       remote: (root) => void this.remote.add(root),
     })
   }
@@ -505,6 +516,66 @@ export class Bridge {
     this.stuckSource = fn
   }
 
+  /** What the bridge has done so far, to tell what happened while the operator was away. */
+  counts(): {
+    pushes: number
+    answered: number
+    finished: number
+    failed: number
+  } {
+    return { ...this.tally }
+  }
+
+  /** Hands the bridge the overnight plan: it quiets pushes and adds the night to the digest. */
+  setNight(src: NightSource): void {
+    this.night = src
+  }
+
+  /** Told how each resume ended (working, drained or no_effect). */
+  onResume(fn: (root: string, outcome: string) => void): void {
+    this.resumeListener = fn
+  }
+
+  private nightActive(): boolean {
+    return (this.night?.until() ?? 0) > this.now()
+  }
+
+  /** One message in the session's topic about the night: silent unless loud. */
+  async nightNote(
+    root: string,
+    kind: string,
+    text: string,
+    loud: boolean,
+  ): Promise<void> {
+    const r = await this.routed(root)
+    if (!r) return
+    const f = this.fmt("notice", { text })
+    await this.dispatch(
+      "notice",
+      r.to,
+      (ch) => ({
+        ...f,
+        ...this.shape(ch, r.session),
+        ...this.card(ch, "notice", r.facts, () => ({ kind: "notice", text })),
+      }),
+      { root, silent: !loud },
+    )
+    log("overnight_note", { session: root, kind, loud })
+  }
+
+  /** Sends the night report as a digest once a plan has ended. */
+  async nightDigest(): Promise<void> {
+    if (!this.night?.pending()) return
+    const text = this.digestBody() || "Nothing to report."
+    this.digestLog.append({ k: "digest", at: this.now() })
+    await this.dispatch(
+      "notice",
+      this.active().filter((c) => c.capabilities.inboundPrompt),
+      () => ({ title: "Digest", message: text, tags: ["calendar"] }),
+      {},
+    )
+  }
+
   /** How many messages wait on a session, to tell a resume that took them from one that did nothing. */
   onWaiting(fn: (id: string) => number): void {
     this.waitingSource = fn
@@ -515,7 +586,7 @@ export class Bridge {
     const away = this.router.away()
     return [
       `Away mode: ${this.router.afkMode()} (you count as ${away ? "away" : "here"})`,
-      "Overnight: not planned",
+      this.night?.status() ?? "Overnight: not planned",
       "The mode is changed at the Mac: /oob afk on, off or auto.",
     ].join("\n")
   }
@@ -525,6 +596,7 @@ export class Bridge {
       undo: this.host.undo !== undefined,
       resume: this.host.resume !== undefined,
       digest: this.cfg.digest !== undefined,
+      night: true,
     })
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
@@ -778,6 +850,8 @@ export class Bridge {
       root?: string
       pending?: string
       refs?: Record<string, string>
+      /** Overrides quiet hours: silent, or with sound. */
+      silent?: boolean
       /** Where a follow-up goes when an edit fails. */
       session?: { id: string; name: string }
     },
@@ -801,7 +875,13 @@ export class Bridge {
           parent: span.id,
           attrs: { ...attrs, "pending.id": o.pending },
         })
-        const push = { ...build(ch), stats, ...this.silence(kind) }
+        const push = {
+          ...build(ch),
+          stats,
+          ...(o.silent !== undefined
+            ? { silent: o.silent }
+            : this.silence(kind)),
+        }
         let res = await this.safely(ch, async () =>
           edit ? ch.update!(old, push) : ch.send(push),
         )
@@ -816,6 +896,7 @@ export class Bridge {
           )
         }
         const sent = res !== undefined && res !== false
+        if (sent) this.tally.pushes++
         ok[ch.id] = sent
         if (typeof res === "string") refs[ch.id] = res
         this.tel.count(sent ? "oob.pushes" : "oob.push.errors", attrs)
@@ -1397,18 +1478,25 @@ export class Bridge {
   }
 
   private quietNow(): boolean {
-    return this.cfg.quiet !== undefined && isQuiet(this.cfg.quiet, this.now())
+    return (
+      this.nightActive() ||
+      (this.cfg.quiet !== undefined && isQuiet(this.cfg.quiet, this.now()))
+    )
   }
 
   /** Quiet hours: every push is silent unless its kind is on the break-through list. */
   private silence(kind: Kind): { silent?: boolean } {
+    if (this.nightActive())
+      return { silent: !(this.cfg.overnight.wake as string[]).includes(kind) }
     const q = this.cfg.quiet
     if (!q || !this.quietNow()) return {}
     return { silent: !(q.breakthrough as string[]).includes(kind) }
   }
 
   private record(k: "finished" | "failed", title: string) {
-    if (this.cfg.digest) this.digestLog.append({ k, at: this.now(), title })
+    this.tally[k]++
+    if (this.cfg.digest || this.nightActive())
+      this.digestLog.append({ k, at: this.now(), title })
   }
 
   /** The digest for the period since the last one, and whether it holds anything. */
@@ -1427,7 +1515,9 @@ export class Bridge {
           " waiting)",
       ),
     ]
-    return digestText({ records: this.digestLog.pending(), waiting })
+    const night = this.night?.pending() ? this.night.report() : []
+    if (night.length) void this.night?.done()
+    return digestText({ records: this.digestLog.pending(), waiting, night })
   }
 
   /** `/digest`: the text now, and the period counts as covered. */
@@ -1660,6 +1750,7 @@ export class Bridge {
 
   /** Counts an answer and how long the prompt waited for it. */
   private answered(p: Pending, by: "phone" | "tui", ch?: Connector) {
+    if (by === "phone") this.tally.answered++
     const attrs = { answered_by: by, "connector.type": ch?.type }
     this.tel.count("oob.answers", attrs)
     this.tel.record("oob.answer.latency_ms", attrs, this.now() - p.askedAt)
@@ -1889,7 +1980,7 @@ export class Bridge {
    */
   async resume(
     root: string,
-    source: "button" | "command" | "sidebar" = "command",
+    source: "button" | "command" | "sidebar" | "overnight" = "command",
   ): Promise<Outcome> {
     const where = "Open it at the Mac to resume it."
     if (!this.host.resume)
@@ -1946,6 +2037,7 @@ export class Bridge {
       this.watchers.delete(ac)
     }
     log("resume", { session: root, source, outcome, at })
+    this.resumeListener?.(root, outcome)
     const text = {
       working: "▶ Resumed: the session is working again.",
       drained: "▶ Resumed: the session took its waiting messages.",

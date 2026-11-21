@@ -126,6 +126,11 @@ export class Deadman {
     this.o = o
   }
 
+  /** Whether the receiver took the last heartbeat. */
+  acknowledged(): boolean {
+    return this.outcome === "ok"
+  }
+
   start(): void {
     if (this.timer) return
     void this.beat()

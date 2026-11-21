@@ -4,7 +4,12 @@ import { createHash } from "node:crypto"
 export type MenuCommand = { command: string; description: string }
 
 /** What decides which commands are offered. */
-export type Features = { undo: boolean; resume: boolean; digest: boolean }
+export type Features = {
+  undo: boolean
+  resume: boolean
+  digest: boolean
+  night?: boolean
+}
 
 const NAME_RE = /^[a-z0-9_]{1,32}$/
 const MAX_DESCRIPTION = 256
@@ -23,6 +28,11 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
   },
   { command: "afk", description: "Who counts as away (change it at the Mac)" },
   { command: "digest", description: "Send the digest now", needs: "digest" },
+  {
+    command: "night",
+    description: "Show the overnight plan, or end it",
+    needs: "night",
+  },
   { command: "new", description: "Start a session in a listed project" },
   { command: "sessions", description: "Sessions mirrored here, with links" },
   { command: "projects", description: "Projects a new session can use" },

@@ -4,6 +4,7 @@
  */
 import type { Rpc } from "@opencode/plugin"
 
+import type { NightView } from "./overnight.ts"
 import type { Afk } from "./settings.ts"
 
 export const RPC_ID = "oob-bridge"
@@ -86,7 +87,13 @@ export type Snapshot = {
     minutes: number
     lastInputAt: number
     tuis: number
+    /** When a timed "on" ends. */
+    until?: number
   }
+  /** The overnight plan, once there has been one. */
+  night?: NightView
+  /** What happened while the operator was away, for a minute after they come back. */
+  back?: { id: number; text: string; at: number }
   channels: ChannelRow[]
   pending: number
   sessions: SessionRow[]
