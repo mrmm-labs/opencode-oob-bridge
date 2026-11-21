@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.0...v0.25.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* write each Telegram update down before moving the offset, and log what became of it ([#84](https://github.com/mrmm-labs/opencode-oob-bridge/issues/84)) ([1a2180c](https://github.com/mrmm-labs/opencode-oob-bridge/commit/1a2180cd385f469620653229f8a23eeefdc6e7c5))
+
 ## [0.25.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.24.0...v0.25.0) (2026-11-21)
 
 
