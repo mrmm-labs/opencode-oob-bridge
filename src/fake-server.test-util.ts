@@ -9,6 +9,14 @@ type Fn = (input: unknown) => Promise<unknown>
 
 export type FakeServer = ReturnType<typeof fakeServer>
 
+/** Never the service of the machine the tests run on: no service unless a test names one. */
+export const noService = {
+  ready: async () => false,
+  reply: async () => {
+    throw new Error("no service in tests")
+  },
+}
+
 /** What the host demands of an RPC answer or event: JSON values only, so no `undefined` keys. */
 function assertJson(v: unknown, path = "$"): void {
   if (v === undefined || typeof v === "function" || typeof v === "bigint")

@@ -111,8 +111,8 @@ export interface Host {
   rename(sessionID: string, title: string): Promise<void>
   /** Stages a revert of the session's last turn through a TUI. False when there is nothing to revert. */
   undo?(sessionID: string): Promise<boolean>
-  /** Whether a form reply can be sent now (a TUI is attached). Unset: assume it can. */
-  canReplyForm?(): boolean
+  /** Whether a form reply can be delivered now (the service answers, or a TUI is attached). Unset: assume it can. */
+  canReplyForm?(): boolean | Promise<boolean>
   /** Answers a permission request. Absent when the host cannot. */
   replyPermission?(
     sessionID: string,
@@ -1015,7 +1015,7 @@ export class Bridge {
     if (questions.length === 0) return
     const r = await this.routed(form.sessionID)
     if (!r) return
-    const reachable = this.host.canReplyForm?.() ?? true
+    const reachable = (await this.host.canReplyForm?.()) ?? true
     const id = this.store.newId()
     const qvars = (hint: string): Vars => ({
       ...r.vars,
@@ -1090,7 +1090,7 @@ export class Bridge {
       )
     const r = await this.routed(root)
     if (!r) return no("This session is not routed to a channel.")
-    const reachable = this.host.canReplyForm?.() ?? true
+    const reachable = (await this.host.canReplyForm?.()) ?? true
     const questions = p.questions ?? []
     await this.pushQuestion(
       p,

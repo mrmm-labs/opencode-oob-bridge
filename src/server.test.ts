@@ -6,7 +6,7 @@ import { afterEach, describe, it } from "node:test"
 
 import { fakeNtfy } from "./connectors/fake-ntfy.test-util.ts"
 import { fakeTelegram } from "./connectors/fake-telegram.test-util.ts"
-import { fakeServer } from "./fake-server.test-util.ts"
+import { fakeServer, noService } from "./fake-server.test-util.ts"
 import plugin from "./index.ts"
 import { formRelay } from "./remote.ts"
 import { RPC_ID, type Snapshot } from "./rpc.ts"
@@ -54,9 +54,12 @@ async function setup() {
     n,
     dir,
     env,
-    load: async () => {
+    // Never the service of the machine the tests run on: no service unless a test names one.
+    load: async (o: Parameters<typeof startServer>[1] = {}) => {
       const server = fakeServer()
-      const stop = await withEnv(env, () => startServer(server.ctx))
+      const stop = await withEnv(env, () =>
+        startServer(server.ctx, { service: noService, ...o }),
+      )
       if (stop) running.push(stop)
       return { server, stop }
     },
@@ -82,7 +85,7 @@ describe("the server half", () => {
     const server = fakeServer()
     const stop = await withEnv(
       { OPENCODE_OOB_BRIDGE_CONFIG: "/nonexistent/oob-bridge.jsonc" },
-      () => startServer(server.ctx),
+      () => startServer(server.ctx, { service: noService }),
     )
     assert.equal(stop, undefined)
     assert.equal(server.registrations(), 0)
@@ -104,6 +107,99 @@ describe("the server half", () => {
     await stop!()
     assert.equal(server.disposed(), 1)
     await t.n.close()
+  })
+
+  describe("a question with no TUI attached", () => {
+    const form = {
+      form: {
+        id: "frm_1",
+        sessionID: "root",
+        metadata: { kind: "question" },
+        fields: [
+          {
+            key: "q0",
+            type: "string",
+            options: [{ label: "Yes" }, { label: "No" }],
+          },
+        ],
+      },
+    }
+    const svc = (ok: boolean, fail?: string) => {
+      const replies: Array<Record<string, unknown>> = []
+      return {
+        replies,
+        service: {
+          ready: async () => ok,
+          reply: async (r: Record<string, unknown>) => {
+            if (fail) throw new Error(fail)
+            replies.push(r)
+          },
+        },
+      }
+    }
+
+    it("is posted with buttons and answered through the service, with no window involved", async () => {
+      const t = await setup()
+      const s = svc(true)
+      const { server, stop } = await t.load({ service: s.service })
+      await server.call({
+        method: "op",
+        input: { op: "afk", args: { mode: "on" } },
+      })
+      const relayed: unknown[] = []
+      server.onTui("rpc.oob-bridge.form", (e) => relayed.push(e.data))
+      server.emit("form.created", form)
+      const pub = await t.n.waitFor(() => t.n.published[0])
+      const actions = pub.body.actions as Array<{ body: string }>
+      assert.ok(actions?.length >= 1, "buttons")
+      assert.ok(!/no OpenCode window/i.test(JSON.stringify(pub.body)))
+      await t.n.waitFor(() => t.n.subscribes.length > 0)
+      t.n.send("r1", actions[0].body)
+      const reply = await t.n.waitFor(() => s.replies[0])
+      assert.equal(reply.sessionID, "root")
+      assert.equal(reply.formID, "frm_1")
+      assert.deepEqual(reply.answer, { q0: "Yes" })
+      assert.deepEqual(relayed, [], "no window was asked")
+      await stop!()
+      await t.n.close()
+    })
+
+    it("falls back to the 'answer at the Mac' note only when the service cannot reply", async () => {
+      const t = await setup()
+      const { server, stop } = await t.load({ service: svc(false).service })
+      await server.call({
+        method: "op",
+        input: { op: "afk", args: { mode: "on" } },
+      })
+      server.emit("form.created", form)
+      const pub = await t.n.waitFor(() => t.n.published[0])
+      assert.ok(/no OpenCode window/i.test(JSON.stringify(pub.body)))
+      assert.ok(!(pub.body.actions as unknown[] | undefined)?.length)
+      await stop!()
+      await t.n.close()
+    })
+
+    it("relays through a window when the service refuses the reply and one is attached", async () => {
+      const t = await setup()
+      const s = svc(true, "503")
+      const { server, stop } = await t.load({ service: s.service })
+      const relayed: Array<Record<string, unknown>> = []
+      server.onTui("rpc.oob-bridge.form", (e) => relayed.push(e.data as never))
+      await server.call({
+        method: "op",
+        input: { op: "afk", args: { mode: "on" } },
+      })
+      await status(server, "win")
+      server.emit("form.created", form)
+      const pub = await t.n.waitFor(() => t.n.published[0])
+      await t.n.waitFor(() => t.n.subscribes.length > 0)
+      t.n.send("r1", (pub.body.actions as Array<{ body: string }>)[0].body)
+      await t.n.waitFor(() => relayed[0])
+      assert.equal(relayed[0].to, "win")
+      assert.equal(relayed[0].formID, "frm_1")
+      await stop!()
+      await t.n.close()
+    })
   })
 
   it("answers with JSON values only: a connector status holding undefined is not refused by the host", async () => {
@@ -129,7 +225,7 @@ describe("the server half", () => {
         OPENCODE_OOB_BRIDGE_DATA: dir,
         OOBB_JSON_TOKEN: "123456:TESTTOKEN",
       },
-      () => startServer(server.ctx),
+      () => startServer(server.ctx, { service: noService }),
     )
     if (stop) running.push(stop)
     const s = await status(server)
@@ -265,7 +361,7 @@ describe("the server half", () => {
     const load = async (standbyMs?: number) => {
       const server = fakeServer()
       const stop = await withEnv(env, () =>
-        startServer(server.ctx, { standbyMs }),
+        startServer(server.ctx, { standbyMs, service: noService }),
       )
       return { server, stop }
     }

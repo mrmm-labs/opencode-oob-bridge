@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
@@ -15,6 +15,7 @@ import {
 import { Telemetry } from "./otel.ts"
 import { PendingStore } from "./pending.ts"
 import { Router } from "./routing.ts"
+import { flushLog } from "./logger.ts"
 import { traces } from "./trace.ts"
 import { sleep } from "./util.ts"
 
@@ -1196,6 +1197,53 @@ describe("chat from Telegram: the reaction follows the message", () => {
     )
     assert.equal(ids.size, 1, "one message wore all three")
     await r.done()
+  })
+
+  it("💔 replaces ⚡ when the reply cannot be sent", async () => {
+    const r = await chatRig({ chat: { stream: false } })
+    await chatOn(r)
+    r.tg.message(CHAT, "run the tests", undefined, 9001)
+    assert.deepEqual(await reactions(r, 2), ["👀", "⚡"])
+    for (let i = 0; i < 4; i++) r.tg.fail("sendMessage", 400)
+    await turn(r, "all green")
+    assert.deepEqual(await reactions(r, 3), ["👀", "⚡", "💔"])
+    await r.done()
+  })
+
+  it("logs each reaction that was set, with its stage", async () => {
+    const logFile = join(
+      await mkdtemp(join(tmpdir(), "oobb-log-")),
+      "bridge.log",
+    )
+    const prev = process.env.OPENCODE_OOB_BRIDGE_LOG
+    process.env.OPENCODE_OOB_BRIDGE_LOG = logFile
+    try {
+      const r = await chatRig({ chat: { stream: false } })
+      await chatOn(r)
+      r.tg.message(CHAT, "run the tests", undefined, 9001)
+      await reactions(r, 2)
+      await turn(r, "all green")
+      await reactions(r, 3)
+      await flushLog()
+      const stages = (await readFile(logFile, "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((l) => l.event === "telegram_reaction")
+      assert.deepEqual(
+        stages.map((l) => l.stage),
+        ["received", "sent", "done"],
+      )
+      assert.ok(
+        stages.every((l) => l.ok && l.message_id === stages[0].message_id),
+        "one message, every stage set",
+      )
+      await r.done()
+    } finally {
+      await flushLog()
+      if (prev === undefined) delete process.env.OPENCODE_OOB_BRIDGE_LOG
+      else process.env.OPENCODE_OOB_BRIDGE_LOG = prev
+    }
   })
 
   it("a queued message shows ✍, and 👌 when the session replies", async () => {

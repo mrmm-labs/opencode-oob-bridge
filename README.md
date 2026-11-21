@@ -276,8 +276,9 @@ What you get in Telegram:
   first answer still wins, from the phone or the TUI. You can still reply with one answer per
   question, separated by `|` (for example `1 | yes | 2,3`), as on ntfy.
 - A question with more than 10 options gets no buttons: reply by number or text.
-- A form needs an open OpenCode window to take the reply. With none, the message says to answer
-  at the Mac and has no buttons.
+- A form is answered through the local OpenCode service, so no window needs to be open. A
+  window relays the reply only if the service refuses it. When neither can take it, the message
+  says to answer at the Mac and has no buttons.
 - A **permission** prompt has no buttons unless `permissions.remote` allows them (see
   [Permissions](#permissions-from-a-channel)).
 - Messages are HTML, with everything escaped, and at most 4096 characters: long text is cut in
