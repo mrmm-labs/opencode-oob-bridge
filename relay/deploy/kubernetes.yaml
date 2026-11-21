@@ -1,0 +1,86 @@
+# Generic example. Replace the placeholders; create the Secret from your own values.
+#   kubectl create secret generic oob-relay \
+#     --from-literal=LINK_SECRET=... --from-literal=HEARTBEAT_TOKEN=... \
+#     --from-literal=TELEGRAM_BOT_TOKEN=... --from-literal=TELEGRAM_BOT_TOKEN_VERIFY=...
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oob-relay
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: oob-relay
+  template:
+    metadata:
+      labels:
+        app: oob-relay
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: relay
+          image: <your-registry>/oob-relay:<tag>
+          ports:
+            - { name: public, containerPort: 8080 }
+            - { name: link, containerPort: 8081 }
+            - { name: metrics, containerPort: 9090 }
+          env:
+            - { name: OPERATOR_USER_ID, value: "<your-telegram-user-id>" }
+            - { name: TELEGRAM_CHAT_ID, value: "<your-chat-id>" }
+            - { name: MAX_AGE_SECONDS, value: "3600" }
+            - { name: CLIENT_IP_HEADER, value: "X-Forwarded-For" }
+          envFrom:
+            - secretRef:
+                name: oob-relay
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet: { path: /healthz, port: public }
+          livenessProbe:
+            httpGet: { path: /healthz, port: public }
+          resources:
+            requests: { cpu: 10m, memory: 48Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oob-relay
+spec:
+  selector:
+    app: oob-relay
+  ports:
+    - { name: public, port: 8080, targetPort: public }
+    - { name: link, port: 8081, targetPort: link }
+    - { name: metrics, port: 9090, targetPort: metrics }
+---
+# Expose only the public port. Reach the link and metrics ports from a private network.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oob-relay
+spec:
+  ingressClassName: <your-ingress-class>
+  tls:
+    - hosts: [relay.example.com]
+      secretName: oob-relay-tls
+  rules:
+    - host: relay.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oob-relay
+                port: { name: public }

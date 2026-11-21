@@ -311,6 +311,7 @@ export class Remote implements Pilot {
       afk: s.afk,
       night: s.night,
       core: s.core,
+      link: s.link,
       eventsSeen: s.events.seen,
       lastEventAt: s.events.lastAt,
       sessions: s.sessions.map((x) => ({

@@ -10,6 +10,7 @@ import { execFile } from "node:child_process"
 import type { ApprovalService } from "./approvals/service.ts"
 import type { Bridge, Host } from "./bridge.ts"
 import type { CoreHandle } from "./core/index.ts"
+import type { LinkStatus } from "./link/client.ts"
 import type { Config } from "./config.ts"
 import type { Pairing } from "./connectors/types.ts"
 import { log } from "./logger.ts"
@@ -154,6 +155,8 @@ export class Control {
 
   /** The core API, once the server has started it. */
   core: CoreHandle | undefined
+  /** The relay link, when `link.url` is set and the server has started it. */
+  link: { status(): LinkStatus } | undefined
   /** The approvals service, once the server has started it. */
   approvals: ApprovalService | undefined
 
@@ -587,6 +590,7 @@ export class Control {
         address: this.core.status().address,
         reason: this.core.status().reason,
       },
+      link: this.link?.status(),
       sessions,
       stuck: this.stuck(),
       events: { seen: this.seen, lastAt: this.lastAt },

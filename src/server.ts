@@ -25,6 +25,8 @@ import { DigestLog } from "./digest.ts"
 import { Control, sqliteProbe } from "./control.ts"
 import { Core } from "./core/index.ts"
 import { Deadman, selfCheck, urlProblem } from "./deadman.ts"
+import type { LinkClient } from "./link/client.ts"
+import { edgeAuth, startLink } from "./link/start.ts"
 import { resolveToken } from "./token.ts"
 import { acquire, read as readLock, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
@@ -385,26 +387,29 @@ async function startDeadman(o: {
   control: Control
   bridge: Bridge
   rpcRegistered: () => boolean
+  link?: LinkClient
 }): Promise<Deadman | undefined> {
   const d = o.cfg.deadman
-  if (!d.url) return undefined
-  const why = urlProblem(d.url)
-  if (why) {
-    log("deadman_refused", { reason: why })
-    return undefined
+  let url: string | undefined
+  let token: string | undefined
+  if (d.url) {
+    const why = urlProblem(d.url)
+    if (why) log("deadman_refused", { reason: why })
+    else {
+      token = await resolveToken(d.token).catch((err: Error) => {
+        log("deadman_token_error", { message: err.message })
+        return undefined
+      })
+      if (token) url = d.url
+      else log("deadman_refused", { reason: "no token" })
+    }
   }
-  const token = await resolveToken(d.token).catch((err: Error) => {
-    log("deadman_token_error", { message: err.message })
-    return undefined
-  })
-  if (!token) {
-    log("deadman_refused", { reason: "no token" })
-    return undefined
-  }
+  if (!url && !o.link) return undefined
   const lockFile = join(o.dir, "owner.lock")
   const dm = new Deadman({
-    url: d.url,
+    url,
     token,
+    link: o.link,
     intervalMs: d.intervalSeconds * 1000,
     version: o.version,
     check: () =>
@@ -509,12 +514,13 @@ async function boot(
     probe,
     overnight: nightStore,
     deadman: () =>
-      !cfg.deadman.url
+      !cfg.deadman.url && !cfg.link.url
         ? "unconfigured"
         : deadmanRef?.acknowledged()
           ? "ok"
           : "unacked",
   })
+  const edge = edgeAuth(cfg, bridge)
   const core = new Core({
     cfg,
     dir,
@@ -522,6 +528,7 @@ async function boot(
     host,
     control,
     version: RUNNING,
+    edge: edge.edge,
     sources: {
       tail: [
         ["server", host.messages && ((id, n) => host.messages!(id, n))],
@@ -539,6 +546,8 @@ async function boot(
   })
   control.core = core
   await core.start()
+  const link = startLink({ cfg, core, edge })
+  control.link = link
   const approvals = new ApprovalService({
     cfg: () => cfg.approvals,
     dir,
@@ -556,6 +565,7 @@ async function boot(
     control,
     bridge,
     rpcRegistered,
+    link,
   })
   deadmanRef = deadman
   for (const [id, v] of Object.entries(settings.sessions())) {
@@ -634,6 +644,7 @@ async function boot(
     control,
     async stop() {
       await deadman?.stop()
+      await link?.stop()
       ac.abort()
       await approvals.stop()
       await core.stop()

@@ -111,6 +111,7 @@ export type InstanceView = {
   }
   night?: NightView
   core?: Snapshot["core"]
+  link?: Snapshot["link"]
   eventsSeen?: number
   lastEventAt?: number
   sessions: Array<{

@@ -5,7 +5,7 @@ import type { Bridge, Host } from "../bridge.ts"
 import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { log } from "../logger.ts"
-import { EventRing, startApi, type Api } from "./api.ts"
+import { EventRing, handler, startApi, type Api, type ApiDeps } from "./api.ts"
 import { TokenStore } from "./auth.ts"
 import { resolveListen } from "./net.ts"
 import { Views, type Sources } from "./views.ts"
@@ -34,6 +34,8 @@ export class Core implements CoreHandle {
     control: Control
     version: string
     sources: Sources
+    /** What a request through the relay is checked against. */
+    edge?: ApiDeps["edge"]
   }
   private api: Api | undefined
   private state: Omit<CoreStatus, "tokenFile"> = {
@@ -56,6 +58,27 @@ export class Core implements CoreHandle {
     return this.tokens.rotate()
   }
 
+  private deps(): ApiDeps {
+    return {
+      views: new Views({ ...this.o }),
+      actions: this.o.bridge.actions,
+      control: this.o.control,
+      cfg: this.o.cfg,
+      tokens: this.tokens,
+      ring: this.ring,
+      version: this.o.version,
+      edge: this.o.edge,
+    }
+  }
+
+  private handlerFn: ReturnType<typeof handler> | undefined
+
+  /** The handler the relay link runs requests through; the same code as the socket's. */
+  handle(...a: Parameters<ReturnType<typeof handler>>): void {
+    this.handlerFn ??= handler(this.deps())
+    this.handlerFn(...a)
+  }
+
   async start(): Promise<void> {
     const { cfg } = this.o
     if (!cfg.core.bind) return
@@ -67,18 +90,10 @@ export class Core implements CoreHandle {
     }
     try {
       await this.tokens.load()
-      this.api = await startApi(
-        {
-          views: new Views({ ...this.o }),
-          actions: this.o.bridge.actions,
-          control: this.o.control,
-          cfg,
-          tokens: this.tokens,
-          ring: this.ring,
-          version: this.o.version,
-        },
-        { host: where.host, port: cfg.core.port },
-      )
+      this.api = await startApi(this.deps(), {
+        host: where.host,
+        port: cfg.core.port,
+      })
       this.state = {
         state: "listening",
         address: `${where.host}:${this.api.port}`,
@@ -93,7 +108,7 @@ export class Core implements CoreHandle {
 
   /** An event for the stream: a type and the session it is about, never text. */
   event(type: string, sessionID: string | undefined): void {
-    if (this.api) this.ring.push(type, sessionID ? { sessionID } : {})
+    this.ring.push(type, sessionID ? { sessionID } : {})
   }
 
   async stop(): Promise<void> {

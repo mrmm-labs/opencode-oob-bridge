@@ -104,9 +104,16 @@ export async function selfCheck(i: CheckInput): Promise<Health> {
   return { state: reasons.length ? "degraded" : "up", reasons, channels }
 }
 
+/** The relay link as a second path: a `beat` frame, taken as acknowledged when its `ack` comes back. */
+export type BeatLink = {
+  up(): boolean
+  beat(beat: Heartbeat, timeoutMs: number): Promise<boolean>
+}
+
 export type DeadmanOptions = {
-  url: string
-  token: string
+  url?: string
+  token?: string
+  link?: BeatLink
   intervalMs: number
   version: string
   check(): Promise<Health>
@@ -121,6 +128,7 @@ export class Deadman {
   private timer: ReturnType<typeof setInterval> | undefined
   private inflight = false
   private outcome = ""
+  private linkOk = false
 
   constructor(o: DeadmanOptions) {
     this.o = o
@@ -128,7 +136,7 @@ export class Deadman {
 
   /** Whether the receiver took the last heartbeat. */
   acknowledged(): boolean {
-    return this.outcome === "ok"
+    return this.outcome === "ok" || this.linkOk
   }
 
   start(): void {
@@ -176,6 +184,24 @@ export class Deadman {
   }
 
   private async send(beat: Heartbeat, timeoutMs: number): Promise<void> {
+    const link = this.o.link
+    const viaLink = link?.up()
+      ? link.beat(beat, timeoutMs).catch(() => false)
+      : Promise.resolve(false)
+    await Promise.all([
+      this.sendHttps(beat, timeoutMs),
+      viaLink.then((ok) => this.noteLink(ok, beat)),
+    ])
+  }
+
+  private noteLink(ok: boolean, beat: Heartbeat): void {
+    if (ok === this.linkOk) return
+    this.linkOk = ok
+    log("deadman_link", { acknowledged: ok, state: beat.state, seq: beat.seq })
+  }
+
+  private async sendHttps(beat: Heartbeat, timeoutMs: number): Promise<void> {
+    if (!this.o.url || !this.o.token) return
     let outcome: string
     try {
       const res = await (this.o.fetch ?? fetch)(this.o.url, {
