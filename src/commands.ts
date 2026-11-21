@@ -42,6 +42,7 @@ const ANYWHERE_COMMANDS = [
   "digest",
   "night",
   "version",
+  "trace",
 ] as const
 const ALIASES: Record<string, string> = { effort: "variant", start: "help" }
 const KNOWN = new Set<string>([
@@ -78,6 +79,8 @@ export type CommandDeps = {
   afk(): string
   /** What /version shows: what is installed and what each half runs. */
   version(): Promise<string>
+  /** The last `n` updates and sends, one line each plus their path. */
+  trace(n: number): string[]
   /** The digest text for the period since the last one, marking it covered; a refusal when the digest is off. */
   digest(): Promise<Outcome>
   /** The overnight plan in words. */
@@ -265,6 +268,12 @@ export class Commands {
     if (name === "afk") return this.done(info, "applied", yes(this.d.afk()))
     if (name === "version")
       return this.done(info, "applied", yes(await this.d.version()))
+    if (name === "trace")
+      return this.done(
+        info,
+        "applied",
+        yes(this.d.trace(Number(m.command?.args) || 5).join("\n")),
+      )
     if (name === "night") {
       const arg = (m.command?.args ?? "").trim().toLowerCase()
       if (arg === "end" || arg === "stop")
@@ -334,6 +343,7 @@ export class Commands {
           "/resume: wake this session if it is stuck",
           "/afk: who counts as away (read only)",
           "/version: the plugin version installed and running",
+          "/trace [n]: the last n updates and sends, with their path and outcome",
           "/night: the overnight plan; /night end ends it",
           "/steer <text>: inject a message into the running turn (or start with !)",
           "/compact: compact the session",
@@ -351,6 +361,7 @@ export class Commands {
         "/resume: wake a stuck session (lists them)",
         "/afk: who counts as away (read only)",
         "/version: the plugin version installed and running",
+        "/trace [n]: the last n updates and sends, with their path and outcome",
         "/night: the overnight plan; /night end ends it",
         "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /compact, /rename, /chat off.",
       ].join("\n"),

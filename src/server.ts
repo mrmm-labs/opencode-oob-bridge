@@ -31,6 +31,7 @@ import { resolveToken } from "./token.ts"
 import { acquire, read as readLock, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
 import { resolveOtel, Telemetry } from "./otel.ts"
+import { traces } from "./trace.ts"
 import { PendingStore } from "./pending.ts"
 import { definition, type FormRelay } from "./rpc.ts"
 import { Router } from "./routing.ts"
@@ -441,6 +442,7 @@ async function boot(
   instances = 1,
 ): Promise<Running> {
   const tel = new Telemetry(resolveOtel(cfg.otel))
+  traces.attach(tel, cfg.log.level)
   const settings = new SettingsStore(join(dir, "settings.json"))
   await settings.load()
   const nightStore = new OvernightStore(join(dir, "overnight.json"))

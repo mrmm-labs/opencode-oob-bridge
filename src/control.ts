@@ -25,6 +25,7 @@ import {
   parseUntil,
 } from "./overnight.ts"
 import type { Afk, SettingsStore } from "./settings.ts"
+import { traces } from "./trace.ts"
 import { formatDuration, isObject } from "./util.ts"
 import {
   activeConfigPath,
@@ -594,6 +595,7 @@ export class Control {
         reason: this.core.status().reason,
       },
       link: this.link?.status(),
+      trace: traces.statLines(),
       sessions,
       stuck: this.stuck(),
       events: { seen: this.seen, lastAt: this.lastAt },
@@ -876,6 +878,15 @@ export class Control {
           return await this.approvalsOp(args)
         case "version":
           return this.done({ ok: true, data: await this.versionReport() })
+        case "trace":
+          return this.done({
+            ok: true,
+            data: {
+              lines: traces.format(
+                typeof args.n === "number" ? args.n : Number(args.n) || 5,
+              ),
+            },
+          })
         case "test":
           return this.done({ ok: true, data: await bridge.test() })
         case "pair": {

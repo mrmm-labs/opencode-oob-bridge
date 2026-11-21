@@ -113,6 +113,7 @@ nothing and opens no connection.**
 | `permissions.remote`      | `off`                                                | `off`: a permission is answered in the TUI only. `once`: Allow once and Deny buttons. `all`: also Always, which saves a rule. See [Permissions](#permissions-from-a-channel). |
 | `messages`                | built in                                             | Push formats per kind, overriding the defaults field by field. See below.                                                                                                     |
 | `profiles`                | `[]`                                                 | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                                                                                    |
+| `log`                     | `{ "level": "info" }`                                | How much `bridge.log` holds: `warn`, `info` (every inbound and outbound outcome) or `debug` (also each step). See [Tracing](#tracing-telegram).                               |
 | `otel`                    | off                                                  | OpenTelemetry export. See [Telemetry](#telemetry).                                                                                                                            |
 | `core.bind`               | off                                                  | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                                                                              |
 | `deadman.url`             | off                                                  | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                                                                                          |
@@ -566,6 +567,7 @@ the value. Bare `/oob` (and `/ntfy`) stays the picker.
 | `/oob core <status\|rotate>`                                                                                           | Show the core API (address and token file), or replace its token: the old token is refused at once.                                |
 | `/oob status`                                                                                                          | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                                   |
 | `/oob approvals <status\|pair-caller\|revoke-caller\|totp\|replace-totp\|rotate-key\|unlock> [<caller name or hours>]` | Approvals for local tools: show the service, pair or revoke a caller, enrol the code seed (QR shown once), rotate the signing key. |
+| `/oob trace [<5>]`                                                                                                     | Show the last Telegram updates and messages sent (default 5, at most 20): the path each took and how it ended.                     |
 | `/oob version`                                                                                                         | Show the installed version, what the server and this TUI run, the config file and the core API, and warn when they differ.         |
 | `/oob help`                                                                                                            | List every sub-command with its usage.                                                                                             |
 
@@ -612,6 +614,35 @@ Clicking needs a mouse. From the keyboard: `/oob on|off|auto`, `/oob chat on|off
 `sidebar.tsx`, which needs `solid-js` and `@opentui/solid` (the OpenCode TUI provides them). If
 they cannot be loaded, the bridge works without it. Other plugins that claim the sidebar are
 placed after it.
+
+## Tracing (Telegram)
+
+Every Telegram update and every message the bridge sends is one **trace**: a 32-hex id, the
+steps it took and how it ended. The id goes on the log line, the spans and `/oob trace`, so one
+message can be followed from `getUpdates` to the reaction.
+
+- **Path of an update:** poll (`api:getUpdates`), `queued` (waiting in its topic), `route` (which
+  session), `deliver` (to the session), each Telegram call it caused (`api:setMessageReaction`,
+  `api:sendMessage`, ...), `handle` (total). Its trace id is kept for the session's turn, so the
+  cards, stream edits and the final reply the session posts for it carry the same id.
+- **Never recorded:** message text, answers, titles, tokens. A trace holds ids (update, message,
+  thread, session), the agent, the state, the outcome, a short reason and durations.
+- **`/oob trace [n]`** (TUI) and **`/trace [n]`** (Telegram) list the last `n` (default 5, at most 20) newest first: when, direction (`←` in, `→` out), kind, ids, outcome, time and the path
+  with each step's duration. `/oob status` shows the counters (received, delivered, refused,
+  dropped, retried, sent, failed, queue depth) and the last error.
+- **Log lines:** `telegram_inbound` per update and `outbound` per send, with `trace_id`.
+  `log.level` is `warn` (failures only), `info` (default: every outcome) or `debug` (also a
+  `trace_step` line per step).
+- **Spans** (when `otel.endpoint` is set): `oob.update` or `oob.outbound` with child
+  `oob.step.<step>` spans, attributes `update_id`, `message_id`, `thread`, `session.id`,
+  `agent`, `state`, `kind`, `outcome`.
+- **Metrics:** `oob.telegram.inbound{outcome=received|delivered|refused|dropped|retried}`,
+  `oob.telegram.outbound{outcome=sent|failed}`, `oob.telegram.queue_depth`,
+  `oob.telegram.last_poll_ok` and `oob.telegram.last_send_ok` (unix seconds),
+  `oob.telegram.api.ms{method,outcome}` (histogram) and `oob.telegram.api.errors{method,code}`.
+- **Dashboard:** [`docs/grafana-oob-bridge.json`](docs/grafana-oob-bridge.json) is a Grafana
+  dashboard for these metrics. Import it and pick your Prometheus data source. Names assume the
+  usual OpenTelemetry-to-Prometheus conversion (dots to underscores, `_total` on counters).
 
 ## Telemetry
 

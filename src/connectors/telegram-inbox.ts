@@ -23,6 +23,11 @@ export class Inbox<T extends { update_id: number }> {
     this.file = file
   }
 
+  /** Updates written down and not yet done. */
+  get size(): number {
+    return this.open.size
+  }
+
   /** Updates a previous run did not finish, oldest first. */
   async load(): Promise<T[]> {
     if (!this.file) return []

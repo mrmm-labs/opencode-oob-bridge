@@ -15,6 +15,7 @@ import {
 import { Telemetry } from "./otel.ts"
 import { PendingStore } from "./pending.ts"
 import { Router } from "./routing.ts"
+import { traces } from "./trace.ts"
 import { sleep } from "./util.ts"
 
 const CHAT = 4242
@@ -1268,6 +1269,67 @@ describe("chat from Telegram: the reaction follows the message", () => {
         times[i] - times[i - 1] >= 100,
         "spaced: " + (times[i] - times[i - 1]),
       )
+    await r.done()
+  })
+})
+
+describe("chat from Telegram: tracing", () => {
+  const turn = async (r: Rig, text: string) => {
+    await r.ev("session.execution.started")
+    await r.ev("session.text.ended", {
+      assistantMessageID: "m1",
+      ordinal: 0,
+      text,
+    })
+    await r.ev("session.execution.succeeded")
+  }
+
+  it("an update leaves one trace with its path, and the session's reply joins it", async () => {
+    const r = await chatRig({ chat: { stream: false } })
+    await chatOn(r)
+    r.tg.message(CHAT, "trace me", undefined, 9001)
+    await reactions(r, 2)
+    const mine = () =>
+      traces
+        .recent(20)
+        .find(
+          (t) =>
+            t.dir === "in" &&
+            t.done &&
+            t.message_id === r.tg.lastMessageId &&
+            t.session === "root",
+        )
+    const inbound = await r.tg.waitFor(mine)
+    assert.equal(inbound.outcome, "delivered")
+    assert.equal(inbound.state, "sent")
+    const path = inbound.steps.map((s) => s.step)
+    for (const step of ["queued", "route", "deliver", "handle"])
+      assert.ok(path.includes(step), step + " in " + path.join(","))
+    assert.match(inbound.id, /^[0-9a-f]{32}$/)
+    await turn(r, "all green")
+    const reply = await r.tg.waitFor(() =>
+      traces
+        .recent(20)
+        .find(
+          (t) => t.dir === "out" && t.kind === "reply" && t.id === inbound.id,
+        ),
+    )
+    assert.equal(reply.outcome, "sent")
+    assert.equal(reply.session, "root")
+    assert.equal(reply.parent, inbound.spanId)
+    await r.done()
+  })
+
+  it("/trace in a topic lists the last updates and sends with their outcome", async () => {
+    const r = await chatRig({ chat: { stream: false } })
+    await chatOn(r)
+    r.tg.message(CHAT, "something first", undefined, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    r.tg.message(CHAT, "/trace 5", undefined, 9001)
+    const out = await r.tg.waitFor(() =>
+      r.sends().find((b) => /← text/.test(b.text)),
+    )
+    assert.match(out.text, /delivered/)
     await r.done()
   })
 })

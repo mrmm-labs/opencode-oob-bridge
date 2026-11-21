@@ -51,7 +51,10 @@ export interface Pilot {
       silentMs?: number
     }>
     pending: number
+    trace: string[]
   }
+  /** The `/oob trace` lines; undefined when the bridge does not answer. */
+  traceLines(n: number): Promise<string[] | undefined>
   defaultChannel(): string
   defaultDelivery(): Delivery
   defaultSidebar(): SidebarMode
