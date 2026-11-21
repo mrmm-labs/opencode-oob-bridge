@@ -59,7 +59,9 @@ export function sqliteProbe(db: string): Probe {
   const sql =
     "select s.id as id, s.time_suspended as since, " +
     "(select count(*) from session_inbox i where i.session_id = s.id) as pending " +
-    "from session_v2 s where s.time_suspended is not null and s.parent_id is null"
+    "from session_v2 s where s.time_suspended is not null and s.parent_id is null " +
+    // A turn running now is not stuck, whatever time_suspended still says.
+    "and not (s.time_busy is not null and (s.time_idle is null or s.time_busy > s.time_idle))"
   return () =>
     new Promise((resolve) => {
       execFile(

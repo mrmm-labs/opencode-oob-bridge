@@ -1831,7 +1831,7 @@ export class Bridge {
     try {
       const out = await this.apply(ch, m, info)
       // A connector answers its own commands.
-      if (out && !out.ok && !m.inline && m.kind !== "command") {
+      if (out && !out.ok && !out.retry && !m.inline && m.kind !== "command") {
         const f = this.fmt("notice", { text: out.text })
         await this.dispatch(
           "notice",
@@ -1873,6 +1873,14 @@ export class Bridge {
         { outcome: info.outcome, "pending.id": info.pending?.id },
         out && !out.ok ? info.outcome : undefined,
       )
+      log("inbound", {
+        connector: ch.id,
+        kind,
+        id: m.id,
+        outcome: info.outcome,
+        session: info.pending?.rootSessionID ?? info.root,
+        ok: out?.ok,
+      })
       return out
     } catch (err) {
       log("inbound_error", { message: (err as Error).message })
@@ -1947,7 +1955,13 @@ export class Bridge {
     } catch (err) {
       log("prompt_error", { message: (err as Error).message })
       info.outcome = "failed"
-      return no("Could not send that to the session.")
+      return {
+        ...no(
+          "Could not send that to the session: " +
+            truncate((err as Error).message || "unknown error", 120),
+        ),
+        retry: ch.capabilities.retriesInbound,
+      }
     }
     this.remote.add(root)
     const where = `${facts?.agent ?? "agent"} · ${facts?.directory ? basename(facts.directory) : "opencode"}`

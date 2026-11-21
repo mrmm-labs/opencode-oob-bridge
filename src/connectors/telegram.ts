@@ -8,6 +8,7 @@
  * answered by replying to the message with numbers or text. Only the paired
  * chat is heard; everything else is dropped unread.
  */
+import { AsyncLocalStorage } from "node:async_hooks"
 import { randomInt } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
@@ -38,6 +39,7 @@ import {
 } from "../token.ts"
 import { isObject, sleep, truncate, URL_RE } from "../util.ts"
 import { globToRegExp } from "../routing.ts"
+import { Inbox } from "./telegram-inbox.ts"
 import { closeFences, splitReply } from "./telegram-markdown.ts"
 import {
   esc,
@@ -136,6 +138,11 @@ export type TelegramOptions = {
   apiBase?: string
   /** Where the update offset is kept across restarts. */
   offsetFile?: string
+  /** Where updates are written down until they are handled, so a restart or a stuck handler loses none. */
+  inboxFile?: string
+  /** Delays before each new try of a failed delivery, and how long one update may take; tests shorten them. */
+  retryMs?: number[]
+  handleMs?: number
   /** Where session topics of a forum chat are remembered across restarts. */
   topicsFile?: string
   /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
@@ -196,6 +203,17 @@ type Update = {
     }
   }
 }
+
+/** What became of one update: set by the code that handled it, logged once it ends. */
+type InboundTrace = { outcome: string; reason?: string; kind: string }
+
+/** The handler asks for the update to be tried again. */
+class RetryLater extends Error {}
+
+/** One update must not hold its topic longer than this. */
+const HANDLE_MS = 90_000
+/** Delays before the tries after a failed delivery. */
+const RETRY_MS = [5_000, 30_000, 120_000]
 
 type Markup = {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>
@@ -276,6 +294,7 @@ export class TelegramConnector implements Connector {
     threads: true,
     pairing: true,
     inboundPrompt: true,
+    retriesInbound: true,
     foldable: true,
     approvals: { buttons: true, approver: "verified", replyText: true },
   }
@@ -292,6 +311,11 @@ export class TelegramConnector implements Connector {
   private signal: AbortSignal | undefined
   private polling = false
   private offset: number | undefined
+  private readonly inbox: Inbox<Update>
+  private restored: Promise<void> | undefined
+  /** Per chat and topic: updates are handled in order, and one stuck topic does not hold up another. */
+  private readonly lanes = new Map<string, Promise<void>>()
+  private readonly trace = new AsyncLocalStorage<InboundTrace>()
   /** Whether the paired chat is a forum; undefined until asked. */
   private forum: boolean | undefined
   private topics: Map<string, Topic> | undefined
@@ -367,6 +391,7 @@ export class TelegramConnector implements Connector {
 
   constructor(opts: TelegramOptions, enabled = true) {
     this.opts = opts
+    this.inbox = new Inbox(opts.inboxFile)
     this.id = opts.name ?? "telegram"
     this.enabled = enabled
     this.chatId = opts.chatId
@@ -1132,6 +1157,7 @@ export class TelegramConnector implements Connector {
     const seconds = this.opts.pollSeconds ?? POLL_SECONDS
     let delay = min
     this.offset ??= await this.loadOffset()
+    await this.restore()
     while (!signal.aborted && (this.chatId || this.pairing)) {
       try {
         const updates = await this.call<Update[]>(
@@ -1147,17 +1173,13 @@ export class TelegramConnector implements Connector {
         delay = min
         this.connected = true
         this.lastError = undefined
-        for (const u of updates) {
-          this.offset = u.update_id + 1
-          try {
-            await this.onUpdate(u)
-          } catch (err) {
-            log("telegram_update_error", {
-              message: filterSecrets((err as Error).message),
-            })
-          }
+        if (updates.length) {
+          // Written down before Telegram is told they arrived: the offset moves only once they are safe.
+          const fresh = await this.inbox.add(updates)
+          this.offset = Math.max(...updates.map((u) => u.update_id)) + 1
+          await this.saveOffset()
+          for (const u of fresh) this.dispatch(u, 0)
         }
-        if (updates.length) await this.saveOffset()
       } catch (err) {
         if (signal.aborted) return
         this.connected = false
@@ -1177,6 +1199,119 @@ export class TelegramConnector implements Connector {
         delay = Math.min(max, delay * 2)
       }
     }
+  }
+
+  /** Handles what a previous run wrote down and did not finish, once. */
+  private restore(): Promise<void> {
+    this.restored ??= this.inbox.load().then((left) => {
+      for (const u of left) {
+        log("telegram_inbound_replay", { update_id: u.update_id })
+        this.dispatch(u, 0)
+      }
+    })
+    return this.restored
+  }
+
+  private laneOf(u: Update): string {
+    const m = u.message ?? u.callback_query?.message
+    return `${m?.chat.id}:${m?.message_thread_id ?? 0}`
+  }
+
+  /** Runs the update after the ones before it in its topic; the poll loop never waits for it. */
+  private dispatch(u: Update, attempt: number): void {
+    const lane = this.laneOf(u)
+    const next = (this.lanes.get(lane) ?? Promise.resolve())
+      .then(() => this.handle(u, attempt))
+      .catch((err) =>
+        log("telegram_update_error", {
+          update_id: u.update_id,
+          message: filterSecrets((err as Error).message),
+        }),
+      )
+      .finally(() => {
+        if (this.lanes.get(lane) === next) this.lanes.delete(lane)
+      })
+    this.lanes.set(lane, next)
+  }
+
+  private kindOf(u: Update): string {
+    if (u.callback_query) return "callback"
+    const m = u.message
+    if (!m) return "other"
+    if (mediaOf(m)) return "media"
+    return m.text?.trim().startsWith("/") ? "command" : "text"
+  }
+
+  /** Records what became of the update being handled. */
+  private note(outcome: string, reason?: string): void {
+    const t = this.trace.getStore()
+    if (!t) return
+    t.outcome = outcome
+    t.reason = reason
+  }
+
+  /** One update, start to end: its outcome is always logged, a failed delivery is retried and said so. */
+  private async handle(u: Update, attempt: number): Promise<void> {
+    const t0 = this.now()
+    const delays = this.opts.retryMs ?? RETRY_MS
+    const limit = this.opts.handleMs ?? HANDLE_MS
+    const rec: InboundTrace = { outcome: "handled", kind: this.kindOf(u) }
+    let retry = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.trace.run(rec, () => this.onUpdate(u)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("timed out after " + limit / 1000 + "s")),
+            limit,
+          )
+          timer.unref?.()
+        }),
+      ])
+    } catch (err) {
+      retry = err instanceof RetryLater
+      rec.outcome = retry ? "failed" : "error"
+      rec.reason = filterSecrets((err as Error).message)
+    } finally {
+      clearTimeout(timer)
+    }
+    const m = u.message ?? u.callback_query?.message
+    const again = retry && attempt < delays.length && !this.signal?.aborted
+    log("telegram_inbound", {
+      update_id: u.update_id,
+      message_id: m?.message_id,
+      thread: m?.message_thread_id,
+      kind: rec.kind,
+      outcome: rec.outcome,
+      reason: rec.reason,
+      attempt,
+      retry_in_s: again ? delays[attempt] / 1000 : undefined,
+      ms: this.now() - t0,
+    })
+    if (rec.outcome === "error" && u.message)
+      await this.deliver(u.message.message_thread_id, {
+        ok: false,
+        text: "⚠ Could not handle that message: " + rec.reason,
+      }).catch(() => {})
+    if (retry && u.message)
+      await this.deliver(u.message.message_thread_id, {
+        ok: false,
+        text: again
+          ? `⚠ Not delivered (${rec.reason}). Trying again in ${delays[attempt] / 1000}s.`
+          : `⚠ Not delivered after ${attempt + 1} tries (${rec.reason}). Send it again when the session is back.`,
+      }).catch(() => {})
+    // Stopping: what is not done stays in the journal for the next start.
+    if (retry && !again && this.signal?.aborted) return
+    if (again) {
+      const wait = setTimeout(
+        () => this.dispatch(u, attempt + 1),
+        delays[attempt],
+      )
+      wait.unref?.()
+      return
+    }
+    await this.inbox.done(u.update_id)
   }
 
   private async loadOffset(): Promise<number | undefined> {
@@ -1205,14 +1340,15 @@ export class TelegramConnector implements Connector {
   private async onUpdate(u: Update): Promise<void> {
     if (u.callback_query) return this.onCallback(u.callback_query)
     const m = u.message
-    if (!m) return
+    if (!m) return this.note("ignored", "not a message")
     const media = mediaOf(m)
     if (media) return this.onMedia(u, m, media)
     const text = m.text?.trim()
-    if (!text) return
-    if (await this.tryPair(m.chat, text, m.from?.id)) return
+    if (!text) return this.note("ignored", "no text")
+    if (await this.tryPair(m.chat, text, m.from?.id)) return this.note("paired")
     if (String(m.chat.id) !== this.chatId) {
       this.rejected("message")
+      this.note("rejected", "chat is not the paired one")
       return log("telegram_ignored", { kind: "message" })
     }
     // A code typed for an approval is the operator's alone and never reaches a session.
@@ -1226,7 +1362,7 @@ export class TelegramConnector implements Connector {
           ? String(m.reply_to_message.message_id)
           : undefined,
       })
-      if (r === "consumed") return
+      if (r === "consumed") return this.note("approval")
     }
     const base = {
       kind: "answer",
@@ -1263,7 +1399,10 @@ export class TelegramConnector implements Connector {
       return
     }
     const cmd = COMMAND_RE.exec(text)
-    if (cmd) return this.command(m, base, cmd[1], cmd[2], cmd[3] ?? "")
+    if (cmd) {
+      this.note("command", cmd[1])
+      return this.command(m, base, cmd[1], cmd[2], cmd[3] ?? "")
+    }
     // An explicit "#id answer" wins over the message replied to.
     const reply = parseReply(text)
     if (reply)
@@ -1286,9 +1425,24 @@ export class TelegramConnector implements Connector {
       : sessionKey
         ? { ...base, kind: "prompt", sessionKey, text }
         : undefined
-    if (!inbound) return
+    if (!inbound)
+      return this.note("ignored", "no session is bound to this topic")
     const out = await this.onInbound?.(inbound)
-    if (out?.sent) await this.acknowledge(m, out)
+    await this.settle(m, out)
+  }
+
+  /** What the core said of a message for a session: acknowledged, refused, or tried again later. */
+  private async settle(m: Message, out: Outcome | undefined): Promise<void> {
+    if (out?.sent) {
+      this.note("delivered", out.delivered?.how)
+      return this.acknowledge(m, out)
+    }
+    if (out?.retry) {
+      this.note("failed", out.text)
+      throw new RetryLater(out.text)
+    }
+    if (out) return this.note("refused", out.text)
+    this.note("ignored", "the core had nothing to do with it")
   }
 
   /**
@@ -1332,7 +1486,8 @@ export class TelegramConnector implements Connector {
         ? String(m.reply_to_message.message_id)
         : undefined
     const sessionKey = await this.sessionAt(m.message_thread_id, to)
-    if (!sessionKey) return
+    if (!sessionKey)
+      return this.note("ignored", "no session is bound to this topic")
     const notice = (text: string) =>
       this.deliver(m.message_thread_id, { ok: false, text })
     if (ref.kind === "unsupported")
@@ -1357,7 +1512,7 @@ export class TelegramConnector implements Connector {
       text: (m.caption ?? "").trim(),
       files: [file],
     })
-    if (out?.sent) await this.acknowledge(m, out)
+    await this.settle(m, out)
   }
 
   private async fetchMedia(
@@ -1530,6 +1685,7 @@ export class TelegramConnector implements Connector {
     cb: NonNullable<Update["callback_query"]>,
   ): Promise<void> {
     if (!cb.message || String(cb.message.chat.id) !== this.chatId) {
+      this.note("rejected", "chat is not the paired one")
       this.rejected("callback")
       return log("telegram_ignored", { kind: "callback" })
     }
@@ -2515,6 +2671,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       reactions: o.reactions,
       media: o.media,
       offsetFile: join(env.dir, `${env.name}-offset.json`),
+      inboxFile: join(env.dir, `${env.name}-inbox.jsonl`),
       topicsFile: join(env.dir, `${env.name}-topics.json`),
       operator: typeof operator === "string" ? operator : undefined,
       onPaired: (chatId, userId) => env.settings.set({ chatId, userId }),

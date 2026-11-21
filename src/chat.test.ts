@@ -31,7 +31,7 @@ async function chatRig(
     directory?: string
     posts?: string[]
     agent?: string
-    failPrompt?: boolean
+    failPrompt?: boolean | number
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -72,6 +72,7 @@ async function chatRig(
   const deliveries: string[] = []
   const replies: unknown[] = []
   const state = { busy: o.busy ?? false }
+  let failures = 0
   const host: Host = {
     session: async (id) =>
       id === "root"
@@ -87,7 +88,8 @@ async function chatRig(
       replies.push({ sessionID, formID, answer })
     },
     prompt: async (sessionID, text, delivery, files) => {
-      if (o.failPrompt) throw new Error("boom")
+      if (o.failPrompt === true || (o.failPrompt && failures++ < o.failPrompt))
+        throw new Error("boom")
       prompts.push({ sessionID, text, ...(files ? { files } : {}) })
       deliveries.push(delivery)
     },
@@ -221,6 +223,22 @@ describe("chat from Telegram: access", () => {
       r.sends().find((b) => /Could not send that to the session/.test(b.text)),
     )
     assert.equal(r.tg.of("setMessageReaction").length, 0)
+    await r.done()
+  })
+
+  it("a prompt that fails once is kept, the topic is told, and the retry reaches the session", async () => {
+    const r = await chatRig({ failPrompt: 1, tg: { retryMs: [30] } })
+    await chatOn(r)
+    r.tg.message(CHAT, "run it", undefined, 9001)
+    const notice = await r.tg.waitFor(() =>
+      r
+        .sends()
+        .find((b) => /Not delivered \(Could not send.*boom/.test(b.text)),
+    )
+    assert.equal(notice.message_thread_id, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    assert.equal(r.prompts[0].text, "run it")
+    await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
     await r.done()
   })
 
