@@ -493,6 +493,7 @@ describe("Bridge with telegram and another channel", () => {
     const id = b.store.list()[0].id
     b.tg.callback(CHAT, 501, `${id}:1`)
     await b.tg.waitFor(() => b.tg.of("editMessageText")[0])
+    await b.tg.waitFor(() => b.tg.of("answerCallbackQuery")[0])
     assert.deepEqual(b.replies, [
       { sessionID: "root", formID: "frm_1", answer: { q0: "Yes" } },
     ])
