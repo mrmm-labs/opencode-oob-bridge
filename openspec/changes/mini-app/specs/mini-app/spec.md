@@ -93,7 +93,7 @@ Tap targets SHALL be at least 44 by 44 pixels, colours SHALL follow Telegram's t
 
 ### Requirement: The app reads what it needs from the core API
 
-The bridge SHALL serve `/app/` and `GET /healthz` without credentials, and SHALL give the app, over `/v1` with init data, the lists it needs to act: `GET /v1/options` (models with variants, agents, and the names of the configured projects with their default agent and model, never a folder), `POST /v1/overnight/end`, and `GET /v1/digest` (the digest text, without marking the period as covered). The status SHALL report the overnight plan. A session detail SHALL say whether its questions can be answered now.
+The bridge SHALL give the app, over `/v1` with init data, `GET /v1/options` (models with variants, agents, and the names of the configured projects with their default agent and model, never a folder), `POST /v1/overnight/end`, and `GET /v1/digest` (the digest text, without marking the period as covered). The status SHALL report the overnight plan. A session detail SHALL say whether its questions can be answered now.
 
 #### Scenario: Options
 
@@ -104,6 +104,10 @@ The bridge SHALL serve `/app/` and `GET /healthz` without credentials, and SHALL
 
 - **WHEN** the app reads the digest
 - **THEN** the next digest in the chat still covers the same period
+
+### Requirement: The app files are served without credentials
+
+The bridge SHALL serve `/app/` and `GET /healthz` without credentials, and SHALL serve nothing else outside `/v1`.
 
 #### Scenario: Unauthenticated static files
 
