@@ -1610,7 +1610,9 @@ export class TelegramConnector implements Connector {
       m.reply_to_message.message_id !== m.message_thread_id
         ? String(m.reply_to_message.message_id)
         : undefined
+    const routed0 = this.now()
     const sessionKey = await this.sessionAt(m.message_thread_id, to)
+    traces.step("route", { ms: this.now() - routed0, ok: !!sessionKey })
     // A reply is an answer if it replies to a question; the core decides, and
     // takes anything else as text for the session.
     const inbound: Inbound | undefined = to
@@ -1623,7 +1625,9 @@ export class TelegramConnector implements Connector {
       return this.note("ignored", "no session is bound to this topic")
     }
     if (inbound.kind === "prompt") void this.react(m.message_id, "received")
+    const sent0 = this.now()
     const out = await this.onInbound?.(inbound)
+    traces.step("deliver", { ms: this.now() - sent0, ok: out?.ok !== false })
     await this.settle(m, out, sessionKey)
   }
 
@@ -1635,6 +1639,12 @@ export class TelegramConnector implements Connector {
   ): Promise<void> {
     if (out?.sent) {
       this.note("delivered", out.delivered?.how)
+      traces.annotate({
+        session,
+        agent: out.delivered?.agent,
+        state: out.delivered?.how,
+      })
+      if (session) traces.follow(session, traces.current())
       return this.acknowledge(m, out, session)
     }
     if (out?.retry) {

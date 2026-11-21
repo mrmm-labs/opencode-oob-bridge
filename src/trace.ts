@@ -104,7 +104,7 @@ export class Traces {
     kind: string,
     init: Partial<Rec> & { event: string },
   ): Rec {
-    const rec: Rec = {
+    const rec = {
       id: hex(),
       spanId: randomBytes(8).toString("hex"),
       dir,
@@ -112,8 +112,11 @@ export class Traces {
       startedAt: this.now(),
       outcome: "started",
       steps: [],
-      ...init,
-    }
+      // An undefined field must not wipe a default such as the id.
+      ...Object.fromEntries(
+        Object.entries(init).filter(([, v]) => v !== undefined),
+      ),
+    } as unknown as Rec
     this.ring.push(rec)
     if (this.ring.length > KEEP) this.ring.shift()
     return rec

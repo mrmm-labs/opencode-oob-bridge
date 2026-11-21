@@ -41,6 +41,7 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
   { command: "rename", description: "Rename this session" },
   { command: "chat", description: "/chat off stops chatting with it" },
   { command: "version", description: "Plugin version installed and running" },
+  { command: "trace", description: "Last updates and sends, with their path" },
   { command: "help", description: "What the commands do here" },
 ]
 

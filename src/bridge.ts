@@ -51,6 +51,7 @@ import {
   stats,
   type Stats,
 } from "./turncard.ts"
+import { traces } from "./trace.ts"
 import { clock, formatDuration, sleep, truncate } from "./util.ts"
 import type { Gate } from "./approvals/service.ts"
 
@@ -479,6 +480,7 @@ export class Bridge {
       sessions: () => this.activeSessions(),
       afk: () => this.afkStatus(),
       version: async () => (await this.versionSource?.()) ?? "Version: unknown",
+      trace: (n) => traces.format(n),
       digest: () => this.digestNow(),
       stuck: () => this.stuckSource?.() ?? [],
       resume: (root) => this.resume(root),
@@ -921,8 +923,14 @@ export class Bridge {
             ? { silent: o.silent }
             : this.silence(kind)),
         }
-        let res = await this.safely(ch, async () =>
-          edit ? ch.update!(old, push) : ch.send(push),
+        let res = await traces.out(
+          `push:${kind}`,
+          { session: o.root },
+          () =>
+            this.safely(ch, async () =>
+              edit ? ch.update!(old, push) : ch.send(push),
+            ),
+          (v) => (v === undefined || v === false ? "failed" : "sent"),
         )
         if (edit && res === false) {
           // The message could not be rewritten: say it in a new one.
@@ -1494,7 +1502,12 @@ export class Bridge {
             session: r.rootID,
             attrs,
           })
-          const res = await this.safely(c, () => c.reply!(r.session, clean))
+          const res = await traces.out(
+            "reply",
+            { session: r.rootID, agent: r.facts?.agent },
+            () => this.safely(c, () => c.reply!(r.session, clean)),
+            (v) => (v ? "sent" : "failed"),
+          )
           this.tel.count(res ? "oob.replies" : "oob.reply.errors", attrs)
           span.end(
             {

@@ -117,6 +117,8 @@ export type Snapshot = {
     since?: number
     reason?: string
   }
+  /** Telegram counters and the last error, as lines for `/oob status`. */
+  trace?: string[]
   defaultSidebar: "full" | "compact" | "off"
   defaultChannel: string
   defaultDelivery: "queue" | "steer"
