@@ -4,6 +4,7 @@ import { legacyConfigPath, configPath, legacy } from "./paths.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import { parseRedact, type Redact } from "./filter.ts"
 import { DEFAULT_INTERVAL_S } from "./deadman.ts"
+import { DEFAULT_MIN_SECONDS } from "./turncard.ts"
 import { parseJsonc } from "./jsonc.ts"
 import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
 import {
@@ -72,6 +73,8 @@ export type Config = {
   core: { bind?: string; port: number }
   /** The dead-man heartbeat: off unless `url` is set. */
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
+  /** The card posted when a turn ends with changes or after a long turn. */
+  turnCard: { enabled: boolean; minSeconds: number }
   rules: Rule[]
   redact: Redact
   chat: ChatConfig
@@ -81,6 +84,23 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+}
+
+function parseTurnCard(raw: unknown): Config["turnCard"] | { error: string } {
+  const on = { enabled: true, minSeconds: DEFAULT_MIN_SECONDS }
+  if (raw === undefined || raw === true) return on
+  if (raw === false) return { ...on, enabled: false }
+  if (!isObject(raw))
+    return { error: "turnCard must be a boolean or an object" }
+  const { minSeconds = DEFAULT_MIN_SECONDS } = raw
+  if (
+    typeof minSeconds !== "number" ||
+    !Number.isFinite(minSeconds) ||
+    minSeconds < 0 ||
+    minSeconds > 86_400
+  )
+    return { error: "turnCard.minSeconds must be 0 to 86400" }
+  return { enabled: true, minSeconds }
 }
 
 function parseDeadman(raw: unknown): Config["deadman"] | { error: string } {
@@ -359,6 +379,9 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
 
+  const turnCard = parseTurnCard(raw.turnCard)
+  if ("error" in turnCard) return turnCard
+
   const chat = parseChat(raw.chat)
   if ("error" in chat) return chat
   // "title" hides content, so replies inherit it; a head:<n> preview limit does not.
@@ -380,6 +403,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     away: { minutes },
     core,
     deadman,
+    turnCard,
     rules,
     redact,
     chat,

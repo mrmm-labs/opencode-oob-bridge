@@ -125,6 +125,17 @@ export class Actions {
     await this.d.host.prompt(root, text, delivery, files)
   }
 
+  /** The session's working-tree changes as one patch; undefined when the host cannot read them. */
+  async patch(root: string): Promise<string | undefined> {
+    await this.gate(root)
+    const dir = (await this.d.host.session(root))?.directory
+    if (!dir || !this.d.host.diff) return undefined
+    return (await this.d.host.diff(dir))
+      .map((f) => f.patch)
+      .filter(Boolean)
+      .join("\n")
+  }
+
   async compact(root: string): Promise<void> {
     await this.gate(root)
     await this.d.host.compact(root)

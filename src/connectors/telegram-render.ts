@@ -5,7 +5,14 @@
  */
 import { filterSecrets } from "../filter.ts"
 import { clock } from "../util.ts"
-import type { Card, CardQuestion, Push, SessionState } from "./types.ts"
+import { header, MAX_FILES, MAX_SUMMARY } from "../turncard.ts"
+import type {
+  Card,
+  CardQuestion,
+  Push,
+  SessionState,
+  TurnCard,
+} from "./types.ts"
 
 export const LIMIT = 4096
 // Margin under the limit: entity characters count once after parsing, but a count of raw HTML is the safe side.
@@ -200,4 +207,22 @@ export function renderStatus(s: SessionState, icon?: string): string {
     ...(s.watch ? [watchLine(s.watch)] : []),
     `🕐 ${at}`,
   ].join("\n")
+}
+
+/** A turn card: the header, and the summary and files in a block Telegram shows collapsed. */
+export function renderTurnCard(card: TurnCard): string {
+  const out = [`<b>${esc(header(card))}</b>`]
+  const body: string[] = []
+  if (card.summary) body.push(fit(card.summary, MAX_SUMMARY + 50))
+  const shown = card.files.slice(0, MAX_FILES)
+  if (shown.length)
+    body.push(
+      shown.map((f) => `• ${fit(f, 120)}`).join("\n") +
+        (card.files.length > shown.length
+          ? `\n+${card.files.length - shown.length} more`
+          : ""),
+    )
+  if (body.length)
+    out.push(`<blockquote expandable>${body.join("\n\n")}</blockquote>`)
+  return out.join("\n")
 }

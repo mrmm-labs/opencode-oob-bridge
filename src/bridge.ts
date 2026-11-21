@@ -19,11 +19,12 @@ import type {
   Push,
   SendStats,
   SessionState,
+  TurnCard,
 } from "./connectors/types.ts"
 import { buildMenu } from "./commandmenu.ts"
-import { Actions, type Result } from "./core/actions.ts"
+import { Actions, Refused, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
-import { redact } from "./filter.ts"
+import { filterSecrets, redact } from "./filter.ts"
 import {
   resolveAnswer,
   type Answer,
@@ -36,6 +37,15 @@ import { format, isCustomized, type Kind, type Vars } from "./messages.ts"
 import { noTelemetry, type Telemetry } from "./otel.ts"
 import type { Pending, PendingStore } from "./pending.ts"
 import { globToRegExp, type Router, type SessionFacts } from "./routing.ts"
+import {
+  delta,
+  lastParagraph,
+  MAX_SUMMARY,
+  plain,
+  shouldCard,
+  stats,
+  type Stats,
+} from "./turncard.ts"
 import { clock, formatDuration, truncate } from "./util.ts"
 
 export type SessionInfo = {
@@ -280,6 +290,7 @@ export function questionBody(qs: Question[]): string {
 const bracketed = (t: string) => (t.startsWith("[") ? t : `[${t}]`)
 
 const no = (text: string): Outcome => ({ ok: false, text })
+const yes = (text: string): Outcome => ({ ok: true, text })
 
 export type BridgeStatus = {
   channels: Array<{ id: string; enabled: boolean } & ConnectorStatus>
@@ -296,6 +307,8 @@ type Patch = {
 
 type Routed = NonNullable<Awaited<ReturnType<Bridge["routed"]>>>
 
+/** How long the buttons of a turn card stay. */
+export const CARD_BUTTONS_MS = 60 * 60_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
 
@@ -315,6 +328,14 @@ export class Bridge {
   /** When a session last got the "chat is off" hint. */
   private readonly hinted = new Map<string, number>()
   /** The assistant text of the turn in progress, by top-level session. */
+  /** The working tree when each running turn began. */
+  private readonly before = new Map<string, Promise<Stats | undefined>>()
+  /** The latest turn card of a session on a connector, until its buttons are removed. */
+  private readonly cards = new Map<
+    string,
+    { ch: Connector; ref: string; timer: ReturnType<typeof setTimeout> }
+  >()
+  private cardTtlMs = CARD_BUTTONS_MS
   private readonly turns = new Map<
     string,
     { msg?: string; parts: Map<number, string> }
@@ -547,6 +568,8 @@ export class Bridge {
     this.controllers.clear()
     for (const f of this.feeds.values()) clearTimeout(f.timer)
     this.feeds.clear()
+    for (const c of this.cards.values()) clearTimeout(c.timer)
+    this.cards.clear()
     await this.store.flush()
   }
 
@@ -1268,7 +1291,10 @@ export class Bridge {
     if (this.host.root(sessionID) !== sessionID) return
     const r = await this.routed(sessionID)
     if (!r) return
-    if (state === "working") this.feeds.set(sessionID, { r })
+    if (state === "working") {
+      this.feeds.set(sessionID, { r })
+      this.snapshot(r)
+    }
     await this.track(r, state, patch)
   }
 
@@ -1277,6 +1303,7 @@ export class Bridge {
     const r = await this.routed(sessionID)
     if (!r) return
     const kind = failed ? "failed" : "finished"
+    const final = this.joined(sessionID).trim()
     const st = await this.track(r, failed ? "failed" : "idle")
     await this.endTurn(sessionID, r, !failed)
     const duration =
@@ -1284,6 +1311,7 @@ export class Bridge {
         ? undefined
         : formatDuration(this.now() - st.started)
     const f = this.fmt(kind, r.vars, r.facts)
+    await this.postTurnCard(r, failed, st.started, final)
     await this.dispatch(
       kind,
       r.to.filter((c) => c.notify?.[kind] ?? true),
@@ -1299,6 +1327,134 @@ export class Bridge {
       }),
       { root: r.rootID },
     )
+  }
+
+  /** Notes the working tree as a turn begins, to tell later what the turn changed. */
+  private snapshot(r: Routed) {
+    const dir = r.facts.directory
+    if (!this.cfg.turnCard.enabled || !dir || !this.host.diff) return
+    this.before.set(
+      r.rootID,
+      this.host
+        .diff(dir)
+        .then(stats)
+        .catch(() => undefined),
+    )
+  }
+
+  /** One card for a turn that changed files or ran long; the previous card loses its buttons. */
+  private async postTurnCard(
+    r: Routed,
+    failed: boolean,
+    started: number | undefined,
+    final: string,
+  ) {
+    const cfg = this.cfg.turnCard
+    const before = await this.before.get(r.rootID)
+    this.before.delete(r.rootID)
+    if (!cfg.enabled) return
+    const dir = r.facts.directory
+    const after = dir
+      ? await this.host.diff?.(dir).catch(() => undefined)
+      : undefined
+    const d = delta(before, after)
+    const seconds = started === undefined ? 0 : (this.now() - started) / 1000
+    if (
+      !shouldCard({
+        minSeconds: cfg.minSeconds,
+        seconds,
+        changed: d?.files.length,
+      })
+    )
+      return
+    const hide = this.cfg.chat.redact.mode === "title"
+    const card: TurnCard = {
+      failed,
+      duration:
+        started === undefined
+          ? undefined
+          : formatDuration(this.now() - started),
+      changes:
+        d && d.files.length > 0
+          ? { files: d.files.length, added: d.added, removed: d.removed }
+          : undefined,
+      summary: final
+        ? redact(lastParagraph(final, MAX_SUMMARY), this.cfg.chat.redact)
+        : undefined,
+      files: hide ? [] : (d?.files ?? []).map(filterSecrets),
+    }
+    await Promise.all(
+      r.to
+        .filter((c) => c.capabilities.threads)
+        .map(async (c) => {
+          const k = r.rootID + "|" + c.id
+          const prev = this.cards.get(k)
+          if (prev) {
+            clearTimeout(prev.timer)
+            this.cards.delete(k)
+            await this.safely(c, async () => c.unbutton?.(prev.ref))
+          }
+          const ref =
+            c.capabilities.foldable && c.turnCard
+              ? await this.safely(c, () =>
+                  c.turnCard!(r.session, card, {
+                    chat: this.chat.has(r.rootID),
+                  }),
+                )
+              : await this.safely(c, () =>
+                  c.send({
+                    message: plain(card),
+                    session: r.session,
+                    priority: 2,
+                  }),
+                )
+          if (!ref || !c.unbutton) return
+          const timer = setTimeout(() => {
+            this.cards.delete(k)
+            void this.safely(c, async () => c.unbutton!(ref))
+          }, this.cardTtlMs)
+          timer.unref?.()
+          this.cards.set(k, { ch: c, ref, timer })
+        }),
+    )
+  }
+
+  /** A turn card's button: Diff, Continue or Stop. */
+  private async cardButton(
+    ch: Connector,
+    root: string,
+    what: string,
+  ): Promise<Outcome> {
+    try {
+      if (what === "stop")
+        return (await this.actions.stop(root))
+          ? yes("⏹ Stopped the running turn.")
+          : no("Nothing is running.")
+      if (what === "continue") {
+        if (!this.chat.has(root)) return no("Chat is off for this session.")
+        await this.actions.prompt(root, "continue", this.delivery(root))
+        return yes("Sent: continue.")
+      }
+      const patch = await this.actions.patch(root)
+      if (patch === undefined)
+        return no("This OpenCode cannot read the changes from here.")
+      if (!patch.trim()) return no("No changes to show.")
+      const r = await this.routed(root)
+      const sent =
+        r &&
+        (await this.safely(ch, async () =>
+          ch.document?.(
+            r.session,
+            "changes.patch",
+            redact(patch, this.cfg.chat.redact),
+            "📄 Diff",
+          ),
+        ))
+      return sent ? yes("Diff sent.") : no("Could not send the diff.")
+    } catch (err) {
+      if (err instanceof Refused) return no(err.message)
+      throw err
+    }
   }
 
   /** A prompt was answered or cancelled in OpenCode. */
@@ -1534,6 +1690,11 @@ export class Bridge {
       info.root = root
       info.outcome = "applied"
       return this.resume(root)
+    }
+    if (m.text === "diff" || m.text === "continue" || m.text === "stop") {
+      info.root = root
+      info.outcome = "applied"
+      return this.cardButton(ch, root, m.text)
     }
     if (m.text !== "chat off") return undefined
     info.root = root

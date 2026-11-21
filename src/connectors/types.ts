@@ -23,6 +23,8 @@ export type Capabilities = {
   pairing: boolean
   /** Messages typed in a session's thread may be sent to the session, and its replies are posted back (`reply`). */
   inboundPrompt: boolean
+  /** Can show part of a message collapsed (`turnCard`). Without it a turn card is a header and a short summary. */
+  foldable?: boolean
 }
 
 export type CardQuestion = {
@@ -39,6 +41,17 @@ export type CardQuestion = {
  * the connector chooses the markup. Absent when the user overrode that kind's
  * text in `messages` or `profiles`: the configured title and message win.
  */
+/** What a finished turn did. Already redacted. */
+export type TurnCard = {
+  failed: boolean
+  /** e.g. "3m 12s" */
+  duration?: string
+  /** Absent when the changes cannot be read: no number is made up. */
+  changes?: { files: number; added: number; removed: number }
+  summary?: string
+  files: string[]
+}
+
 export type Card =
   | {
       kind: "question"
@@ -231,6 +244,21 @@ export interface Connector {
   send(push: Push): Promise<string | undefined>
   /** Rewrites an earlier message; true when it did. Never throws. Required when `capabilities.edit`. */
   update?(ref: string, push: Push): Promise<boolean>
+  /** Posts a turn card with Diff, Continue (when `chat`) and Stop buttons. Only with `foldable`; never throws. */
+  turnCard?(
+    session: NonNullable<Push["session"]>,
+    card: TurnCard,
+    o: { chat: boolean },
+  ): Promise<string | undefined>
+  /** Removes the buttons of an earlier message. Never throws. */
+  unbutton?(ref: string): Promise<void>
+  /** Sends a file to the session's thread; true when it did. Never throws. */
+  document?(
+    session: NonNullable<Push["session"]>,
+    name: string,
+    data: string,
+    caption: string,
+  ): Promise<boolean>
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
   menu?(commands: MenuCommand[]): void
   /** Required when `capabilities.pairing`. */
