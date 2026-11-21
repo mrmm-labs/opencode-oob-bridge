@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.16.0...v0.17.0) (2026-11-21)
+
+
+### Features
+
+* turn card with diff, continue and stop ([#54](https://github.com/mrmm-labs/opencode-oob-bridge/issues/54)) ([36c009b](https://github.com/mrmm-labs/opencode-oob-bridge/commit/36c009bbfd5fb5fcd58815007990e711b8c52f4e))
+
 ## [0.16.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.15.0...v0.16.0) (2026-11-21)
 
 
