@@ -120,6 +120,13 @@ export class Control {
     o.router.setPresence(() => this.attached() > 0)
     o.bridge.onChat((root) => this.saveSession(root))
     o.bridge.onWatch((root) => this.saveSession(root))
+    o.bridge.onStuck(() =>
+      this.stuck().map((s) => ({
+        id: s.id,
+        label: s.title ?? s.id,
+        pending: s.pending,
+      })),
+    )
     o.bridge.subscribe(() => this.v++)
   }
 

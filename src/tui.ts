@@ -105,6 +105,8 @@ export async function setup(
         id: remote.id,
         call,
         reply: (r) => ctx.data.session.form.reply(r as never),
+        undo: (r) =>
+          ctx.client.session.revert.stage({ ...r, files: true }).then(() => {}),
       }) as never,
     ),
   ]

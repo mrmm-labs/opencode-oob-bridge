@@ -115,4 +115,7 @@ export type FormRelay = {
   sessionID: string
   formID: string
   answer: unknown
+  /** `undo`: the window stages a revert to `messageID` instead of replying to a form. */
+  kind?: "undo"
+  messageID?: string
 }

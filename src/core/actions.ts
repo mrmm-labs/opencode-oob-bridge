@@ -79,7 +79,9 @@ export class Actions {
   }> {
     const off: Partial<Record<ActionName, string>> = {
       permission: "no policy allows permission replies from a client",
-      undo: "no source in this process can revert a session",
+      ...(this.d.host.undo
+        ? {}
+        : { undo: "no source in this process can revert a session" }),
       ...(this.d.host.resume
         ? {}
         : { resume: "this OpenCode cannot resume a session from here" }),
@@ -154,6 +156,22 @@ export class Actions {
     if (!this.d.host.resume)
       throw new Refused("This OpenCode cannot resume a session from here.")
     await this.d.host.resume(root)
+  }
+
+  /** Stages a revert of the last turn through an attached TUI. True when something was reverted. */
+  async undo(root: string): Promise<boolean> {
+    await this.gate(root)
+    if (!this.d.host.undo) throw new Refused("Undo is not available here.")
+    if (this.d.host.busy(root))
+      throw new Refused("Stop the running turn first, then undo.")
+    try {
+      return await this.d.host.undo(root)
+    } catch (err) {
+      log("undo_error", { message: (err as Error).message })
+      throw new Refused(
+        "Undo needs an OpenCode window open at the Mac: do it there.",
+      )
+    }
   }
 
   async answerForm(
@@ -276,9 +294,9 @@ export class Actions {
           await this.compact(root)
           return yes("Compacting the session.")
         case "undo":
-          return no(
-            "Undo is not available: no source in this process can revert a session.",
-          )
+          return (await this.undo(root))
+            ? yes("Reverted the last turn.")
+            : yes("Nothing to undo.")
         case "model": {
           const ref = str(body.model)
           const hit = ref && (await this.models()).find((x) => x.ref === ref)

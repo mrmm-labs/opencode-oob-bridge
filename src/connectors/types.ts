@@ -231,10 +231,15 @@ export interface Connector {
   send(push: Push): Promise<string | undefined>
   /** Rewrites an earlier message; true when it did. Never throws. Required when `capabilities.edit`. */
   update?(ref: string, push: Push): Promise<boolean>
+  /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
+  menu?(commands: MenuCommand[]): void
   /** Required when `capabilities.pairing`. */
   pair?(): Promise<Pairing>
   status(): ConnectorStatus
 }
+
+export type { MenuCommand } from "../commandmenu.ts"
+import type { MenuCommand } from "../commandmenu.ts"
 
 /** Per-connector state kept in the data directory, layered over the config file. */
 export type ConnectorSettings = { enabled?: boolean } & Record<string, unknown>
