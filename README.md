@@ -6,8 +6,8 @@ there.
 
 When you step away from the terminal, a session that asks a question stops and waits. With this
 plugin the question arrives on your phone as a notification with one button per option. Tap a
-button, or reply with text, and the session continues. Permission prompts are sent too, but only
-as a heads-up: they are always answered in the TUI.
+button, or reply with text, and the session continues. Permission prompts are sent too, as a
+heads-up answered in the TUI, unless you set `permissions.remote`.
 
 Renamed from `opencode-ntfy-bridge` in 0.4.0, because ntfy is no longer the only channel. The old
 config file (`ntfy-bridge.jsonc`), state directory and `OPENCODE_NTFY_BRIDGE_*`
@@ -88,33 +88,33 @@ nothing and opens no connection.**
   "away": { "minutes": 10 },
   "rules": [{ "agent": "^coordinator$" }, { "directory": "**/my-app" }],
   "redact": "head:300",
-  "permissions": { "tier": 3 },
+  "permissions": { "remote": "off" },
 }
 ```
 
-| Key                       | Default  | Meaning                                                                                                                                                  |
-| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                                                                                             |
-| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                                                                                         |
-| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.                                                                            |
-| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).                                                                                |
-| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.                                                                                  |
-| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                                                                                              |
-| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                                                                                     |
-| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                                                                                          |
-| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.                                                                                |
-| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                                                               |
-| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                                                                                       |
-| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                                                         |
-| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                                                                     |
-| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.                                                                                |
-| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                                                                                              |
-| `turnCard`                | on       | A card when a turn ends with changes or after a long turn: `false` turns it off. See [Turn cards](#turn-cards).                                          |
-| `turnCard.minSeconds`     | `20`     | A turn that changed nothing gets a card only when it ran this long.                                                                                      |
-| `quiet`                   | off      | Silent delivery between `from` and `to` (HH:MM) in `timezone` (default: this computer's). See [Quiet hours and the digest](#quiet-hours-and-the-digest). |
-| `quiet.breakthrough`      | `[]`     | Kinds that still make a sound at night: `failed`, `permission`, `question`.                                                                              |
-| `digest`                  | off      | `true`, or `{ at, empty }`: one summary a day at `at` (default the end of quiet hours); `empty: true` also sends it when nothing happened.               |
-| `core.port`               | `7842`   | The core API port.                                                                                                                                       |
+| Key                       | Default  | Meaning                                                                                                                                                                       |
+| ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                                                                                                                  |
+| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                                                                                                              |
+| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.                                                                                                 |
+| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).                                                                                                     |
+| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.                                                                                                       |
+| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                                                                                                                   |
+| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                                                                                                          |
+| `permissions.remote`      | `off`    | `off`: a permission is answered in the TUI only. `once`: Allow once and Deny buttons. `all`: also Always, which saves a rule. See [Permissions](#permissions-from-a-channel). |
+| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.                                                                                                     |
+| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                                                                                    |
+| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                                                                                                            |
+| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                                                                              |
+| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                                                                                          |
+| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.                                                                                                     |
+| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                                                                                                                   |
+| `turnCard`                | on       | A card when a turn ends with changes or after a long turn: `false` turns it off. See [Turn cards](#turn-cards).                                                               |
+| `turnCard.minSeconds`     | `20`     | A turn that changed nothing gets a card only when it ran this long.                                                                                                           |
+| `quiet`                   | off      | Silent delivery between `from` and `to` (HH:MM) in `timezone` (default: this computer's). See [Quiet hours and the digest](#quiet-hours-and-the-digest).                      |
+| `quiet.breakthrough`      | `[]`     | Kinds that still make a sound at night: `failed`, `permission`, `question`.                                                                                                   |
+| `digest`                  | off      | `true`, or `{ at, empty }`: one summary a day at `at` (default the end of quiet hours); `empty: true` also sends it when nothing happened.                                    |
+| `core.port`               | `7842`   | The core API port.                                                                                                                                                            |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -253,11 +253,18 @@ What you get in Telegram:
   You can also answer by replying to the question message with a number or text, or with
   `#id answer` as on ntfy.
 
-- **Several questions in one prompt**, or a question with more than 10 options, get no buttons:
-  reply to the message with one answer per question, separated by `|` (for example
-  `1 | yes | 2,3`). This is the same grammar as ntfy.
-- A **permission** prompt is a message without buttons that says to answer in the TUI. It can
-  never be answered from Telegram.
+- **Several questions in one prompt** are answered one field at a time in a single message that is
+  edited as you go: the field and its options as buttons (eight to a page, with Prev and Next),
+  Back, ✓ ticks and Done on a multiple-choice field, ✏️ to type an answer where that is allowed,
+  and `n/N` for progress. After the last field you review every answer and tap Submit, Edit or
+  Cancel. Nothing reaches OpenCode before Submit, so an abandoned form changes nothing; the
+  first answer still wins, from the phone or the TUI. You can still reply with one answer per
+  question, separated by `|` (for example `1 | yes | 2,3`), as on ntfy.
+- A question with more than 10 options gets no buttons: reply by number or text.
+- A form needs an open OpenCode window to take the reply. With none, the message says to answer
+  at the Mac and has no buttons.
+- A **permission** prompt has no buttons unless `permissions.remote` allows them (see
+  [Permissions](#permissions-from-a-channel)).
 - Messages are HTML, with everything escaped, and at most 4096 characters: long text is cut in
   the text, never in a tag. If you set your own `messages` or `profiles` text for a kind of push,
   that text is used for it instead of this layout (as plain bold title and text).
@@ -364,7 +371,7 @@ How it behaves:
   topic of a session whose chat is off gets one hint an hour ("Chat is off for this session").
 - **`chat.deny`** blocks sessions by agent or directory glob even after `/oob chat on`, and the
   toggle says why.
-- **Permissions are never answered remotely**, from any channel.
+- **Permissions are answered remotely only when you set `permissions.remote`** (default off).
 - **ntfy never chats.** Only a channel with the `inboundPrompt` capability can, and ntfy does not
   have it.
 - **Telegram is not end-to-end encrypted.** Whoever controls the paired chat, or the bot's token,
@@ -372,6 +379,10 @@ How it behaves:
   to an agent that may run commands in your project: keep the group private, keep chat off for
   sensitive projects, and put them in `chat.deny`. Use `redact: "title"` if replies must not
   leave the machine.
+
+### Permissions from a channel
+
+With `permissions.remote` at `once` or `all`, the permission message carries buttons: **Allow once** and **Deny**, and with `all` also **Always** (which writes a saved rule, so it needs `all`). The reply is made through OpenCode's permission reply; the message then shows who answered, from which channel and when, and the log records the session, the action, the choice, the channel and the time. Leave it `off` unless you accept that whoever controls the paired chat can allow what the session asks for; the first answer wins, from the phone or the TUI.
 
 ### Quiet hours and the digest
 
@@ -585,11 +596,11 @@ never affects a session.
 
 ## Tiers
 
-| Tier | Prompts           | From a channel                                                                        |
-| ---- | ----------------- | ------------------------------------------------------------------------------------- |
-| 1    | Questions         | Answered: buttons, or a text reply.                                                   |
-| 2    | (not implemented) | Remote allow/deny of permissions. There is no code path for it.                       |
-| 3    | Every permission  | Push only, with a hint to answer in the TUI. A reply from a channel is never applied. |
+| Tier | Prompts              | From a channel                                                                     |
+| ---- | -------------------- | ---------------------------------------------------------------------------------- |
+| 1    | Questions            | Answered: buttons, or a text reply.                                                |
+| 2    | `permissions.remote` | Allow once and Deny (`once`), or also Always (`all`), from a channel with buttons. |
+| 3    | Every permission     | Push only, with a hint to answer in the TUI. The default (`off`).                  |
 
 ### What you receive
 
@@ -658,7 +669,7 @@ A field the bridge cannot fill is returned as `{"unavailable": "<why>"}`, never 
 a field that is filled says which `source` it came from. Text passes the secret filter and
 `redact`, and a session that matches `chat.deny` is listed as `blocked` with no conversation. The
 events carry a type and a session id only: read the session for the rest. Replies to permission
-requests are refused for every client; answer them in the OpenCode TUI.
+requests are refused unless `permissions.remote` is set; answer them in the OpenCode TUI.
 
 Within `/v1` changes only add fields, routes and event types, so ignore what you do not know.
 
@@ -710,7 +721,7 @@ reference implementation of the receiver side.
   `topics.in`). The alternative is `actionAuth: false` plus an ACL that lets anonymous users only
   write to `topics.in` (`ntfy access everyone <in-topic> write-only`); then the buttons carry no
   credentials, and anyone who knows the topic name can answer.
-- This is why permissions stay tier 3: a permission is never granted or denied from a channel.
+- This is why permissions stay tier 3 by default: a hijacked chat could otherwise grant them. `permissions.remote` is the opt-in, and every answer is logged.
 - Telegram answers come only from the paired chat, found by its numeric chat id. Anyone who can
   send messages as that chat (or take over that Telegram account) can answer questions.
 - Never route production approvals through this plugin.
@@ -723,7 +734,6 @@ reference implementation of the receiver side.
   away.
 - Waking a suspended session uses the host's synthetic-message call; the host has no dedicated
   resume call, so a session it refuses to wake has to be opened at the Mac.
-- Tier 2 (remote permission replies) is not implemented.
 - In OpenCode 2.3 the built-in subagents have no `question` tool, so subagent questions only come
   from agents you give it to. Subagent permission prompts are mirrored as usual.
 - A session that is interrupted (for example by rejecting a permission) sends no finished push.

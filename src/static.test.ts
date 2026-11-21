@@ -27,8 +27,9 @@ describe("source guards", () => {
     }
   })
 
-  it("AC-10: no code path replies to a permission", async () => {
+  it("AC-10: only the host adapter replies to a permission, and only when a policy allows it", async () => {
     for (const [f, text] of await sources()) {
+      if (f === "server.ts") continue
       assert.doesNotMatch(text, /permission\s*\.\s*reply|\/permission\//, f)
     }
   })

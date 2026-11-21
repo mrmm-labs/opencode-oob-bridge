@@ -4,7 +4,8 @@
  * cut and no text is ever read as markup. A message is at most 4096 characters.
  */
 import { filterSecrets } from "../filter.ts"
-import { clock } from "../util.ts"
+import { clock, truncate } from "../util.ts"
+import { PAGE, reviewing, type Stepper } from "../stepper.ts"
 import { header, MAX_FILES, MAX_SUMMARY } from "../turncard.ts"
 import type {
   Card,
@@ -98,7 +99,8 @@ function lines(card: Card, o: RenderOptions, st: Stage): string[] {
       card.questions.forEach((q, i) => {
         out.push("", ...questionBlock(q, i + 1, card.questions.length, st))
       })
-      if (o.footer) out.push("", `<i>${fit(o.footer, 200)}</i>`)
+      const foot = o.footer ?? card.note
+      if (foot) out.push("", `<i>${fit(foot, 200)}</i>`)
       return out
     }
     case "permission":
@@ -108,7 +110,7 @@ function lines(card: Card, o: RenderOptions, st: Stage): string[] {
         "",
         `<pre>${fit(clean(card.detail), st.text)}</pre>`,
         "",
-        "<i>Answer in the OpenCode TUI. Permissions are never applied remotely.</i>",
+        `<i>${o.footer ?? "Answer in the OpenCode TUI. Permissions are never applied remotely."}</i>`,
       ]
     case "finished":
     case "failed":
@@ -225,4 +227,57 @@ export function renderTurnCard(card: TurnCard): string {
   if (body.length)
     out.push(`<blockquote expandable>${body.join("\n\n")}</blockquote>`)
   return out.join("\n")
+}
+
+type Key = { text: string; callback_data: string }
+
+/** The message of a form stepper: the field (or the review) and its buttons. */
+export function renderStepper(s: Stepper): { text: string; rows: Key[][] } {
+  const n = s.questions.length
+  const key = (text: string, act: string): Key => ({
+    text: truncate(text, 40),
+    callback_data: "s:" + s.id + ":" + act,
+  })
+  if (reviewing(s)) {
+    const lines = s.questions.map(
+      (q, i) =>
+        `${i + 1}. ${fit(q.header || q.text, 60)}: <b>${fit(s.chosen[i].join(", "), 80)}</b>`,
+    )
+    return {
+      text: [`<b>${esc(s.head)}</b>`, "Review your answers", ...lines].join(
+        "\n",
+      ),
+      rows: [[key("✅ Submit", "ok"), key("Edit", "e")], [key("Cancel", "x")]],
+    }
+  }
+  const q = s.questions[s.at]
+  const pages = Math.ceil(q.options.length / PAGE)
+  const from = s.page * PAGE
+  const shown = q.options.slice(from, from + PAGE)
+  const ticked = new Set(s.chosen[s.at])
+  const rows: Key[][] = shown.map((label, i) => [
+    key(
+      `${q.multiple && ticked.has(label) ? "✓ " : ""}${keycap(from + i + 1)} ${starred(label)}`,
+      (q.multiple ? "t" : "o") + (from + i + 1),
+    ),
+  ])
+  if (pages > 1) {
+    const nav: Key[] = []
+    if (s.page > 0) nav.push(key("‹ Prev", "p" + (s.page - 1)))
+    if (s.page < pages - 1) nav.push(key("Next ›", "p" + (s.page + 1)))
+    rows.push(nav)
+  }
+  const tail: Key[] = []
+  if (s.at > 0) tail.push(key("‹ Back", "b"))
+  if (q.custom) tail.push(key("✏️ Type", "w"))
+  if (q.multiple) tail.push(key("Done", "d"))
+  if (tail.length) rows.push(tail)
+  const text = [
+    `<b>${esc(s.head)}</b>`,
+    `<i>${s.at + 1}/${n}${q.header ? " · " + esc(q.header) : ""}</i>`,
+    fit(q.text, 600),
+    ...(q.multiple ? ["Tick options, then Done."] : []),
+    ...(pages > 1 ? [`Page ${s.page + 1}/${pages}`] : []),
+  ].join("\n")
+  return { text, rows }
 }

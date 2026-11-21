@@ -59,6 +59,8 @@ export type Card =
       project: string
       session?: string
       questions: CardQuestion[]
+      /** Why the question cannot be answered here, when it cannot. */
+      note?: string
     }
   | {
       kind: "permission"
@@ -122,6 +124,8 @@ export type Push = {
   prompt?: { id: string; questions: Question[] }
   /** Set only for connectors with `rich`. */
   card?: Card
+  /** Permission buttons, only for connectors with `buttons`: the choices the policy allows (`decision` comes back on an inbound of kind `answer`). */
+  permission?: { id: string; choices: Array<"once" | "always" | "reject"> }
   /** One button of the connector's own (`control` comes back as an inbound of kind `control`). Only for connectors with `buttons`. */
   action?: { label: string; control: string }
   /** Quiet hours: true delivers without a sound or notification, false makes one regardless. Unset: the connector decides. */
@@ -152,6 +156,8 @@ export type Inbound = {
   /** The top-level session whose thread it was sent in, or whose message it replies to, as `push.session.id`. */
   sessionKey?: string
   text: string
+  /** A permission button: what was chosen. */
+  decision?: "once" | "always" | "reject"
   /** 1-based option from a button tap. */
   choice?: number
   /** `chat` identifies the sender's conversation; the connector has checked it is allowed. */

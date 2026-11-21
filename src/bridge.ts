@@ -106,6 +106,14 @@ export interface Host {
   rename(sessionID: string, title: string): Promise<void>
   /** Stages a revert of the session's last turn through a TUI. False when there is nothing to revert. */
   undo?(sessionID: string): Promise<boolean>
+  /** Whether a form reply can be sent now (a TUI is attached). Unset: assume it can. */
+  canReplyForm?(): boolean
+  /** Answers a permission request. Absent when the host cannot. */
+  replyPermission?(
+    sessionID: string,
+    requestID: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<void>
   /** Wakes a session that holds messages it is not working on. Absent when the host cannot. */
   resume?(sessionID: string): Promise<void>
   /** The tail of a session's conversation, oldest first. Absent when the host cannot read it. */
@@ -311,6 +319,8 @@ type Routed = NonNullable<Awaited<ReturnType<Bridge["routed"]>>>
 
 /** How long the buttons of a turn card stay. */
 export const CARD_BUTTONS_MS = 60 * 60_000
+const NO_WINDOW =
+  "Answer this at the Mac: no OpenCode window is open to take a reply."
 const DIGEST_TICK_MS = 30_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
@@ -411,6 +421,9 @@ export class Bridge {
       },
       resume: (root) => this.resume(root),
       answer: (id, a) => this.answerFromClient(id, a),
+      permissions: () => this.permissionChoices().length > 0,
+      permission: (id, decision) =>
+        this.answerPermissionFromClient(id, decision),
     })
     this.commands = new Commands({
       cfg,
@@ -856,6 +869,7 @@ export class Bridge {
     if (questions.length === 0) return
     const r = await this.routed(form.sessionID)
     if (!r) return
+    const reachable = this.host.canReplyForm?.() ?? true
     const id = this.store.newId()
     const qvars = (hint: string): Vars => ({
       ...r.vars,
@@ -880,14 +894,19 @@ export class Bridge {
       "question",
       r.to,
       (ch) => ({
-        ...this.fmt("question", qvars(ch.hint(id, questions)), r.facts),
-        ...this.shape(ch, r.session, { id, questions }),
+        ...this.fmt(
+          "question",
+          qvars(reachable ? ch.hint(id, questions) : NO_WINDOW),
+          r.facts,
+        ),
+        ...this.shape(ch, r.session, reachable ? { id, questions } : undefined),
         ...this.card(ch, "question", r.facts, () => ({
           kind: "question",
           agent: r.vars.agent ?? "agent",
           project: r.project,
           session: r.title,
           questions: this.cardQuestions(questions),
+          note: reachable ? undefined : NO_WINDOW,
         })),
       }),
       { root: r.rootID, pending: id },
@@ -929,6 +948,7 @@ export class Bridge {
       sessionID: d.sessionID,
       rootSessionID: r.rootID,
       title: f.title,
+      action: d.action,
       askedAt: this.now(),
       state: "pending",
     })
@@ -939,6 +959,10 @@ export class Bridge {
       (ch) => ({
         ...f,
         ...this.shape(ch, r.session),
+        permission:
+          ch.capabilities.buttons && this.permissionChoices().length
+            ? { id, choices: this.permissionChoices() }
+            : undefined,
         ...this.card(ch, "permission", r.facts, () => ({
           kind: "permission",
           agent: r.vars.agent ?? "agent",
@@ -1906,9 +1930,19 @@ export class Bridge {
       return no(`#${p.id}: already answered, not applied.`)
     }
     if (p.kind === "permission") {
+      if (m.decision) {
+        const done = await this.decide(
+          p,
+          m.decision,
+          { id: ch.id, replyID: m.id },
+          ch,
+        )
+        info.outcome = done.outcome
+        return done.out
+      }
       info.outcome = "permission-refused"
       return no(
-        `#${p.id}: permissions can only be answered in the OpenCode TUI.`,
+        `#${p.id}: ${this.permissionChoices().length ? "use the buttons on the message" : "permissions can only be answered in the OpenCode TUI"}.`,
       )
     }
     const answer = resolveAnswer(p.questions ?? [], reply)
@@ -1963,6 +1997,85 @@ export class Bridge {
       answer: given,
     })
     return { outcome: "applied", out: { ok: true, text: `Answered: ${given}` } }
+  }
+
+  /** What a channel may answer to a permission, by `permissions.remote`. */
+  private permissionChoices(): Array<"once" | "always" | "reject"> {
+    if (!this.host.replyPermission) return []
+    const m = this.cfg.permissions.remote
+    return m === "off"
+      ? []
+      : m === "once"
+        ? ["once", "reject"]
+        : ["once", "always", "reject"]
+  }
+
+  /** Answers a permission from a channel when the policy allows it; the first answer wins. */
+  private async decide(
+    p: Pending,
+    decision: "once" | "always" | "reject",
+    via: { id: string; replyID?: string },
+    ch?: Connector,
+  ): Promise<{ out: Outcome; outcome: "applied" | "failed" | "refused" }> {
+    if (!this.permissionChoices().includes(decision))
+      return {
+        outcome: "refused",
+        out: no(
+          `#${p.id}: ${decision === "always" ? "Always needs permissions.remote: all" : "permissions can only be answered in the OpenCode TUI"}.`,
+        ),
+      }
+    this.store.update(p.id, {
+      state: "answered",
+      answeredBy: "phone",
+      answeredVia: via.id,
+      answeredAt: this.now(),
+      replyID: via.replyID,
+    })
+    this.pendingGauge()
+    try {
+      await this.actions.replyPermission(p.sessionID, p.requestID, decision)
+    } catch (err) {
+      log("reply_error", { id: p.id, message: (err as Error).message })
+      this.store.update(p.id, { state: "failed" })
+      this.pendingGauge()
+      return {
+        outcome: "failed",
+        out: no(`#${p.id}: not applied (already answered or expired).`),
+      }
+    }
+    const given = {
+      once: "Allowed once",
+      always: "Allowed always",
+      reject: "Denied",
+    }[decision]
+    log("permission_answered", {
+      session: p.rootSessionID,
+      action: p.action,
+      decision,
+      channel: via.id,
+      at: new Date(this.now()).toISOString(),
+    })
+    this.answered(p, "phone", ch)
+    await this.markAnswered(p, {
+      outcome: "answered",
+      via: via.id,
+      answer: given,
+    })
+    return { outcome: "applied", out: { ok: true, text: given } }
+  }
+
+  async answerPermissionFromClient(
+    id: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<Result> {
+    const p = this.store.get(id)
+    if (!p || this.now() - p.askedAt > EXPIRY_MS)
+      return no(`#${id}: unknown or expired id, not applied.`)
+    if (p.state !== "pending")
+      return no(`#${p.id}: already answered, not applied.`)
+    if (p.kind !== "permission")
+      return no(`#${p.id}: that is a question, not a permission.`)
+    return (await this.decide(p, decision, { id: "api" })).out
   }
 
   /** An answer from a client other than a chat: the same rules, the same single winner. */

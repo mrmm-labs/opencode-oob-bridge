@@ -604,3 +604,21 @@ describe("quiet and digest", () => {
       assert.ok("error" in c(extra), JSON.stringify(extra))
   })
 })
+
+describe("permissions.remote", () => {
+  const base = { channels: { telegram: { token: { env: "X" } } } }
+  it("is off by default and takes once or all", () => {
+    const c = (permissions?: unknown) =>
+      (parseConfig({ ...base, permissions }) as Config).permissions
+    assert.deepEqual(c(), { remote: "off" })
+    assert.deepEqual(c({ remote: "once" }), { remote: "once" })
+    assert.deepEqual(c({ remote: "all" }), { remote: "all" })
+  })
+  it("refuses anything else", () => {
+    for (const permissions of ["all", { remote: "always" }, { remote: true }])
+      assert.ok(
+        "error" in (parseConfig({ ...base, permissions }) as object),
+        JSON.stringify(permissions),
+      )
+  })
+})

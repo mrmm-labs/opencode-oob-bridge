@@ -81,6 +81,8 @@ export type Config = {
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
   /** The card posted when a turn ends with changes or after a long turn. */
   turnCard: { enabled: boolean; minSeconds: number }
+  /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
+  permissions: { remote: "off" | "once" | "all" }
   /** Silent delivery between two clock times: off unless set. */
   quiet?: QuietHours
   /** One summary message a day: off unless set. `at` is minutes after local midnight. */
@@ -139,6 +141,17 @@ function parseDigest(
   if (o.empty !== undefined && typeof o.empty !== "boolean")
     return { error: "digest.empty must be true or false" }
   return { at, empty: o.empty === true }
+}
+
+function parsePermissions(
+  raw: unknown,
+): Config["permissions"] | { error: string } {
+  if (raw === undefined) return { remote: "off" }
+  if (!isObject(raw)) return { error: "permissions must be an object" }
+  const { remote = "off" } = raw
+  if (remote !== "off" && remote !== "once" && remote !== "all")
+    return { error: "permissions.remote must be off, once or all" }
+  return { remote }
 }
 
 function parseTurnCard(raw: unknown): Config["turnCard"] | { error: string } {
@@ -434,6 +447,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
 
+  const permissions = parsePermissions(raw.permissions)
+  if ("error" in permissions) return permissions
   const turnCard = parseTurnCard(raw.turnCard)
   if ("error" in turnCard) return turnCard
 
@@ -464,6 +479,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     core,
     deadman,
     turnCard,
+    permissions,
     quiet,
     digest,
     rules,
