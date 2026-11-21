@@ -354,6 +354,11 @@ How it behaves:
   says `⚡ steered in`. With `chat.delivery: "steer"`, every message to a busy session is steered;
   an idle session just gets the message either way. The sidebar block (below) and
   `/oob delivery` set it for one session.
+- **A queued message does not wait forever.** A message queued behind a busy session is kept by the
+  bridge. If the session is still busy after `chat.queueSteerSeconds` (default `30`), it is steered
+  in and the thread says `→ steered in after Ns`; if the session frees up first it is sent as a
+  normal prompt. `0` keeps the old behavior (wait for the turn to end). What is held is handed to
+  the session's queue when the bridge stops; a crash of the process inside the window loses it.
 - **Answers come first.** A reply to a question, or a tap on a button, still answers that question.
   Only a message that answers nothing is a prompt.
 - **While the session works**, the topic shows "typing…". The assistant text appears in one message

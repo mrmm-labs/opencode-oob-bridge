@@ -1193,13 +1193,26 @@ export class TelegramConnector implements Connector {
     const base = this.opts.apiBase ?? "https://api.telegram.org"
     for (let attempt = 0; ; attempt++) {
       const timeout = AbortSignal.timeout(timeoutMs)
-      const res = await this.fetch(`${base}/bot${token}/${method}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        keepalive: false,
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      })
+      let res: Response
+      try {
+        res = await this.fetch(`${base}/bot${token}/${method}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          keepalive: false,
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        })
+      } catch (err) {
+        // A call that hung on a dead connection is tried once more, on a new one.
+        if (!signal?.aborted && method !== "getUpdates" && attempt < 1) {
+          log("telegram_call_retry", {
+            method,
+            message: (err as Error).message,
+          })
+          continue
+        }
+        throw err
+      }
       if (stats) stats.httpStatus = res.status
       const json = (await res.json().catch(() => undefined)) as
         | {

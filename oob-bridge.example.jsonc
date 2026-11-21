@@ -68,6 +68,8 @@
   // /oob chat on in the TUI, per session. Permissions are never answered
   // from a chat. Telegram is not end-to-end encrypted.
   // "chat": {
+  //   // Seconds a message queued behind a busy session waits before it is steered in (0: wait for the turn to end).
+  //   "queueSteerSeconds": 30,
   //   "stream": true,
   //   // Shortest time between two edits of a streamed reply, in ms (800 at least).
   //   "streamMs": 1000,

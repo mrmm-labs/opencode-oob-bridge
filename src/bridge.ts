@@ -384,6 +384,16 @@ export class Bridge {
   >()
   /** Per session: how prompts are delivered, when it differs from `chat.delivery`. */
   private readonly deliveries = new Map<string, Delivery>()
+  /** Messages for a busy session, kept here until it is free or `chat.queueSteerSeconds` pass: by session. */
+  private readonly held = new Map<
+    string,
+    {
+      ch: Connector
+      at: number
+      timer: ReturnType<typeof setTimeout>
+      items: Array<{ text: string; files?: InboundFile[] }>
+    }
+  >()
   private chatListener: ((root: string) => void) | undefined
   private readonly listeners = new Set<() => void>()
   /** What a chat command chose, until OpenCode's own copy of the session catches up. */
@@ -706,6 +716,10 @@ export class Bridge {
   async stop(): Promise<void> {
     for (const ac of this.controllers.values()) ac.abort()
     this.controllers.clear()
+    // What waits here is handed to the session's own queue, never dropped.
+    await Promise.allSettled(
+      [...this.held.keys()].map((root) => this.release(root, "free")),
+    )
     for (const f of this.feeds.values()) clearTimeout(f.timer)
     this.feeds.clear()
     for (const c of this.cards.values()) clearTimeout(c.timer)
@@ -740,6 +754,7 @@ export class Bridge {
           this.turns.delete(e.data.sessionID)
           return await this.onState(e.data.sessionID, "working")
         case "session.execution.interrupted":
+          void this.release(e.data.sessionID, "free")
           await this.endTurn(e.data.sessionID)
           return await this.onState(e.data.sessionID, "idle")
         case "session.text.delta":
@@ -748,6 +763,7 @@ export class Bridge {
           return await this.onText(e.data, undefined, e.data.text)
         case "session.execution.succeeded":
         case "session.execution.failed":
+          void this.release(e.data.sessionID, "free")
           return await this.onFinished(
             e.data.sessionID,
             e.type === "session.execution.failed",
@@ -2012,8 +2028,11 @@ export class Bridge {
     // an idle session takes the plain path.
     const delivery: Delivery =
       bang || (busy && this.delivery(root) === "steer") ? "steer" : "queue"
+    const holding =
+      busy && delivery === "queue" && this.cfg.chat.queueSteerSeconds > 0
     try {
-      await this.actions.prompt(root, text, delivery, m.files)
+      if (holding) this.hold(ch, root, { text, files: m.files })
+      else await this.actions.prompt(root, text, delivery, m.files)
     } catch (err) {
       log("prompt_error", { message: (err as Error).message })
       info.outcome = "failed"
@@ -2039,8 +2058,86 @@ export class Bridge {
         ? `→ sent to ${where}`
         : delivery === "steer"
           ? `⚡ steered in · ${where}`
-          : `→ queued for ${where} (busy)`,
+          : `→ queued for ${where} (busy${holding ? `, steered in after ${this.cfg.chat.queueSteerSeconds}s if still waiting` : ""})`,
     }
+  }
+
+  /** Keeps a message for a busy session; `release` sends it. */
+  private hold(
+    ch: Connector,
+    root: string,
+    item: { text: string; files?: InboundFile[] },
+  ): void {
+    const h = this.held.get(root)
+    if (h) return void h.items.push(item)
+    const timer = setTimeout(
+      () => void this.release(root, "steer"),
+      this.cfg.chat.queueSteerSeconds * 1000,
+    )
+    ;(timer as { unref?: () => void }).unref?.()
+    this.held.set(root, { ch, at: this.now(), timer, items: [item] })
+  }
+
+  /**
+   * Sends what waits for a session, in order: steered into the running turn when
+   * the time is up, or as normal prompts when the session has become free.
+   */
+  private async release(root: string, why: "free" | "steer"): Promise<void> {
+    const h = this.held.get(root)
+    if (!h) return
+    clearTimeout(h.timer)
+    this.held.delete(root)
+    const waited = Math.round((this.now() - h.at) / 1000)
+    const steer = why === "steer" && this.host.busy(root)
+    try {
+      for (const it of h.items)
+        await this.actions.prompt(
+          root,
+          it.text,
+          steer ? "steer" : "queue",
+          it.files,
+        )
+    } catch (err) {
+      log("held_send_error", {
+        session: root,
+        message: (err as Error).message,
+      })
+      return void (await this.tell(
+        h.ch,
+        root,
+        "⚠ Could not send your waiting message: " +
+          truncate((err as Error).message || "unknown error", 120),
+      ))
+    }
+    const outcome = steer ? "steered" : "free"
+    log("held_released", {
+      session: root,
+      outcome,
+      count: h.items.length,
+      waited_s: waited,
+    })
+    this.tel.count("oob.held.released", {
+      "connector.type": h.ch.type,
+      outcome,
+    })
+    if (steer) await this.tell(h.ch, root, `→ steered in after ${waited}s`)
+  }
+
+  /** A short notice in the session's thread. */
+  private async tell(ch: Connector, root: string, text: string): Promise<void> {
+    const f = this.fmt("notice", { text })
+    await this.dispatch(
+      "notice",
+      [ch],
+      () => ({
+        ...f,
+        ...this.card(ch, "notice", undefined, () => ({ kind: "notice", text })),
+        ...(ch.capabilities.threads
+          ? { session: { id: root, name: root } }
+          : {}),
+      }),
+      { root },
+    )
   }
 
   /** A connector's own button. The only one is turning chat off: chat is never switched on from a chat. */

@@ -49,6 +49,7 @@ export const SIDEBAR_MODES: readonly SidebarMode[] = ["full", "compact", "off"]
 export const MIN_STREAM_MS = 800
 const DEFAULT_STREAM_MS = 1000
 export const DEFAULT_STREAM_BUDGET = 30
+export const DEFAULT_QUEUE_STEER = 30
 
 /** Chat from a connector into a session. */
 export type ChatConfig = {
@@ -64,6 +65,8 @@ export type ChatConfig = {
   streamBudget: number
   /** How a prompt reaches a session that is working: `queue` waits for the turn to end, `steer` is injected into it. */
   delivery: Delivery
+  /** A message queued behind a busy session is steered in after this many seconds if it still waits. 0 keeps it queued. */
+  queueSteerSeconds: number
   /** Applied to chat replies instead of `redact`: a reply cut at a prompt's preview length is unreadable. Default `full`. */
   redact: Redact
   /** The folders a session can be started in from a chat, by name. Empty: starting sessions from a chat is off. */
@@ -448,6 +451,7 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
       streamMs: DEFAULT_STREAM_MS,
       streamBudget: DEFAULT_STREAM_BUDGET,
       delivery: "queue",
+      queueSteerSeconds: DEFAULT_QUEUE_STEER,
       redact: { mode: "full" },
       projects: {},
       models: [],
@@ -483,6 +487,17 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
   const delivery = raw.delivery ?? "queue"
   if (delivery !== "queue" && delivery !== "steer")
     return { error: 'chat.delivery must be "queue" or "steer"' }
+  const queueSteerSeconds = raw.queueSteerSeconds ?? DEFAULT_QUEUE_STEER
+  if (
+    typeof queueSteerSeconds !== "number" ||
+    !Number.isInteger(queueSteerSeconds) ||
+    queueSteerSeconds < 0 ||
+    queueSteerSeconds > 86_400
+  )
+    return {
+      error:
+        "chat.queueSteerSeconds must be a whole number of seconds, 0 to 86400",
+    }
   const redact = parseRedact(raw.redact)
   if (!redact)
     return { error: 'chat.redact must be "full", "title" or "head:<n>"' }
@@ -513,6 +528,7 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
     streamMs,
     streamBudget,
     delivery,
+    queueSteerSeconds,
     redact,
     projects: projects.projects,
     models,
