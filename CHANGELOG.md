@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.19.0...v0.20.0) (2026-11-21)
+
+
+### Features
+
+* streaming limits and an opt-in draft path ([#63](https://github.com/mrmm-labs/opencode-oob-bridge/issues/63)) ([dae0592](https://github.com/mrmm-labs/opencode-oob-bridge/commit/dae0592a1821fc0429c2f41478dc585f3513cc4a))
+
 ## [0.19.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.18.0...v0.19.0) (2026-11-21)
 
 
