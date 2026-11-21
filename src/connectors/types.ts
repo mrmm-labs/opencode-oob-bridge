@@ -124,6 +124,8 @@ export type Push = {
   card?: Card
   /** One button of the connector's own (`control` comes back as an inbound of kind `control`). Only for connectors with `buttons`. */
   action?: { label: string; control: string }
+  /** Quiet hours: true delivers without a sound or notification, false makes one regardless. Unset: the connector decides. */
+  silent?: boolean
   /** The connector may record transport facts here; it is never shown to anyone. */
   stats?: SendStats
 }
@@ -259,6 +261,8 @@ export interface Connector {
     data: string,
     caption: string,
   ): Promise<boolean>
+  /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
+  silence?(isQuiet: () => boolean): void
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
   menu?(commands: MenuCommand[]): void
   /** Required when `capabilities.pairing`. */

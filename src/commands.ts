@@ -65,6 +65,8 @@ export type CommandDeps = {
   sessions(): Promise<Array<{ id: string; label: string }>>
   /** What /afk shows: the state, never a way to change it. */
   afk(): string
+  /** The digest text for the period since the last one, marking it covered; a refusal when the digest is off. */
+  digest(): Promise<Outcome>
   /** Sessions with messages they are not working on. */
   stuck(): Array<{ id: string; label: string; pending: number }>
   resume(root: string): Promise<Outcome>
@@ -190,8 +192,10 @@ export class Commands {
     info: Info,
   ): Promise<Outcome> {
     if (name === "afk") return this.done(info, "applied", yes(this.d.afk()))
-    if (name === "digest")
-      return this.done(info, "disabled", no("The digest is not enabled."))
+    if (name === "digest") {
+      const out = await this.d.digest()
+      return this.done(info, out.ok ? "applied" : "disabled", out)
+    }
     // resume
     if (m.sessionKey) {
       const blocked = await this.gate(m.sessionKey, info)

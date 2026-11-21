@@ -22,6 +22,8 @@ import type {
   TurnCard,
 } from "./connectors/types.ts"
 import { buildMenu } from "./commandmenu.ts"
+import { DigestLog, digestText } from "./digest.ts"
+import { digestDue, isQuiet } from "./quiet.ts"
 import { Actions, Refused, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { filterSecrets, redact } from "./filter.ts"
@@ -309,6 +311,7 @@ type Routed = NonNullable<Awaited<ReturnType<Bridge["routed"]>>>
 
 /** How long the buttons of a turn card stay. */
 export const CARD_BUTTONS_MS = 60 * 60_000
+const DIGEST_TICK_MS = 30_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
 
@@ -329,6 +332,8 @@ export class Bridge {
   private readonly hinted = new Map<string, number>()
   /** The assistant text of the turn in progress, by top-level session. */
   /** The working tree when each running turn began. */
+  private readonly digestLog: DigestLog
+  private digestTimer: ReturnType<typeof setInterval> | undefined
   private readonly before = new Map<string, Promise<Stats | undefined>>()
   /** The latest turn card of a session on a connector, until its buttons are removed. */
   private readonly cards = new Map<
@@ -383,7 +388,9 @@ export class Bridge {
     router: Router,
     now: () => number = Date.now,
     tel: Telemetry = noTelemetry(),
+    digest: DigestLog = new DigestLog(),
   ) {
+    this.digestLog = digest
     this.tel = tel
     this.cfg = cfg
     this.host = host
@@ -419,6 +426,7 @@ export class Bridge {
         this.onState(root, working ? "working" : undefined),
       sessions: () => this.activeSessions(),
       afk: () => this.afkStatus(),
+      digest: () => this.digestNow(),
       stuck: () => this.stuckSource?.() ?? [],
       resume: (root) => this.resume(root),
       remote: (root) => void this.remote.add(root),
@@ -487,9 +495,17 @@ export class Bridge {
     const list = buildMenu({
       undo: this.host.undo !== undefined,
       resume: this.host.resume !== undefined,
-      digest: false,
+      digest: this.cfg.digest !== undefined,
     })
     for (const ch of this.channels) ch.menu?.(list)
+    for (const ch of this.channels) ch.silence?.(() => this.quietNow())
+    if (this.cfg.digest && !this.digestTimer) {
+      this.digestTimer = setInterval(
+        () => void this.digestTick(),
+        DIGEST_TICK_MS,
+      )
+      this.digestTimer.unref?.()
+    }
     for (const ch of this.channels) if (ch.enabled) this.run(ch)
   }
 
@@ -570,7 +586,10 @@ export class Bridge {
     this.feeds.clear()
     for (const c of this.cards.values()) clearTimeout(c.timer)
     this.cards.clear()
+    clearInterval(this.digestTimer)
+    this.digestTimer = undefined
     await this.store.flush()
+    await this.digestLog.flush()
   }
 
   async onEvent(e: BridgeEvent): Promise<void> {
@@ -751,7 +770,7 @@ export class Bridge {
           parent: span.id,
           attrs: { ...attrs, "pending.id": o.pending },
         })
-        const push = { ...build(ch), stats }
+        const push = { ...build(ch), stats, ...this.silence(kind) }
         let res = await this.safely(ch, async () =>
           edit ? ch.update!(old, push) : ch.send(push),
         )
@@ -1311,6 +1330,7 @@ export class Bridge {
         ? undefined
         : formatDuration(this.now() - st.started)
     const f = this.fmt(kind, r.vars, r.facts)
+    this.record(failed ? "failed" : "finished", r.session.name)
     await this.postTurnCard(r, failed, st.started, final)
     await this.dispatch(
       kind,
@@ -1326,6 +1346,79 @@ export class Bridge {
         })),
       }),
       { root: r.rootID },
+    )
+  }
+
+  private quietNow(): boolean {
+    return this.cfg.quiet !== undefined && isQuiet(this.cfg.quiet, this.now())
+  }
+
+  /** Quiet hours: every push is silent unless its kind is on the break-through list. */
+  private silence(kind: Kind): { silent?: boolean } {
+    const q = this.cfg.quiet
+    if (!q || !this.quietNow()) return {}
+    return { silent: !(q.breakthrough as string[]).includes(kind) }
+  }
+
+  private record(k: "finished" | "failed", title: string) {
+    if (this.cfg.digest) this.digestLog.append({ k, at: this.now(), title })
+  }
+
+  /** The digest for the period since the last one, and whether it holds anything. */
+  private digestBody(): string {
+    const waiting = [
+      ...this.store
+        .list()
+        .filter((p) => p.state === "pending")
+        .map((p) => p.kind + ": " + redact(p.title, this.cfg.redact)),
+      ...(this.stuckSource?.() ?? []).map(
+        (s) =>
+          "stuck: " +
+          redact(s.label, this.cfg.redact) +
+          " (" +
+          s.pending +
+          " waiting)",
+      ),
+    ]
+    return digestText({ records: this.digestLog.pending(), waiting })
+  }
+
+  /** `/digest`: the text now, and the period counts as covered. */
+  async digestNow(): Promise<Outcome> {
+    if (!this.cfg.digest) return no("The digest is not enabled.")
+    const body = this.digestBody()
+    this.digestLog.append({ k: "digest", at: this.now() })
+    return yes(
+      body ? "Digest\n" + body : "Nothing to report since the last digest.",
+    )
+  }
+
+  /** Sends the day's digest once, when the clock passes `digest.at`. */
+  async digestTick(): Promise<void> {
+    const d = this.cfg.digest
+    if (!d) return
+    if (
+      !digestDue({
+        at: d.at,
+        timezone: this.cfg.quiet?.timezone,
+        last: this.digestLog.lastDigest(),
+        now: this.now(),
+      })
+    )
+      return
+    const body = this.digestBody()
+    this.digestLog.append({ k: "digest", at: this.now() })
+    if (!body && !d.empty) return
+    const text = body || "Nothing to report."
+    await this.dispatch(
+      "notice",
+      this.active().filter((c) => c.capabilities.inboundPrompt),
+      () => ({
+        title: "Digest",
+        message: text,
+        tags: ["calendar"],
+      }),
+      {},
     )
   }
 

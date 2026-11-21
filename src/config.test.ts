@@ -554,3 +554,53 @@ describe("turnCard", () => {
       )
   })
 })
+
+describe("quiet and digest", () => {
+  const base = { channels: { telegram: { token: { env: "X" } } } }
+  const c = (extra: Record<string, unknown>) =>
+    parseConfig({ ...base, ...extra }) as Config & { error?: string }
+
+  it("are off by default", () => {
+    assert.equal(c({}).quiet, undefined)
+    assert.equal(c({}).digest, undefined)
+  })
+
+  it("parses the window, the zone and the break-through list", () => {
+    const q = c({
+      quiet: {
+        from: "23:00",
+        to: "07:30",
+        timezone: "Europe/Paris",
+        breakthrough: ["failed"],
+      },
+    }).quiet
+    assert.deepEqual(q, {
+      from: 1380,
+      to: 450,
+      timezone: "Europe/Paris",
+      breakthrough: ["failed"],
+    })
+  })
+
+  it("the digest time defaults to the end of quiet hours", () => {
+    const k = c({ quiet: { from: "23:00", to: "07:00" }, digest: true })
+    assert.deepEqual(k.digest, { at: 420, empty: false })
+    assert.deepEqual(c({ digest: { at: "08:15", empty: true } }).digest, {
+      at: 495,
+      empty: true,
+    })
+  })
+
+  it("refuses what cannot work", () => {
+    for (const extra of [
+      { quiet: { from: "23:00", to: "23:00" } },
+      { quiet: { from: "25:00", to: "07:00" } },
+      { quiet: { from: "23:00", to: "07:00", timezone: "Mars/Base" } },
+      { quiet: { from: "23:00", to: "07:00", breakthrough: ["finished"] } },
+      { digest: true },
+      { digest: { at: "soon" } },
+      { digest: { at: "07:00", empty: "yes" } },
+    ])
+      assert.ok("error" in c(extra), JSON.stringify(extra))
+  })
+})
