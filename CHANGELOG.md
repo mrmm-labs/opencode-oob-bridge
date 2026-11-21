@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.31.0...v0.32.0) (2026-11-21)
+
+
+### Features
+
+* link.allowHosts for wss hosts and an optional pre-shared link key ([#110](https://github.com/mrmm-labs/opencode-oob-bridge/issues/110)) ([e8c21d2](https://github.com/mrmm-labs/opencode-oob-bridge/commit/e8c21d2359b80f20e4af7349eab14aaa10943c45))
+* say where to write in a topic with no session, log the loaded version ([#108](https://github.com/mrmm-labs/opencode-oob-bridge/issues/108)) ([df6e707](https://github.com/mrmm-labs/opencode-oob-bridge/commit/df6e707d93b08b9c94b9e1b28b48f17d82c5779f))
+
 ## [0.31.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.30.0...v0.31.0) (2026-11-21)
 
 
