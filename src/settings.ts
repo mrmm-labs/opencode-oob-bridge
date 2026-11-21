@@ -21,6 +21,8 @@ export type Afk = "auto" | "on" | "off"
 export type Settings = {
   /** The away override chosen with `/oob afk`. */
   afk?: Afk
+  /** When a timed `on` ends, in epoch ms. */
+  afkUntil?: number
   /** The sidebar block's size, when chosen in the TUI. */
   sidebar?: SidebarMode
   channels?: Record<string, ConnectorSettings>
@@ -67,8 +69,17 @@ export class SettingsStore {
     return v === "on" || v === "off" ? v : "auto"
   }
 
-  setAfk(mode: Afk): void {
-    this.data = { ...this.data, afk: mode === "auto" ? undefined : mode }
+  afkUntil(): number | undefined {
+    const v = this.data.afkUntil
+    return this.afk() === "on" && typeof v === "number" ? v : undefined
+  }
+
+  setAfk(mode: Afk, until?: number): void {
+    this.data = {
+      ...this.data,
+      afk: mode === "auto" ? undefined : mode,
+      afkUntil: mode === "on" ? until : undefined,
+    }
     this.save()
   }
 

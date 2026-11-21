@@ -95,6 +95,12 @@ export async function setup(
   const remote = new Remote({
     call,
     roots: () => [currentRoot(ctx)].filter((r) => r !== undefined),
+    onBack: (message) =>
+      ctx.ui.toast.show({
+        message,
+        variant: "info",
+        duration: 15_000,
+      } as never),
   })
   app = { pilot: remote, settings }
 

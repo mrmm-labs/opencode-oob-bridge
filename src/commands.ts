@@ -31,7 +31,7 @@ const SESSION_COMMANDS = [
 ] as const
 const GENERAL_COMMANDS = ["new", "sessions", "projects"] as const
 /** Work in a session topic and in General. */
-const ANYWHERE_COMMANDS = ["resume", "afk", "digest"] as const
+const ANYWHERE_COMMANDS = ["resume", "afk", "digest", "night"] as const
 const ALIASES: Record<string, string> = { effort: "variant", start: "help" }
 const KNOWN = new Set<string>([
   ...SESSION_COMMANDS,
@@ -67,6 +67,10 @@ export type CommandDeps = {
   afk(): string
   /** The digest text for the period since the last one, marking it covered; a refusal when the digest is off. */
   digest(): Promise<Outcome>
+  /** The overnight plan in words. */
+  night(): string
+  /** Ends the plan; a plan is never started or changed from a chat. */
+  endNight(): Promise<Outcome>
   /** Sessions with messages they are not working on. */
   stuck(): Array<{ id: string; label: string; pending: number }>
   resume(root: string): Promise<Outcome>
@@ -192,6 +196,19 @@ export class Commands {
     info: Info,
   ): Promise<Outcome> {
     if (name === "afk") return this.done(info, "applied", yes(this.d.afk()))
+    if (name === "night") {
+      const arg = (m.command?.args ?? "").trim().toLowerCase()
+      if (arg === "end" || arg === "stop")
+        return this.done(info, "applied", await this.d.endNight())
+      return this.done(
+        info,
+        "applied",
+        yes(
+          this.d.night() +
+            "\n/night end ends the plan. Only the Mac starts or changes one.",
+        ),
+      )
+    }
     if (name === "digest") {
       const out = await this.d.digest()
       return this.done(info, out.ok ? "applied" : "disabled", out)
@@ -247,6 +264,7 @@ export class Commands {
           "/undo: revert the last turn (asks first)",
           "/resume: wake this session if it is stuck",
           "/afk: who counts as away (read only)",
+          "/night: the overnight plan; /night end ends it",
           "/steer <text>: inject a message into the running turn (or start with !)",
           "/compact: compact the session",
           "/rename <title>: rename the session",
@@ -262,6 +280,7 @@ export class Commands {
         "/projects: the projects /new can use",
         "/resume: wake a stuck session (lists them)",
         "/afk: who counts as away (read only)",
+        "/night: the overnight plan; /night end ends it",
         "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /compact, /rename, /chat off.",
       ].join("\n"),
     )

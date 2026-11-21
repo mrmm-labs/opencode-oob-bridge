@@ -15,7 +15,7 @@ import plugin, { setup } from "./tui.ts"
 type Handler = (e: unknown) => void
 
 // One entry per sub-command, besides /oob itself.
-const SUBS = 16
+const SUBS = 17
 
 function fakeCtx(
   size?: { width: number; height: number },
@@ -359,6 +359,7 @@ describe("/oob menu and channels", () => {
         "oob-test",
         "oob-sidebar",
         "oob-afk",
+        "oob-overnight",
         "oob-session",
         "oob-resume",
         "oob-restart",
@@ -430,6 +431,7 @@ describe("/oob menu and channels", () => {
         "test",
         "sidebar",
         "afk",
+        "overnight",
         "session",
         "resume",
         "restart",
@@ -483,7 +485,7 @@ describe("/oob menu and channels", () => {
     await cmd.run("o")
     assert.deepEqual(
       f.dialogs[0].options!.map((o) => o.value),
-      ["on", "off"],
+      ["on", "off", "overnight"],
     )
     assert.equal(f.toasts.at(-1), "oob routing: off")
     await cmd.run("au")
@@ -811,7 +813,7 @@ describe("/oob menu and channels", () => {
     const saved = await readJson(join(dir, "settings.json"))
     assert.equal(saved.channels.telegram.chatId, "555")
     // Never written to the user's config file.
-    assert.doesNotMatch(await readFile(join(dir, "c.jsonc"), "utf8"), /555/)
+    assert.doesNotMatch(await readFile(join(dir, "c.jsonc"), "utf8"), /chatId/)
 
     await cmd.run("test")
     assert.equal(tg.of("sendMessage").at(-1)!.body.chat_id, "555")

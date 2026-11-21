@@ -22,4 +22,4 @@
 
 - [ ] 4.1 Timed AFK and the return summary. Verify: tests with a fake clock and a TUI input event.
 - [ ] 4.2 README and `overnight` config. Verify: `config.test.ts` and `readme.test.ts`.
-- [ ] 4.3 One real night. Verify: the digest of the night is attached to the release PR.
+- [ ] 4.3 One real night. Verify: the digest of the night is attached to the release PR. Deferred: needs an unattended night with the operator.

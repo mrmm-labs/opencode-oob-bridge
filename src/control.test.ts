@@ -469,3 +469,108 @@ describe("resume: one alert for each suspension", () => {
     await r.done()
   })
 })
+
+describe("timed away and the overnight plan", () => {
+  const HOUR = 3_600_000
+
+  it("afk on <time> ends by itself, is kept, and shows the time left", async () => {
+    const r = await rig()
+    const on = await r.control.op("afk", { mode: "on", for: "8h" })
+    assert.equal(on.snapshot.afk.away, true)
+    assert.equal(on.snapshot.afk.until, r.clock.t + 8 * HOUR)
+    assert.equal(r.settings.afkUntil(), r.clock.t + 8 * HOUR)
+    r.clock.t += 8 * HOUR + 1
+    r.control.heartbeat("a", r.clock.t)
+    const s = r.control.snapshot()
+    assert.equal(s.afk.away, false)
+    assert.equal(s.afk.until, undefined)
+    assert.equal(
+      (await r.control.op("afk", { mode: "off", for: "8h" })).ok,
+      false,
+    )
+    assert.equal(
+      (await r.control.op("afk", { mode: "on", for: "soon" })).ok,
+      false,
+    )
+    await r.done()
+  })
+
+  it("a plan is refused for a session the bridge has not seen, and never from nothing", async () => {
+    const r = await rig()
+    const out = await r.control.op("overnight", {
+      action: "start",
+      until: "8h",
+      yes: true,
+    })
+    assert.equal(out.ok, false)
+    await r.control.op("overnight", {
+      action: "add",
+      root: "root",
+      tasks: ["a"],
+    })
+    const refused = await r.control.op("overnight", {
+      action: "start",
+      until: "8h",
+      yes: true,
+    })
+    assert.equal(refused.ok, false)
+    assert.match(refused.text!, /not seen this session|no channel/)
+    assert.equal(r.control.night.active(), false)
+    await r.done()
+  })
+
+  it("starts for a known session, turns away on, sends the task, and ends on request", async () => {
+    const r = await rig()
+    await r.tg.waitFor(
+      () => r.control.snapshot().channels.some((c) => c.connected) || undefined,
+    )
+    await r.bridge.setChat("root", true)
+    await r.control.op("overnight", {
+      action: "add",
+      root: "root",
+      tasks: ["run the tests"],
+      maxTurns: 3,
+    })
+    const started = await r.control.op("overnight", {
+      action: "start",
+      until: "8h",
+      yes: true,
+    })
+    assert.equal(started.ok, true, started.text)
+    const snap = r.control.snapshot()
+    assert.equal(snap.afk.away, true)
+    assert.equal(snap.afk.until, r.clock.t + 8 * HOUR)
+    assert.equal(snap.night!.sessions[0].tasks, 1)
+    await r.control.scan()
+    assert.equal(r.control.night.plan!.sessions.root.tasks[0].state, "sent")
+    r.control.onEvent({
+      type: "session.execution.succeeded",
+      data: { sessionID: "root" },
+    })
+    assert.equal(r.control.night.plan!.sessions.root.turns, 1)
+    assert.equal((await r.control.op("overnight", { action: "end" })).ok, true)
+    assert.equal(r.control.snapshot().night!.ended, "tui")
+    await r.control.scan()
+    assert.match(
+      (
+        await r.tg.waitFor(() =>
+          r.sends().find((b) => /Night/.test(b.text ?? b.caption ?? "")),
+        )
+      ).text,
+      /Night \(tui\)/,
+    )
+    await r.done()
+  })
+
+  it("tells what happened once the operator is back from a long away", async () => {
+    const r = await rig()
+    await r.control.op("afk", { mode: "on" })
+    r.control.scan()
+    r.clock.t += 2 * HOUR
+    await r.control.op("afk", { mode: "off" })
+    const s = r.control.snapshot()
+    assert.match(s.back!.text, /Away 2h/)
+    assert.match(s.back!.text, /0 pushes sent/)
+    await r.done()
+  })
+})

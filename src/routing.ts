@@ -62,6 +62,8 @@ const auto = (routes: boolean, reason: string) => ({
 export class Router {
   private lastInput: number
   private afk: "auto" | "on" | "off" = "auto"
+  /** When a forced "on" ends and the mode returns to auto. */
+  private afkUntil: number | undefined
   private present: () => boolean = () => true
   private readonly manual = new Map<string, { on: boolean; channel?: string }>()
   private readonly classified = new Map<string, Promise<boolean>>()
@@ -93,8 +95,16 @@ export class Router {
   }
 
   /** `on` and `off` force away and present; `auto` follows the time since the last input. */
-  setAfk(mode: "auto" | "on" | "off"): void {
+  setAfk(mode: "auto" | "on" | "off", until?: number): void {
     this.afk = mode
+    this.afkUntil = mode === "on" ? until : undefined
+  }
+
+  /** The end of a timed "on", while it lasts. */
+  afkEnds(): number | undefined {
+    return this.afk === "on" && this.afkUntil && this.now() < this.afkUntil
+      ? this.afkUntil
+      : undefined
   }
 
   afkMode(): "auto" | "on" | "off" {
@@ -107,6 +117,8 @@ export class Router {
   }
 
   away(): boolean {
+    if (this.afk === "on" && this.afkUntil && this.now() >= this.afkUntil)
+      this.setAfk("auto")
     if (this.afk !== "auto") return this.afk === "on"
     if (!this.present()) return true
     return this.now() - this.lastInput >= this.cfg.away.minutes * 60_000

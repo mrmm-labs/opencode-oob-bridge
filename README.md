@@ -401,6 +401,18 @@ With `permissions.remote` at `once` or `all`, the permission message carries but
 
 With `quiet` set, every message between `from` and `to` arrives without a sound or notification (Telegram: notifications off; ntfy: minimum priority). Nothing is held back or dropped, so the topics stay complete; the window may cross midnight and follows the clock of `timezone`, daylight saving included. `quiet.breakthrough` names the kinds that still notify; the default list is empty.
 
+## Overnight plan
+
+A plan keeps chosen sessions moving while you are away, within limits you set. It starts only from the OpenCode TUI: a chat or the core API can end it, never start or change it.
+
+1. `/oob overnight add <session> task="run the tests" task="fix what fails" scope="only touch src/" turns=20 failures=2 question=park after=30`, once per session.
+2. `/oob overnight start 07:00` (or `8h`) checks the plan first. A blocker (a session the config denies, no channel up) stops the start; a warning needs `start 07:00 yes`.
+3. `/oob overnight end`, or `/night end` in a chat, stops all automation at once.
+
+While it runs, the bridge wakes a suspended session (at most `overnight.maxResumes` times, five minutes apart), sends the next task when a turn ends, and answers a single-choice question that has a "(recommended)" option once `after` minutes have passed with `question=default`. With `question=park` it leaves the question for you. It never answers a permission, a free-text question or a multi-select. It stops a session after `turns` turns or `failures` failed turns in a row, and pauses it for ten minutes when you type in it. `scope` is an instruction the session reads, not a sandbox.
+
+Pushes are silent during a plan except the kinds in `overnight.wake` (empty by default). The morning digest has a night section: per session, tasks done, turns, what was answered or parked, and what needs you. `/oob afk on 8h` also works alone: away for a set time, with the time left in the sidebar and `/oob status`. When you type again after more than a minute away, the TUI shows what happened meanwhile.
+
 With `digest` set, one message goes out once a day at `digest.at`: what finished and what failed since the last digest, and what waits for you right now (open questions and permissions, stuck sessions; read live, so an answered question is not listed). Titles follow `redact` and secrets are masked. It is not sent when empty. `/digest` sends it on request and counts that period as covered. The records behind it are in `digest.jsonl` in the data directory, kept seven days; losing the file only loses detail.
 
 ### Turn cards
@@ -426,6 +438,7 @@ In a session's topic (they act on that session, and need chat on):
 | `/undo`               | Asks, then reverts the last turn through an open OpenCode window (it says so when none is open).                                                 |
 | `/resume`             | Wakes this session when it is stuck with messages waiting.                                                                                       |
 | `/afk`                | Shows the away mode, whether you count as away, and the overnight state. Changes nothing.                                                        |
+| `/night`              | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                                                            |
 | `/stop`               | Stops the running turn.                                                                                                                          |
 | `/compact`            | Compacts the session.                                                                                                                            |
 | `/rename <title>`     | Renames the session.                                                                                                                             |
@@ -441,6 +454,7 @@ In General, or a private chat:
 | `/sessions`               | The mirrored sessions, with a link to each topic.                                                                   |
 | `/resume`                 | Lists the stuck sessions with a button each, or says none is stuck.                                                 |
 | `/afk`                    | The same read-only away status as in a topic.                                                                       |
+| `/night`                  | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                               |
 | `/digest`                 | Sends the digest on request; answers that it is not enabled until it is.                                            |
 | `/projects`               | The projects `/new` can use.                                                                                        |
 | `/help`                   | Lists these.                                                                                                        |
@@ -486,24 +500,25 @@ The host completes only slash names, so every sub-command is also its own slash 
 their usage. `/oob-chat on` does exactly what `/oob chat on` does, and `/oob-chat` alone asks for
 the value. Bare `/oob` (and `/ntfy`) stays the picker.
 
-| Command                                                  | What it does                                                                                                               |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `/oob on [<channel\|all>]`                               | Push this session's questions and notices now, through one channel or all.                                                 |
-| `/oob off`                                               | Never push this session.                                                                                                   |
-| `/oob auto`                                              | Push this session after the away time without input, if the rules pick it.                                                 |
-| `/oob chat <on\|off>`                                    | Let messages in the session's topic reach it, or stop taking them.                                                         |
-| `/oob delivery <queue\|steer\|default>`                  | How your messages from a channel reach a busy session: queue, steer, or the config's default.                              |
-| `/oob channel <channel> <on\|off>`                       | Turn a channel on or off for every session; kept across restarts.                                                          |
-| `/oob pair <channel>`                                    | Show the code or link that binds a channel to a chat (the name can be left out when only one can pair).                    |
-| `/oob test`                                              | Push a test message through every enabled channel.                                                                         |
-| `/oob sidebar <full\|compact\|off>`                      | How big the section in the session sidebar is: full, compact or off.                                                       |
-| `/oob afk <on\|off\|auto>`                               | When you count as away, for the whole OpenCode instance: on, off, or auto after the away time without input in any window. |
-| `/oob session <session> <on\|off\|auto\|chat\|chat-off>` | Notify and chat settings of any session of this instance: on, off, auto, chat or chat-off.                                 |
-| `/oob resume <session>`                                  | Wake a session that is suspended with messages waiting in its inbox.                                                       |
-| `/oob restart`                                           | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                   |
-| `/oob core <status\|rotate>`                             | Show the core API (address and token file), or replace its token: the old token is refused at once.                        |
-| `/oob status`                                            | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                           |
-| `/oob help`                                              | List every sub-command with its usage.                                                                                     |
+| Command                                                                                   | What it does                                                                                                                       |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `/oob on [<channel\|all>]`                                                                | Push this session's questions and notices now, through one channel or all.                                                         |
+| `/oob off`                                                                                | Never push this session.                                                                                                           |
+| `/oob auto`                                                                               | Push this session after the away time without input, if the rules pick it.                                                         |
+| `/oob chat <on\|off>`                                                                     | Let messages in the session's topic reach it, or stop taking them.                                                                 |
+| `/oob delivery <queue\|steer\|default>`                                                   | How your messages from a channel reach a busy session: queue, steer, or the config's default.                                      |
+| `/oob channel <channel> <on\|off>`                                                        | Turn a channel on or off for every session; kept across restarts.                                                                  |
+| `/oob pair <channel>`                                                                     | Show the code or link that binds a channel to a chat (the name can be left out when only one can pair).                            |
+| `/oob test`                                                                               | Push a test message through every enabled channel.                                                                                 |
+| `/oob sidebar <full\|compact\|off>`                                                       | How big the section in the session sidebar is: full, compact or off.                                                               |
+| `/oob afk <on\|off\|auto> [<8h>]`                                                         | When you count as away, for the whole OpenCode instance: on, off, or auto after the away time without input in any window.         |
+| `/oob overnight <status\|add\|start\|end\|clear> [<<session> task=... \| <until> [yes]>]` | Keep sessions moving while you are away: add a brief for each session, start with an end time, or end the plan. Started here only. |
+| `/oob session <session> <on\|off\|auto\|chat\|chat-off>`                                  | Notify and chat settings of any session of this instance: on, off, auto, chat or chat-off.                                         |
+| `/oob resume <session>`                                                                   | Wake a session that is suspended with messages waiting in its inbox.                                                               |
+| `/oob restart`                                                                            | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                           |
+| `/oob core <status\|rotate>`                                                              | Show the core API (address and token file), or replace its token: the old token is refused at once.                                |
+| `/oob status`                                                                             | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                                   |
+| `/oob help`                                                                               | List every sub-command with its usage.                                                                                             |
 
 ## Sidebar
 

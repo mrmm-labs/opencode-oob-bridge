@@ -39,6 +39,8 @@ export class Remote implements Pilot {
   private snap: Snapshot | undefined
   private key = ""
   private online = false
+  private seenBack = 0
+  private readonly onBack: ((text: string) => void) | undefined
   private lastInput: number
   private timer: ReturnType<typeof setInterval> | undefined
   private readonly listeners = new Set<() => void>()
@@ -48,7 +50,10 @@ export class Remote implements Pilot {
     now?: () => number
     roots?: () => string[]
     pollMs?: number
+    /** Told once what happened while the operator was away, when they are back. */
+    onBack?: (text: string) => void
   }) {
+    this.onBack = o.onBack
     this.call = o.call
     this.now = o.now ?? Date.now
     this.roots = o.roots ?? (() => [])
@@ -96,6 +101,10 @@ export class Remote implements Pilot {
     const changed = key !== this.key || !this.online
     this.snap = s
     this.key = key
+    if (s.back && s.back.id > this.seenBack) {
+      this.seenBack = s.back.id
+      this.onBack?.(s.back.text)
+    }
     this.online = true
     if (changed) this.emit()
   }
@@ -195,8 +204,11 @@ export class Remote implements Pilot {
   setEnabled(id: string, on: boolean) {
     return this.act("enable", { id, on })
   }
-  setAfk(mode: Afk) {
-    return this.act("afk", { mode })
+  setAfk(mode: Afk, span?: string) {
+    return this.act("afk", { mode, for: span })
+  }
+  overnight(args: Record<string, unknown>) {
+    return this.act("overnight", args)
   }
   resume(root: string) {
     return this.act("resume", { root })
@@ -239,6 +251,7 @@ export class Remote implements Pilot {
       online: this.online,
       owner: s.owner,
       afk: s.afk,
+      night: s.night,
       core: s.core,
       eventsSeen: s.events.seen,
       lastEventAt: s.events.lastAt,

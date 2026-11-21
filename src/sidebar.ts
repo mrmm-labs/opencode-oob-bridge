@@ -68,6 +68,9 @@ export type BridgeState = {
   pid?: number
   startedAt?: number
   afk?: Afk
+  afkUntil?: number
+  /** An overnight plan is running. */
+  night?: boolean
   away?: boolean
   windows?: number
   /** The first enabled channel that is not connected or last failed. */
@@ -126,6 +129,9 @@ function bridgeState(
     pid: i.owner?.pid,
     startedAt: i.owner?.startedAt,
     afk: i.afk?.mode,
+    afkUntil: i.afk?.until,
+    night:
+      i.night !== undefined && !i.night.ended && i.night.until > Date.now(),
     away: i.afk?.away,
     windows: i.afk?.tuis,
     stuck: i.stuck,
@@ -169,7 +175,14 @@ const duration = (ms: number) => {
 }
 
 const afkValue = (b: BridgeState) =>
-  `${b.away ? "away" : "here"} · ${b.afk ?? "auto"}`
+  `${b.away ? "away" : "here"} · ${b.afk ?? "auto"}${b.afkUntil ? ` · ${left(b.afkUntil - Date.now())} left` : ""}${b.night ? " · night" : ""}`
+
+const left = (ms: number) => {
+  const m = Math.max(0, Math.round(ms / 60_000))
+  return m >= 60
+    ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`
+    : `${m}m`
+}
 
 const bridgeValue = (s: SidebarState) =>
   s.bridge.problem

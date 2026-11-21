@@ -11,6 +11,7 @@ import {
   type QuietHours,
 } from "./quiet.ts"
 import { DEFAULT_EXCLUDE, type DiffTheme } from "./diffimage.ts"
+import { WAKE_KINDS, type Brief, type WakeKind } from "./overnight.ts"
 import { DEFAULT_MIN_SECONDS } from "./turncard.ts"
 import { parseJsonc } from "./jsonc.ts"
 import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
@@ -88,6 +89,12 @@ export type Config = {
   /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
   permissions: { remote: "off" | "once" | "all" }
   diff: { exclude: string[]; theme: DiffTheme }
+  overnight: {
+    /** Kinds that notify with sound during a plan. */
+    wake: WakeKind[]
+    maxResumes: number
+    defaults: Partial<Brief>
+  }
   /** Silent delivery between two clock times: off unless set. */
   quiet?: QuietHours
   /** One summary message a day: off unless set. `at` is minutes after local midnight. */
@@ -157,6 +164,58 @@ function parsePermissions(
   if (remote !== "off" && remote !== "once" && remote !== "all")
     return { error: "permissions.remote must be off, once or all" }
   return { remote }
+}
+
+function parseOvernight(raw: unknown): Config["overnight"] | { error: string } {
+  const out: Config["overnight"] = { wake: [], maxResumes: 3, defaults: {} }
+  if (raw === undefined) return out
+  if (!isObject(raw)) return { error: "overnight must be an object" }
+  const { wake = [], maxResumes = 3, defaults = {} } = raw
+  if (
+    !Array.isArray(wake) ||
+    wake.some((k) => !(WAKE_KINDS as readonly unknown[]).includes(k))
+  )
+    return { error: `overnight.wake holds ${WAKE_KINDS.join(", ")}` }
+  if (
+    !Number.isInteger(maxResumes) ||
+    (maxResumes as number) < 1 ||
+    (maxResumes as number) > 20
+  )
+    return { error: "overnight.maxResumes must be 1 to 20" }
+  if (!isObject(defaults))
+    return { error: "overnight.defaults must be an object" }
+  const d: Partial<Brief> = {}
+  const int = (k: string, lo: number, hi: number) => {
+    const v = defaults[k]
+    if (v === undefined) return true
+    if (!Number.isInteger(v) || (v as number) < lo || (v as number) > hi)
+      return false
+    ;(d as Record<string, unknown>)[k] = v
+    return true
+  }
+  if (!int("maxTurns", 1, 1000))
+    return { error: "overnight.defaults.maxTurns must be 1 to 1000" }
+  if (!int("maxFailures", 1, 20))
+    return { error: "overnight.defaults.maxFailures must be 1 to 20" }
+  if (!int("answerAfter", 1, 1440))
+    return { error: "overnight.defaults.answerAfter must be 1 to 1440" }
+  const q = defaults.question
+  if (q !== undefined && q !== "park" && q !== "default")
+    return { error: "overnight.defaults.question must be park or default" }
+  if (q) d.question = q
+  if (defaults.scope !== undefined) {
+    if (typeof defaults.scope !== "string" || defaults.scope.length > 2000)
+      return {
+        error:
+          "overnight.defaults.scope must be text of at most 2000 characters",
+      }
+    d.scope = defaults.scope
+  }
+  return {
+    wake: wake as WakeKind[],
+    maxResumes: maxResumes as number,
+    defaults: d,
+  }
 }
 
 function parseDiff(raw: unknown): Config["diff"] | { error: string } {
@@ -483,6 +542,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   if ("error" in permissions) return permissions
   const diff = parseDiff(raw.diff)
   if ("error" in diff) return diff
+  const overnight = parseOvernight(raw.overnight)
+  if ("error" in overnight) return overnight
   const turnCard = parseTurnCard(raw.turnCard)
   if ("error" in turnCard) return turnCard
 
@@ -515,6 +576,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     turnCard,
     permissions,
     diff,
+    overnight,
     quiet,
     digest,
     rules,

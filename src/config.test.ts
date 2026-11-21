@@ -625,3 +625,47 @@ describe("permissions.remote", () => {
       )
   })
 })
+
+describe("overnight config", () => {
+  const base = { channels: { telegram: { token: { env: "X" } } } }
+  const c = (overnight?: unknown) =>
+    parseConfig({ ...base, overnight }) as Config & { error?: string }
+
+  it("defaults to no sound, 3 resumes and no brief defaults", () => {
+    assert.deepEqual(c().overnight, { wake: [], maxResumes: 3, defaults: {} })
+  })
+
+  it("reads the wake kinds, the resume limit and the brief defaults", () => {
+    const o = c({
+      wake: ["question", "failed"],
+      maxResumes: 5,
+      defaults: {
+        maxTurns: 10,
+        question: "default",
+        answerAfter: 15,
+        scope: "src/",
+      },
+    }).overnight
+    assert.deepEqual(o.wake, ["question", "failed"])
+    assert.equal(o.maxResumes, 5)
+    assert.deepEqual(o.defaults, {
+      maxTurns: 10,
+      question: "default",
+      answerAfter: 15,
+      scope: "src/",
+    })
+  })
+
+  it("refuses what it cannot use", () => {
+    for (const o of [
+      "yes",
+      { wake: ["boom"] },
+      { maxResumes: 0 },
+      { maxResumes: 21 },
+      { defaults: { maxTurns: 0 } },
+      { defaults: { question: "ask" } },
+      { defaults: { scope: 5 } },
+    ])
+      assert.ok("error" in (c(o) as object), JSON.stringify(o))
+  })
+})

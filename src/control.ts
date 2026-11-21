@@ -15,8 +15,15 @@ import { log } from "./logger.ts"
 import type { Owner } from "./lock.ts"
 import type { OpResult, SessionRow, Snapshot, StuckRow } from "./rpc.ts"
 import type { Router } from "./routing.ts"
+import {
+  Overnight,
+  OvernightStore,
+  brief,
+  parseDuration,
+  parseUntil,
+} from "./overnight.ts"
 import type { Afk, SettingsStore } from "./settings.ts"
-import { isObject } from "./util.ts"
+import { formatDuration, isObject } from "./util.ts"
 
 /** A TUI that has not reported for this long is gone. */
 export const PRESENCE_MS = 45_000
@@ -86,6 +93,10 @@ export type ControlOptions = {
   /** Restarts the bridge only. */
   restart?: () => Promise<void>
   probe?: Probe
+  /** The plan file; a plan lives only in memory without it. */
+  overnight?: OvernightStore
+  /** Whether the dead-man receiver acknowledged the last heartbeat. */
+  deadman?: () => "ok" | "unconfigured" | "unacked"
   stuckMs?: number
   scanMs?: number
   probeMs?: number
@@ -106,6 +117,13 @@ export class Control {
     { pending: number; since: number }
   >()
   /** The alert sent for each stuck session: for which suspension, how many messages waited, and when. */
+  /** The overnight plan and its loop. */
+  readonly night: Overnight
+  /** When the operator started counting as away, and what the bridge had counted then. */
+  private awaySince:
+    | { at: number; counts: ReturnType<Bridge["counts"]> }
+    | undefined
+  private back: { id: number; text: string; at: number } | undefined
   private readonly alerts = new Map<
     string,
     { key: string; pending: number; at: number }
@@ -122,7 +140,7 @@ export class Control {
   constructor(o: ControlOptions) {
     this.o = o
     this.now = o.now ?? Date.now
-    o.router.setAfk(o.settings.afk())
+    o.router.setAfk(o.settings.afk(), o.settings.afkUntil())
     o.router.setPresence(() => this.attached() > 0)
     o.bridge.onChat((root) => this.saveSession(root))
     o.bridge.onWatch((root) => this.saveSession(root))
@@ -135,6 +153,65 @@ export class Control {
     )
     o.bridge.onWaiting((id) => this.waitingCount(id))
     o.bridge.subscribe(() => this.v++)
+    const bridge = o.bridge
+    const anyUp = () =>
+      bridge.status().channels.some((c) => c.enabled && c.connected)
+    this.night = new Overnight(
+      {
+        now: this.now,
+        busy: (id) => o.host.busy(id),
+        waiting: (id) => this.waitingCount(id),
+        denied: (id) => bridge.chatBlocked(id) !== undefined,
+        resume: (id) => bridge.resume(id, "overnight"),
+        send: (id, text) => bridge.actions.prompt(id, text, "queue"),
+        scope: async (id, text, busy) => {
+          if (o.host.synthetic) await o.host.synthetic(id, text, !busy)
+          else await bridge.actions.prompt(id, text, "queue")
+        },
+        stop: (id) => bridge.actions.stop(id),
+        questions: (id) =>
+          bridge
+            .openPromptList(id)
+            .filter((p) => p.kind === "question")
+            .map((p) => {
+              const q = p.questions ?? []
+              const one = q.length === 1 ? q[0] : undefined
+              const rec = one?.options.findIndex((x) =>
+                /\(recommended\)/i.test(x),
+              )
+              return {
+                id: p.id,
+                title: p.title,
+                askedAt: p.askedAt,
+                single: !!one && !one.multiple && one.options.length > 0,
+                recommended:
+                  rec !== undefined && rec >= 0 ? rec + 1 : undefined,
+              }
+            }),
+        permissions: (id) =>
+          bridge
+            .openPromptList(id)
+            .filter((p) => p.kind === "permission")
+            .map((p) => ({ id: p.id, title: p.title })),
+        answer: async (pid, choice) =>
+          (await bridge.answerFromClient(pid, { choice })).ok,
+        note: (id, kind, text, loud) => bridge.nightNote(id, kind, text, loud),
+        title: (id) => this.title(id),
+        facts: (id) => ({
+          known: bridge.known().some((k) => k.id === id),
+          channelUp: anyUp(),
+          inbox: o.probe !== undefined || this.seen > 0,
+        }),
+        plan: () => ({
+          channelUp: anyUp(),
+          deadman: o.deadman?.() ?? "unconfigured",
+        }),
+      },
+      o.overnight ?? new OvernightStore(),
+      { wake: o.cfg.overnight.wake, maxResumes: o.cfg.overnight.maxResumes },
+    )
+    bridge.setNight(this.night.source())
+    bridge.onResume((id, outcome) => this.night.resumed(id, outcome))
   }
 
   /** TUIs that reported within the presence window. */
@@ -189,6 +266,20 @@ export class Control {
     this.lastAt = this.now()
     const d = (isObject(e.data) ? e.data : {}) as Record<string, unknown>
     const sessionID = str(d.sessionID)
+    if (
+      (e.type === "session.execution.succeeded" ||
+        e.type === "session.execution.failed") &&
+      sessionID &&
+      this.o.host.root(sessionID) === sessionID
+    )
+      this.night.turnEnded(sessionID, e.type.endsWith("succeeded"))
+    if (
+      e.type === "session.inbox.enqueued" &&
+      sessionID &&
+      isObject(d.item) &&
+      d.item.type === "user"
+    )
+      this.night.prompted(this.o.host.root(sessionID))
     if (e.type === "session.inbox.enqueued" && sessionID && str(d.inboxID)) {
       const item = isObject(d.item) ? d.item : {}
       this.waiting.set(String(d.inboxID), {
@@ -275,6 +366,7 @@ export class Control {
 
   /** Tells the channels about each newly stuck session, once; an alert whose session woke by itself is closed. */
   async scan(): Promise<void> {
+    this.trackAway()
     const rows = this.stuck()
     for (const [id] of this.alerts)
       if (!rows.some((s) => s.id === id)) {
@@ -296,6 +388,31 @@ export class Control {
         minutes,
       })
       log("stuck_session", { source: s.source, pending: s.pending, sent })
+    }
+    await this.night.tick()
+    if (this.night.pendingReport()) await this.o.bridge.nightDigest()
+  }
+
+  /** Notes when the operator starts counting as away, and tells what happened when they are back. */
+  private trackAway(): void {
+    const away = this.o.router.away()
+    const now = this.now()
+    if (away && !this.awaySince)
+      this.awaySince = { at: now, counts: this.o.bridge.counts() }
+    else if (!away && this.awaySince) {
+      const { at, counts } = this.awaySince
+      this.awaySince = undefined
+      if (now - at < 60_000) return
+      const c = this.o.bridge.counts()
+      const n = (k: keyof typeof c) => c[k] - counts[k]
+      const text = [
+        `Away ${formatDuration(now - at)}: ${n("pushes")} push${n("pushes") === 1 ? "" : "es"} sent, ${n("answered")} question${n("answered") === 1 ? "" : "s"} answered from a chat, ${n("finished")} finished, ${n("failed")} failed.`,
+        this.night.plan ? this.night.status() : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+      this.back = { id: (this.back?.id ?? 0) + 1, text, at: now }
+      this.v++
     }
   }
 
@@ -327,6 +444,7 @@ export class Control {
   /** `roots` are sessions a TUI is looking at: they are described in full even if never shown to a channel. */
   snapshot(roots: string[] = []): Snapshot {
     const { bridge, router, cfg, host } = this.o
+    this.trackAway()
     const st = bridge.status()
     const known = bridge.known().slice(0, MAX_SESSIONS)
     const rows = [
@@ -368,7 +486,11 @@ export class Control {
         minutes: cfg.away.minutes,
         lastInputAt: router.lastInputAt(),
         tuis: this.attached(),
+        until: router.afkEnds(),
       },
+      night: this.night.view(),
+      back:
+        this.back && this.now() - this.back.at < 60_000 ? this.back : undefined,
       channels: st.channels.map((c) => ({
         id: c.id,
         enabled: c.enabled,
@@ -448,10 +570,18 @@ export class Control {
           const mode = args.mode
           if (mode !== "auto" && mode !== "on" && mode !== "off")
             return fail("afk is on, off or auto")
-          router.setAfk(mode as Afk)
-          settings.setAfk(mode as Afk)
+          const span = str(args.for)
+          const ms = span ? parseDuration(span) : undefined
+          if (span && (mode !== "on" || !ms))
+            return fail("A time (8h, 90m) goes with on only")
+          const until = ms ? this.now() + ms : undefined
+          router.setAfk(mode as Afk, until)
+          settings.setAfk(mode as Afk, until)
           bridge.notify()
-          return this.done({ ok: true, text: "afk: " + mode })
+          return this.done({
+            ok: true,
+            text: "afk: " + mode + (span ? " for " + span : ""),
+          })
         }
         case "route": {
           const mode = args.mode
@@ -479,6 +609,83 @@ export class Control {
           if (!root) return fail("resume needs a session")
           const out = await bridge.resume(root, "sidebar")
           return this.done({ ok: out.ok, text: out.text })
+        }
+        case "overnight": {
+          const action = str(args.action) ?? "status"
+          if (action === "add") {
+            if (!root) return fail("add needs a session")
+            const d = this.o.cfg.overnight.defaults
+            const num = (k: string) =>
+              typeof args[k] === "number" ? (args[k] as number) : undefined
+            this.night.stage(
+              root,
+              brief({
+                ...d,
+                tasks: Array.isArray(args.tasks)
+                  ? args.tasks.filter(
+                      (t): t is string =>
+                        typeof t === "string" && t.trim() !== "",
+                    )
+                  : [],
+                scope: str(args.scope) ?? d.scope ?? "",
+                maxTurns: num("maxTurns") ?? d.maxTurns,
+                maxFailures: num("maxFailures") ?? d.maxFailures,
+                answerAfter: num("answerAfter") ?? d.answerAfter,
+                question:
+                  args.question === "default" || args.question === "park"
+                    ? args.question
+                    : d.question,
+              }),
+            )
+            return this.done({
+              ok: true,
+              text: "Brief saved for " + (this.title(root) ?? root),
+            })
+          }
+          if (action === "clear") {
+            this.night.unstage(root)
+            return this.done({ ok: true, text: "Staged briefs cleared" })
+          }
+          if (action === "end") {
+            const ended = await this.night.end("tui")
+            return this.done({
+              ok: ended,
+              text: ended
+                ? "Plan ended: nothing acts automatically now."
+                : "No plan is running.",
+            })
+          }
+          if (action === "start") {
+            const until = parseUntil(str(args.until) ?? "", this.now())
+            if (!until) return fail("start needs an end time: 07:00 or 8h")
+            const out = await this.night.start(until, args.yes === true)
+            if (out.ok) {
+              router.setAfk("on", until)
+              settings.setAfk("on", until)
+              bridge.notify()
+            }
+            return this.done({ ok: out.ok, text: out.text, data: out.checks })
+          }
+          const checks =
+            this.night.staged().length > 0 ? this.night.preflight() : []
+          const mark = { ok: "✓", warning: "!", blocker: "✗" }
+          return this.done({
+            ok: true,
+            text: [
+              this.night.status(),
+              ...checks.map(
+                (c) =>
+                  mark[c.level] +
+                  " " +
+                  (c.scope === "plan"
+                    ? "plan"
+                    : (this.title(c.scope) ?? c.scope)) +
+                  ": " +
+                  c.text,
+              ),
+            ].join("\n"),
+            data: checks,
+          })
         }
         case "restart": {
           if (!this.o.restart) return fail("This bridge cannot restart itself")
