@@ -497,3 +497,42 @@ describe("core", () => {
       )
   })
 })
+
+describe("deadman", () => {
+  it("is off unless a url is set", () => {
+    const c = parseConfig(base) as Config
+    assert.equal(c.deadman.url, undefined)
+    assert.equal(c.deadman.intervalSeconds, 30)
+  })
+
+  it("reads url, token source and interval", () => {
+    const c = parseConfig({
+      ...base,
+      deadman: {
+        url: "https://relay.example/beat",
+        token: { env: "T" },
+        intervalSeconds: 10,
+      },
+    }) as Config
+    assert.deepEqual(c.deadman, {
+      url: "https://relay.example/beat",
+      token: { env: "T" },
+      intervalSeconds: 10,
+    })
+  })
+
+  it("refuses a literal token and bad values", () => {
+    for (const deadman of [
+      "x",
+      { url: "" },
+      { url: 3 },
+      { token: "literal" },
+      { intervalSeconds: 0 },
+      { intervalSeconds: 7200 },
+    ])
+      assert.ok(
+        "error" in (parseConfig({ ...base, deadman }) as object),
+        JSON.stringify(deadman),
+      )
+  })
+})

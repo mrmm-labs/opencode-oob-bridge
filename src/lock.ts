@@ -25,7 +25,7 @@ const alive = (pid: number): boolean => {
   }
 }
 
-async function read(
+export async function read(
   file: string,
 ): Promise<(Owner & { at: number }) | undefined> {
   try {

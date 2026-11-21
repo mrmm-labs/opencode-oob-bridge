@@ -21,7 +21,9 @@ import type { Connector } from "./connectors/types.ts"
 import { dataDir, loadConfig, type Config } from "./config.ts"
 import { Control, sqliteProbe } from "./control.ts"
 import { Core } from "./core/index.ts"
-import { acquire, type Lock } from "./lock.ts"
+import { Deadman, selfCheck, urlProblem } from "./deadman.ts"
+import { resolveToken } from "./token.ts"
+import { acquire, read as readLock, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
 import { resolveOtel, Telemetry } from "./otel.ts"
 import { PendingStore } from "./pending.ts"
@@ -347,6 +349,52 @@ async function version(): Promise<string> {
 
 type Running = { control: Control; stop(): Promise<void> }
 
+/** The answer the TUI's status call gives: JSON values only. */
+const statusSnapshot = (control: Control, roots: string[]) =>
+  plain(control.snapshot(roots))
+
+/** Starts the heartbeat when `deadman.url` is set and usable; otherwise says why not and sends nothing. */
+async function startDeadman(o: {
+  cfg: Config
+  dir: string
+  version: string
+  control: Control
+  bridge: Bridge
+  rpcRegistered: () => boolean
+}): Promise<Deadman | undefined> {
+  const d = o.cfg.deadman
+  if (!d.url) return undefined
+  const why = urlProblem(d.url)
+  if (why) {
+    log("deadman_refused", { reason: why })
+    return undefined
+  }
+  const token = await resolveToken(d.token).catch((err: Error) => {
+    log("deadman_token_error", { message: err.message })
+    return undefined
+  })
+  if (!token) {
+    log("deadman_refused", { reason: "no token" })
+    return undefined
+  }
+  const lockFile = join(o.dir, "owner.lock")
+  const dm = new Deadman({
+    url: d.url,
+    token,
+    intervalMs: d.intervalSeconds * 1000,
+    version: o.version,
+    check: () =>
+      selfCheck({
+        snapshot: () => statusSnapshot(o.control, []),
+        rpcRegistered: o.rpcRegistered,
+        lockHeld: async () => (await readLock(lockFile))?.pid === process.pid,
+        channels: () => o.bridge.status().channels,
+      }),
+  })
+  dm.start()
+  return dm
+}
+
 async function boot(
   ctx: Context,
   cfg: Config,
@@ -355,6 +403,7 @@ async function boot(
   emit: (r: FormRelay & { to?: string }) => void,
   restart: () => Promise<void>,
   dir: string,
+  rpcRegistered: () => boolean,
   instances = 1,
 ): Promise<Running> {
   const tel = new Telemetry(resolveOtel(cfg.otel))
@@ -436,6 +485,14 @@ async function boot(
   })
   control.core = core
   await core.start()
+  const deadman = await startDeadman({
+    cfg,
+    dir,
+    version: await version(),
+    control,
+    bridge,
+    rpcRegistered,
+  })
   for (const [id, v] of Object.entries(settings.sessions())) {
     if (v.chat) bridge.restoreChat(id)
     if (v.delivery === "queue" || v.delivery === "steer")
@@ -488,6 +545,7 @@ async function boot(
   return {
     control,
     async stop() {
+      await deadman?.stop()
       ac.abort()
       await core.stop()
       control.stop()
@@ -600,7 +658,7 @@ class Hub {
           : []
         ctl().heartbeat(String(i.tui ?? "tui"), i.inputAt)
         ctl().watch(roots)
-        return ctl().snapshot(roots) as never
+        return statusSnapshot(ctl(), roots) as never
       }),
       op: guard("op", async (input: unknown) => {
         const i = (isObject(input) ? input : {}) as {
@@ -653,6 +711,7 @@ class Hub {
       this.emit,
       () => this.restart(),
       this.dir,
+      () => [...this.members].some((m) => m.reg !== undefined),
       this.members.size,
     )
   }
