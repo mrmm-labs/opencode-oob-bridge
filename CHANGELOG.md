@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.24.0...v0.25.0) (2026-11-21)
+
+
+### Features
+
+* approvals for local tools over a unix socket, answered on Telegram ([#81](https://github.com/mrmm-labs/opencode-oob-bridge/issues/81)) ([cb8a584](https://github.com/mrmm-labs/opencode-oob-bridge/commit/cb8a584a29e55226b9ca7164d0a693c1a383f388))
+
 ## [0.24.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.23.0...v0.24.0) (2026-11-21)
 
 
