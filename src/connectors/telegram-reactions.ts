@@ -1,8 +1,8 @@
 /**
- * The reaction a prompt from Telegram gets: it names the agent that received it,
- * or says the message was queued or steered in. A bot may set one reaction per
- * message, and only from the set Telegram allows bots, so every choice is
- * checked against that set and falls back to 👀.
+ * The reaction a message from Telegram wears as it moves through the bridge:
+ * received, queued or sent, replied to, failed, ignored or held. A bot may set
+ * one reaction per message, and only from the set Telegram allows bots, so
+ * every choice is checked against that set and falls back to 👀.
  */
 
 // The emoji Telegram lets a bot react with (Bot API, ReactionTypeEmoji).
@@ -91,39 +91,52 @@ export const ALLOWED_REACTIONS: ReadonlySet<string> = new Set(
 
 export const FALLBACK_REACTION = "👀"
 
-export type Reactions = {
-  /** Lower-case agent name to its emoji. */
+export type Stage =
+  | "received"
+  | "queued"
+  | "sent"
+  | "steered"
+  | "done"
+  | "failed"
+  | "ignored"
+  | "held"
+
+export type Reactions = Record<Stage, string> & {
+  /** Overrides `sent` for an agent: lower-case agent name to its emoji. Empty by default. */
   agents: Record<string, string>
-  /** An agent with no entry. */
+  /** Used when a configured choice is not an emoji Telegram allows. */
   default: string
-  /** Sent while the session was busy and the message waits for the turn to end. */
-  queued: string
-  /** Sent into the running turn. */
-  steered: string
 }
 
 export const DEFAULT_REACTIONS: Reactions = {
-  agents: {
-    build: "👨‍💻",
-    plan: "🤔",
-    general: "😎",
-    explore: "🤓",
-    coordinator: "🫡",
-  },
+  agents: {},
   default: FALLBACK_REACTION,
+  received: "👀",
   queued: "✍",
+  sent: "⚡",
   steered: "⚡",
+  done: "👌",
+  failed: "💔",
+  ignored: "🙈",
+  held: "🤷",
 }
 
 /** What the config file may hold under `reactions`; the rest comes from the defaults. */
-export type ReactionsConfig = {
+export type ReactionsConfig = Partial<Record<Stage | "default", string>> & {
   agents?: Record<string, string>
-  default?: string
-  queued?: string
-  steered?: string
 }
 
-const KEYS = ["agents", "default", "queued", "steered"]
+const STAGES: Stage[] = [
+  "received",
+  "queued",
+  "sent",
+  "steered",
+  "done",
+  "failed",
+  "ignored",
+  "held",
+]
+const KEYS = ["agents", "default", ...STAGES]
 
 export function parseReactions(
   raw: unknown,
@@ -139,7 +152,7 @@ export function parseReactions(
         error: `${at}reactions.${k} is not a setting (use ${KEYS.join(", ")})`,
       }
   const out: ReactionsConfig = {}
-  for (const k of ["default", "queued", "steered"] as const) {
+  for (const k of ["default", ...STAGES] as const) {
     const v = o[k]
     if (v === undefined) continue
     if (typeof v !== "string" || !v)
@@ -166,13 +179,14 @@ export function parseReactions(
 export type Delivered = { agent?: string; how: "sent" | "queued" | "steered" }
 
 /**
- * The emoji to react with. A choice outside Telegram's set is replaced by the
+ * The emoji of a stage. A choice outside Telegram's set is replaced by the
  * configured default, then by 👀; `bad` is told about each one that was.
  */
-export function reactionFor(
+export function stageEmoji(
   cfg: ReactionsConfig | undefined,
-  d: Delivered | undefined,
+  stage: Stage,
   bad?: (emoji: string) => void,
+  agent?: string,
 ): string {
   const ok = (e: string | undefined) => {
     if (e === undefined) return undefined
@@ -183,11 +197,21 @@ export function reactionFor(
   }
   const fallback =
     ok(cfg?.default) ?? ok(DEFAULT_REACTIONS.default) ?? FALLBACK_REACTION
-  if (d?.how === "queued")
-    return ok(cfg?.queued ?? DEFAULT_REACTIONS.queued) ?? fallback
-  if (d?.how === "steered")
-    return ok(cfg?.steered ?? DEFAULT_REACTIONS.steered) ?? fallback
-  const agent = d?.agent?.toLowerCase()
-  if (!agent) return fallback
-  return ok(cfg?.agents?.[agent] ?? DEFAULT_REACTIONS.agents[agent]) ?? fallback
+  const own =
+    stage === "sent" && agent
+      ? ok(cfg?.agents?.[agent.toLowerCase()])
+      : undefined
+  return own ?? ok(cfg?.[stage] ?? DEFAULT_REACTIONS[stage]) ?? fallback
+}
+
+/** The stage a delivered prompt is in. */
+export const stageOf = (d: Delivered | undefined): Stage =>
+  d?.how === "queued" ? "queued" : d?.how === "steered" ? "steered" : "sent"
+
+export function reactionFor(
+  cfg: ReactionsConfig | undefined,
+  d: Delivered | undefined,
+  bad?: (emoji: string) => void,
+): string {
+  return stageEmoji(cfg, stageOf(d), bad, d?.agent)
 }

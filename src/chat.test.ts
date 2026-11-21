@@ -22,6 +22,11 @@ const SECRET = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
 type Rig = Awaited<ReturnType<typeof chatRig>>
 
+const emojis = (r: Rig) =>
+  r.tg.of("setMessageReaction").map((c) => c.body.reaction[0].emoji as string)
+const reactions = (r: Rig, n: number) =>
+  r.tg.waitFor(() => (emojis(r).length >= n ? emojis(r) : undefined))
+
 async function chatRig(
   o: {
     chat?: Record<string, unknown>
@@ -57,6 +62,7 @@ async function chatRig(
     backoff: { min: 10, max: 40 },
     typingMs: 25,
     tel,
+    reactGapMs: 5,
     ...o.tg,
   })
   const cfg = parseConfig({
@@ -158,33 +164,31 @@ describe("chat from Telegram: access", () => {
     r.tg.message(CHAT, "run the tests", undefined, 9001)
     await r.tg.waitFor(() => r.prompts[0])
     assert.deepEqual(r.prompts, [{ sessionID: "root", text: "run the tests" }])
-    const react = await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
-    assert.deepEqual(react.body.reaction, [{ type: "emoji", emoji: "👀" }])
-    assert.equal(react.body.message_id, r.tg.lastMessageId)
+    assert.deepEqual(await reactions(r, 2), ["👀", "⚡"])
+    assert.ok(
+      r.tg
+        .of("setMessageReaction")
+        .every((c) => c.body.message_id === r.tg.lastMessageId),
+    )
     await sleep(100)
     assert.equal(r.sends().length, before, "no 'sent to' line")
     await r.done()
   })
 
-  it("the reaction names the agent: the built-in map, the config over it, 👀 for an unknown one", async () => {
-    const emojiFor = async (
-      agent: string,
-      reactions?: Record<string, unknown>,
-    ) => {
-      const r = await chatRig({ agent, tg: { reactions } as never })
+  it("the sent reaction is ⚡; a configured agent emoji replaces it, a disallowed one does not", async () => {
+    const emojiFor = async (agent: string, cfg?: Record<string, unknown>) => {
+      const r = await chatRig({ agent, tg: { reactions: cfg } as never })
       await chatOn(r)
       r.tg.message(CHAT, "hi", undefined, 9001)
-      const react = await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
+      const seen = await reactions(r, 2)
       await r.done()
-      return react.body.reaction[0].emoji
+      return seen[1]
     }
-    assert.equal(await emojiFor("build"), "👨‍💻")
-    assert.equal(await emojiFor("plan"), "🤔")
-    assert.equal(await emojiFor("Coordinator"), "🫡")
-    assert.equal(await emojiFor("zzz"), "👀")
+    assert.equal(await emojiFor("build"), "⚡")
+    assert.equal(await emojiFor("Coordinator"), "⚡")
     assert.equal(
       await emojiFor("coord", { agents: { coord: "🎯" } }),
-      "👀",
+      "⚡",
       "🎯 is not allowed for bots",
     )
     assert.equal(await emojiFor("coord", { agents: { coord: "🔥" } }), "🔥")
@@ -196,8 +200,7 @@ describe("chat from Telegram: access", () => {
     await chatOn(r)
     const before = r.sends().length
     r.tg.message(CHAT, "and then this", undefined, 9001)
-    const react = await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
-    assert.deepEqual(react.body.reaction, [{ type: "emoji", emoji: "✍" }])
+    assert.deepEqual(await reactions(r, 2), ["👀", "✍"])
     assert.equal(r.prompts.length, 1)
     await sleep(100)
     assert.equal(r.sends().length, before, "no 'queued for' line")
@@ -207,12 +210,15 @@ describe("chat from Telegram: access", () => {
   it("a reaction Telegram refuses falls back to the old line, so the sender still learns where it went", async () => {
     const r = await chatRig()
     await chatOn(r)
-    r.tg.fail("setMessageReaction", 400, { description: "REACTION_INVALID" })
+    // The 👀 and the ⚡ are both refused; delivery is not affected.
+    for (let i = 0; i < 2; i++)
+      r.tg.fail("setMessageReaction", 400, { description: "REACTION_INVALID" })
     r.tg.message(CHAT, "run it", undefined, 9001)
     const line = await r.tg.waitFor(() =>
       r.sends().find((b) => /→ sent to coord · shop/.test(b.text)),
     )
     assert.equal(line.message_thread_id, 9001)
+    assert.equal(r.prompts.length, 1)
     await r.done()
   })
 
@@ -223,7 +229,7 @@ describe("chat from Telegram: access", () => {
     await r.tg.waitFor(() =>
       r.sends().find((b) => /Could not send that to the session/.test(b.text)),
     )
-    assert.equal(r.tg.of("setMessageReaction").length, 0)
+    assert.deepEqual(await reactions(r, 2), ["👀", "💔"])
     await r.done()
   })
 
@@ -845,17 +851,16 @@ describe("chat from Telegram: steering", () => {
     await chatOn(r)
     r.tg.message(CHAT, "plain one", undefined, 9001)
     await r.tg.waitFor(() => r.prompts[0])
-    await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
+    await reactions(r, 2)
     r.tg.message(CHAT, "!  change course", undefined, 9001)
     await r.tg.waitFor(() => r.prompts[1])
     assert.equal(r.prompts[1].text, "change course")
     assert.deepEqual(r.deliveries, ["queue", "steer"])
-    const second = await r.tg.waitFor(() => r.tg.of("setMessageReaction")[1])
-    assert.deepEqual(
-      r.tg.of("setMessageReaction").map((c) => c.body.reaction[0].emoji),
-      ["✍", "⚡"],
+    assert.deepEqual(await reactions(r, 4), ["👀", "✍", "👀", "⚡"])
+    assert.equal(
+      r.tg.of("setMessageReaction")[3].body.message_id,
+      r.tg.lastMessageId,
     )
-    assert.equal(second.body.message_id, r.tg.lastMessageId)
     await r.done()
   })
 
@@ -1161,6 +1166,108 @@ describe("chat from Telegram: files", () => {
     r.tg.media(CHAT, { photo: [{ file_id: "p", file_size: 8 }] }, "hi", 9001)
     await notice(r, /Chat is off for this session/)
     assert.equal(r.prompts.length, 0)
+    await r.done()
+  })
+})
+
+describe("chat from Telegram: the reaction follows the message", () => {
+  const turn = async (r: Rig, text: string) => {
+    await r.ev("session.execution.started")
+    await r.ev("session.text.ended", {
+      assistantMessageID: "m1",
+      ordinal: 0,
+      text,
+    })
+    await r.ev("session.execution.succeeded")
+  }
+
+  it("👀 received, ⚡ sent, then 👌 on the same message once the session replies", async () => {
+    const r = await chatRig({ chat: { stream: false } })
+    await chatOn(r)
+    r.tg.message(CHAT, "run the tests", undefined, 9001)
+    assert.deepEqual(await reactions(r, 2), ["👀", "⚡"])
+    await turn(r, "all green")
+    assert.deepEqual(await reactions(r, 3), ["👀", "⚡", "👌"])
+    const ids = new Set(
+      r.tg.of("setMessageReaction").map((c) => c.body.message_id),
+    )
+    assert.equal(ids.size, 1, "one message wore all three")
+    await r.done()
+  })
+
+  it("a queued message shows ✍, and 👌 when the session replies", async () => {
+    const r = await chatRig({ busy: true, chat: { stream: false } })
+    await chatOn(r)
+    r.tg.message(CHAT, "after this", undefined, 9001)
+    assert.deepEqual(await reactions(r, 2), ["👀", "✍"])
+    await turn(r, "done")
+    assert.deepEqual(await reactions(r, 3), ["👀", "✍", "👌"])
+    await r.done()
+  })
+
+  it("a message in a topic with no session shows 🙈 and is not sent", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    r.tg.message(CHAT, "nobody's topic", undefined, 4444)
+    assert.deepEqual(await reactions(r, 1), ["🙈"])
+    await sleep(100)
+    assert.deepEqual(r.prompts, [])
+    await r.done()
+  })
+
+  it("a refused message (chat is off for the session) shows 🙈 after 👀", async () => {
+    const r = await chatRig()
+    r.router.set("root", true)
+    await r.ev("session.execution.started")
+    await r.tg.waitFor(() => r.tg.of("createForumTopic")[0])
+    r.tg.message(CHAT, "hello", undefined, 9001)
+    assert.deepEqual(await reactions(r, 2), ["👀", "🙈"])
+    assert.deepEqual(r.prompts, [])
+    await r.done()
+  })
+
+  it("a reaction that cannot be set never stops the delivery", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    for (let i = 0; i < 3; i++)
+      r.tg.fail("setMessageReaction", 400, { description: "REACTION_INVALID" })
+    r.tg.message(CHAT, "still goes", undefined, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    assert.equal(r.prompts[0].text, "still goes")
+    await r.done()
+  })
+
+  it("the stage emoji can be configured, and a disallowed one falls back", async () => {
+    const r = await chatRig({
+      tg: { reactions: { received: "🤓", sent: "🎯", done: "🔥" } as never },
+    })
+    await chatOn(r)
+    r.tg.message(CHAT, "hi", undefined, 9001)
+    assert.deepEqual(await reactions(r, 2), ["🤓", "👀"])
+    await r.done()
+  })
+
+  it("two reactions are never closer than the gap", async () => {
+    const times: number[] = []
+    const r = await chatRig({
+      tg: {
+        reactGapMs: 120,
+        fetch: (async (url: string, init: RequestInit) => {
+          if (String(url).endsWith("/setMessageReaction"))
+            times.push(Date.now())
+          return fetch(url, init)
+        }) as never,
+      },
+    })
+    await chatOn(r)
+    r.tg.message(CHAT, "one", undefined, 9001)
+    r.tg.message(CHAT, "two", undefined, 9001)
+    await reactions(r, 4)
+    for (let i = 1; i < times.length; i++)
+      assert.ok(
+        times[i] - times[i - 1] >= 100,
+        "spaced: " + (times[i] - times[i - 1]),
+      )
     await r.done()
   })
 })

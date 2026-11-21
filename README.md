@@ -180,17 +180,17 @@ say who answered ("Answered from telegram: Yes", "Answered in the TUI").
 | `actionAuth`                | `true`     | Put the token in each button so buttons work on an auth-protected server.             |
 | `enabled`                   | `true`     | Set `false` to configure it without using it.                                         |
 
-| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                      |
-| ------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                  |
-| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                      |
-| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                |
-| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                     |
-| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                |
-| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                          |
-| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                      |
-| `reactions`                     | built-in map                           | The reaction a prompt gets: `{ agents: { "<agent>": "<emoji>" }, default, queued, steered }`. See [Chat from Telegram](#chat-from-telegram). |
-| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                        |
+| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                                                                   |
+| ------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                                                               |
+| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                                                                   |
+| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                                                             |
+| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                                                                  |
+| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                                                             |
+| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                                                                       |
+| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                                                                   |
+| `reactions`                     | built-in map                           | The reaction of each stage: `{ received, queued, sent, steered, done, failed, ignored, held, default, agents: { "<agent>": "<emoji>" } }`. See [Chat from Telegram](#chat-from-telegram). |
+| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                                                                     |
 
 Which channels are on is also a TUI setting (`/oob channel <name> on|off`). The choice is stored in
 `settings.json` in the state directory and layered over the config file, which the plugin never
@@ -332,14 +332,27 @@ is a mirror of the conversation. This needs the Telegram channel in a forum grou
 How it behaves:
 
 - **A prompt** is any plain message in the session's topic, or a reply to one of that session's
-  bot messages. The bot answers with a **reaction on your message** and no text: it shows which
-  agent received it, or that it waited or was steered in. Defaults: build 👨‍💻, plan 🤔, general 😎,
-  explore 🤓, coordinator 🫡, any other agent 👀; ✍ when the session is busy and the message
-  waits (queued); ⚡ when it was steered into the running turn. Change them with
-  `reactions` (`agents` is keyed by agent name). Telegram lets a bot use only a fixed set of
-  emoji; one outside it is ignored with a log line and the default is used. If Telegram refuses
-  the reaction, the bot says `→ sent to <agent> · <project>` instead, and a prompt that could not
-  be sent still gets a text message.
+  bot messages. The bot answers with a **reaction on your message** and no text, and changes it
+  in place as the message moves on:
+
+  | Emoji | Stage                                                        | Key               |
+  | ----- | ------------------------------------------------------------ | ----------------- |
+  | 👀    | received                                                     | `received`        |
+  | ✍     | queued behind a busy session                                 | `queued`          |
+  | ⚡    | sent to an idle session, or steered into the running turn    | `sent`, `steered` |
+  | 👌    | the session replied                                          | `done`            |
+  | 💔    | delivery failed (the bot also says why, and retries)         | `failed`          |
+  | 🙈    | ignored: no session in this topic, or chat is off or blocked | `ignored`         |
+  | 🤷    | held: the session waits on a question                        | `held`            |
+
+  `reactions` changes any of them; `reactions.agents` (keyed by agent name) replaces ⚡ for an
+  agent, e.g. `{ "build": "👨‍💻" }`. Telegram lets a bot use only a fixed set of emoji; one
+  outside it is ignored with a log line and `reactions.default` (then 👀) is used. Reactions are
+  best effort: a failed one is logged and never stops the delivery, calls are spaced at least
+  400 ms apart, and a message is never given the emoji it already wears. If Telegram refuses the ⚡
+  or ✍ reaction, the bot says `→ sent to <agent> · <project>` instead, and a prompt that could not
+  be sent still gets a text message. A turn that ends with no text leaves the message on ⚡.
+
 - **Photos and documents.** Send a photo or a file in the topic; the caption is the prompt (no
   caption: `Attached: <name>`). The bot downloads it and sends it to the session as an inline
   file, and the same reaction acknowledges it. Photos use the largest size Telegram has. Accepted

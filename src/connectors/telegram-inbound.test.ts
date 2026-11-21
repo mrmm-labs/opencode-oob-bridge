@@ -25,6 +25,7 @@ async function rig(over: Partial<TelegramOptions> = {}, handler?: Handler) {
     inboxFile: join(dir, "inbox.jsonl"),
     backoff: { min: 10, max: 40 },
     pollSeconds: 1,
+    reactGapMs: 5,
     ...over,
   })
   const got: Inbound[] = []
@@ -141,7 +142,13 @@ describe("TelegramConnector inbound journal", () => {
     )
     assert.equal(notice.body.message_thread_id, 5)
     await r.tg.waitFor(() => (r.got.length === 2 ? true : undefined))
-    await r.tg.waitFor(() => r.tg.of("setMessageReaction")[0])
+    await r.tg.waitFor(() =>
+      r.tg
+        .of("setMessageReaction")
+        .some((c) => c.body.reaction[0].emoji === "⚡")
+        ? true
+        : undefined,
+    )
     await sleep(50)
     assert.equal((await lines(join(r.dir, "inbox.jsonl"))).at(-1)?.done, 101)
     await r.done()

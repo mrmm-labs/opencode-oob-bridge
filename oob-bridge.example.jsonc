@@ -37,8 +37,9 @@
     //   // "notify": { "finished": false, "failed": true },
     //   // Topic icon by agent regex or project glob.
     //   // "icons": { "^coordinator$": "🎯", "api*": "🛠" },
-    //   // The reaction a chat prompt gets, by agent; only emoji Telegram allows bots.
-    //   // "reactions": { "agents": { "build": "👨‍💻", "plan": "🤔" }, "default": "👀" },
+    //   // The reaction of each stage (received, queued, sent, steered, done, failed, ignored, held); only emoji Telegram allows bots.
+    //   // "agents" replaces the sent emoji for an agent.
+    //   // "reactions": { "done": "👌", "failed": "💔", "agents": { "build": "👨‍💻" } },
     //   // Photos and documents taken from the chat.
     //   // "media": { "maxBytes": 10485760, "mimes": ["image/*", "application/pdf", "text/plain"] },
     // },
