@@ -44,6 +44,8 @@ mask() {
 
 if [ "${RELAY_PUSH_DRY_RUN:-}" = "1" ]; then
   docker() {
+    # Read the token like the real login does, or printf can die of SIGPIPE under load.
+    [ "$1" != "login" ] || cat >/dev/null
     echo "docker $* (to $ref on $host as $user)"
     [ "${RELAY_PUSH_DRY_RUN_FAIL:-}" != "1" ]
   }
