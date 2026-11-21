@@ -310,6 +310,9 @@ export class TelegramConnector implements Connector {
   private onInbound: OnInbound | undefined
   private signal: AbortSignal | undefined
   private polling = false
+  private pollOkAt: number | undefined
+  private sendOkAt: number | undefined
+  private loopBeatAt: number | undefined
   private offset: number | undefined
   private readonly inbox: Inbox<Update>
   private restored: Promise<void> | undefined
@@ -468,6 +471,12 @@ export class TelegramConnector implements Connector {
     const retryAt = this.opts.token.retryAt?.()
     return {
       connected: this.connected,
+      pollOkAt: this.pollOkAt,
+      sendOkAt: this.sendOkAt,
+      silentMs:
+        this.polling && this.loopBeatAt !== undefined && retryAt === undefined
+          ? this.now() - this.loopBeatAt
+          : undefined,
       lastError:
         (retryAt === undefined ? undefined : tokenWaitText(retryAt)) ??
         this.lastError ??
@@ -1130,7 +1139,10 @@ export class TelegramConnector implements Connector {
             parameters?: { retry_after?: number }
           }
         | undefined
-      if (json?.ok) return json.result as T
+      if (json?.ok) {
+        if (method !== "getUpdates") this.sendOkAt = this.now()
+        return json.result as T
+      }
       const wait = json?.parameters?.retry_after
       if (res.status === 429 && wait !== undefined && !retry)
         throw new RateLimited(wait)
@@ -1149,7 +1161,10 @@ export class TelegramConnector implements Connector {
     const signal = this.signal
     if (this.polling || !signal || signal.aborted) return
     this.polling = true
-    void this.loop(signal).finally(() => (this.polling = false))
+    void this.loop(signal).finally(() => {
+      this.polling = false
+      this.loopBeatAt = undefined
+    })
   }
 
   private async loop(signal: AbortSignal): Promise<void> {
@@ -1159,6 +1174,7 @@ export class TelegramConnector implements Connector {
     this.offset ??= await this.loadOffset()
     await this.restore()
     while (!signal.aborted && (this.chatId || this.pairing)) {
+      this.loopBeatAt = this.now()
       try {
         const updates = await this.call<Update[]>(
           "getUpdates",
@@ -1173,6 +1189,7 @@ export class TelegramConnector implements Connector {
         delay = min
         this.connected = true
         this.lastError = undefined
+        this.pollOkAt = this.now()
         if (updates.length) {
           // Written down before Telegram is told they arrived: the offset moves only once they are safe.
           const fresh = await this.inbox.add(updates)

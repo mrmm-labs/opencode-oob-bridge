@@ -213,6 +213,11 @@ export type OnInbound = (m: Inbound) => Promise<Outcome | undefined>
 export type ConnectorStatus = {
   connected?: boolean
   lastError?: string
+  /** Epoch ms of the last answer from the channel to a poll, and of the last message or edit it accepted. */
+  pollOkAt?: number
+  sendOkAt?: number
+  /** How long the receive loop has made no progress, while it is running and not waiting for a token. */
+  silentMs?: number
   /** A standing condition worth showing, such as a missing permission. */
   warning?: string
 }

@@ -74,6 +74,10 @@ export type ChannelRow = {
   connected?: boolean
   lastError?: string
   warning?: string
+  /** Epoch ms of the last answer to a poll and of the last accepted send; undefined for a channel with no such notion. */
+  pollOkAt?: number
+  sendOkAt?: number
+  silentMs?: number
 }
 
 export type Snapshot = {

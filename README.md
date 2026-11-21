@@ -405,6 +405,10 @@ With `permissions.remote` at `once` or `all`, the permission message carries but
 
 Each Telegram update is written to `telegram-inbox.jsonl` in the data directory before Telegram is told it arrived, and marked done once handled. A restart handles the unfinished ones again. Updates run in order per topic and in parallel across topics, so a stuck session does not stop the others, and one update may take at most 90 seconds. If the session cannot take a message, the topic says why and the bridge tries again after 5 s, 30 s and 2 min. Every update gets one `telegram_inbound` line in `bridge.log` (kind, topic, outcome, reason, never the text); the core adds one `inbound` line per message.
 
+### A stuck receive loop restarts the bridge
+
+`/oob status` shows when each channel last answered a poll and last accepted a send. Every 30 seconds the server half checks the channels: a receive loop that has made no step for 150 seconds is logged as `bridge_stalled` (channel, silence, last poll, last send) and the bridge restarts, keeping the process lock so there is still one poller. The dead-man heartbeat turns `degraded` with `poll_stalled:<channel>` over the same limit. A stalled send path is not detected.
+
 ### Events never wait on one session
 
 The server half reads the host's events at once and hands each to a lane for its session, so a session the host does not answer for delays only itself; `session.get` is abandoned after 8 seconds (`host_timeout` in the log). A stream that ends without an error is logged as `event_stream_ended`.

@@ -15,6 +15,9 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener("abort", done, { once: true })
   })
 
+/** A receive loop makes a step at least every 100 s even through errors; past this it is stuck. */
+export const STALL_MS = 150_000
+
 /** A host call did not answer in time. */
 export class TimedOut extends Error {
   constructor(what: string, ms: number) {

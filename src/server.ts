@@ -37,6 +37,7 @@ import { Router } from "./routing.ts"
 import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
 import { isObject, sleep, TimedOut, withTimeout } from "./util.ts"
+import { startWatchdog } from "./watchdog.ts"
 import { RUNNING } from "./version.ts"
 
 type Context = Plugin.Context
@@ -70,7 +71,11 @@ const RESUME_TEXT =
 const FORM_WAIT_MS = 10_000
 const STANDBY_MS = 15_000
 /** How long a call to the host may take before the bridge goes on without its answer; tests shorten it. */
-export const timings = { sessionGetMs: 8_000 }
+export const timings: {
+  sessionGetMs: number
+  stallMs?: number
+  watchMs?: number
+} = { sessionGetMs: 8_000 }
 
 type Info = {
   id: string
@@ -630,6 +635,12 @@ async function boot(
     }
   }
   void feed()
+  const unwatch = startWatchdog({
+    channels: () => bridge.status().channels,
+    restart,
+    stallMs: timings.stallMs,
+    everyMs: timings.watchMs,
+  })
   bridge.start()
   control.start()
   log("server_started", {
@@ -643,6 +654,7 @@ async function boot(
   return {
     control,
     async stop() {
+      unwatch()
       await deadman?.stop()
       await link?.stop()
       ac.abort()

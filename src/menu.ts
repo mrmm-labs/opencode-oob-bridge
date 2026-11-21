@@ -7,6 +7,7 @@ import { parseBriefWords } from "./overnight.ts"
 import type { Afk, SettingsStore } from "./settings.ts"
 import type { ChannelView, Outcome, Pilot } from "./view.ts"
 import { rowDialog, sidebarState, TITLE } from "./sidebar.ts"
+import { STALL_MS } from "./util.ts"
 import {
   dispatch,
   helpText,
@@ -817,8 +818,21 @@ async function status(ctx: Context, app: App): Promise<void> {
           : c.connected
             ? "on, connected"
             : "on, not connected"
+      const seen = [
+        c.pollOkAt === undefined
+          ? ""
+          : `last poll ${ago(Date.now() - c.pollOkAt)}`,
+        c.sendOkAt === undefined
+          ? ""
+          : `last send ${ago(Date.now() - c.sendOkAt)}`,
+      ].filter(Boolean)
       return [
-        `${c.id}: ${state}${c.lastError ? ` (last error: ${c.lastError})` : ""}`,
+        `${c.id}: ${state}${c.lastError ? ` (last error: ${c.lastError})` : ""}${seen.length ? ` · ${seen.join(", ")}` : ""}`,
+        ...((c.silentMs ?? 0) > STALL_MS
+          ? [
+              `  ⚠ receive loop silent for ${ago(c.silentMs!).replace(" ago", "")}`,
+            ]
+          : []),
         ...(c.warning ? [`  ⚠ ${c.warning}`] : []),
       ].join("\n")
     }),
