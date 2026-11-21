@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.28.0...v0.29.0) (2026-11-21)
+
+
+### Features
+
+* hold a message for a session that waits on a question, and let the person choose ([#98](https://github.com/mrmm-labs/opencode-oob-bridge/issues/98)) ([2382e56](https://github.com/mrmm-labs/opencode-oob-bridge/commit/2382e56dde72f9ba130c0051dc0e2a7f123f75fd))
+
 ## [0.28.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.27.1...v0.28.0) (2026-11-21)
 
 
