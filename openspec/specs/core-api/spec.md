@@ -1,7 +1,8 @@
 # core-api Specification
 
 ## Purpose
-TBD - created by archiving change core-api. Update Purpose after archive.
+
+The core API gives every client one view of the instance's sessions and one set of actions on them. The Telegram chat, the TUI and a private HTTP and SSE API all go through it, so a refusal rule is the same for all of them.
 
 ## Requirements
 
