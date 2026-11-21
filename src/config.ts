@@ -66,6 +66,8 @@ export type Config = {
   /** `all`, or the name of a channel, for a session that chose none. */
   defaultChannel: string
   away: { minutes: number }
+  /** The core API listener: off unless `bind` is set. */
+  core: { bind?: string; port: number }
   rules: Rule[]
   redact: Redact
   chat: ChatConfig
@@ -75,6 +77,24 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+}
+
+export const DEFAULT_CORE_PORT = 7842
+
+function parseCore(raw: unknown): Config["core"] | { error: string } {
+  if (raw === undefined) return { port: DEFAULT_CORE_PORT }
+  if (!isObject(raw)) return { error: "core must be an object" }
+  const { bind, port = DEFAULT_CORE_PORT } = raw
+  if (bind !== undefined && (typeof bind !== "string" || bind.trim() === ""))
+    return { error: 'core.bind must be "tailscale", "localhost" or an address' }
+  if (
+    typeof port !== "number" ||
+    !Number.isInteger(port) ||
+    port < 0 ||
+    port > 65535
+  )
+    return { error: "core.port must be a port number" }
+  return { bind: bind?.trim(), port }
 }
 
 const NAME = /^[A-Za-z0-9][-_A-Za-z0-9]{0,23}$/
@@ -312,6 +332,9 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     }
   }
 
+  const core = parseCore(raw.core)
+  if ("error" in core) return core
+
   const chat = parseChat(raw.chat)
   if ("error" in chat) return chat
   // "title" hides content, so replies inherit it; a head:<n> preview limit does not.
@@ -331,6 +354,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     defaultChannel,
     sidebar: sidebar as SidebarMode,
     away: { minutes },
+    core,
     rules,
     redact,
     chat,

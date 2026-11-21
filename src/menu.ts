@@ -455,6 +455,56 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
       },
     }),
     sub({
+      name: "core",
+      title: "Core API",
+      description:
+        "Show the core API (address and token file), or replace its token: the old token is refused at once.",
+      group: "Instance",
+      args: [
+        {
+          name: "action",
+          kind: "enum",
+          title: "Core API",
+          placeholder: "status|rotate",
+          options: () => [
+            {
+              value: "status",
+              title: "Status",
+              description: "address and token file",
+            },
+            {
+              value: "rotate",
+              title: "Rotate token",
+              description: "show a new token once",
+            },
+          ],
+        },
+      ],
+      run: async (v) => {
+        const out = await app.pilot.core(
+          v.action === "rotate" ? "rotate" : "status",
+        )
+        const d = (out?.data ?? {}) as {
+          state?: string
+          address?: string
+          reason?: string
+          tokenFile?: string
+          token?: string
+        }
+        if (!out?.ok) return toast(ctx, out?.text ?? "No answer", "warning")
+        await ctx.ui.dialog.alert({
+          title: `${TITLE}: core API`,
+          message: [
+            d.state === "listening"
+              ? `Listening on ${d.address}`
+              : `Not listening: ${d.reason}`,
+            `Token file: ${d.tokenFile}`,
+            ...(d.token ? ["", "New token (shown once):", d.token] : []),
+          ].join("\n"),
+        })
+      },
+    }),
+    sub({
       name: "status",
       title: "Status",
       description:
@@ -535,6 +585,12 @@ function instanceLines(app: App): string[] {
   const lines = [
     `Bridge: running in the server, pid ${o?.pid}, v${o?.version}, up ${o ? ago(Date.now() - o.startedAt).replace(" ago", "") : "?"}`,
   ]
+  if (i.core && i.core.state !== "off")
+    lines.push(
+      i.core.state === "listening"
+        ? `Core API: listening on ${i.core.address}`
+        : `Core API: not listening (${i.core.reason})`,
+    )
   if (i.afk)
     lines.push(
       `Away: ${i.afk.away ? "away" : "here"} (${i.afk.mode}), ${i.afk.tuis} window${i.afk.tuis === 1 ? "" : "s"}, last input ${ago(Date.now() - i.afk.lastInputAt)}`,

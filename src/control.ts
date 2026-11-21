@@ -8,6 +8,7 @@
 import { execFile } from "node:child_process"
 
 import type { Bridge, Host } from "./bridge.ts"
+import type { CoreHandle } from "./core/index.ts"
 import type { Config } from "./config.ts"
 import type { Pairing } from "./connectors/types.ts"
 import { log } from "./logger.ts"
@@ -109,12 +110,16 @@ export class Control {
   private v = 1
   private timers: ReturnType<typeof setInterval>[] = []
 
+  /** The core API, once the server has started it. */
+  core: CoreHandle | undefined
+
   constructor(o: ControlOptions) {
     this.o = o
     this.now = o.now ?? Date.now
     o.router.setAfk(o.settings.afk())
     o.router.setPresence(() => this.attached() > 0)
     o.bridge.onChat((root) => this.saveSession(root))
+    o.bridge.onWatch((root) => this.saveSession(root))
     o.bridge.subscribe(() => this.v++)
   }
 
@@ -326,6 +331,11 @@ export class Control {
         warning: c.warning,
       })),
       pending: st.pending,
+      core: this.core && {
+        state: this.core.status().state,
+        address: this.core.status().address,
+        reason: this.core.status().reason,
+      },
       sessions,
       stuck: this.stuck(),
       events: { seen: this.seen, lastAt: this.lastAt },
@@ -399,14 +409,7 @@ export class Control {
           const mode = args.mode
           if (!root || (mode !== "on" && mode !== "off" && mode !== "auto"))
             return fail("route needs a session and on, off or auto")
-          router.set(
-            root,
-            mode === "auto" ? undefined : mode === "on",
-            str(args.channel),
-          )
-          this.saveSession(root)
-          void bridge.retrack(root)
-          bridge.notify()
+          bridge.setWatch(root, mode, str(args.channel))
           return this.done({ ok: true })
         }
         case "chat": {
@@ -441,6 +444,16 @@ export class Control {
           settings.set(id, { enabled: args.on === true })
           bridge.notify()
           return this.done({ ok: true })
+        }
+        case "core": {
+          if (!this.core) return fail("The core API is not running here")
+          if (args.action === "rotate")
+            return this.done({
+              ok: true,
+              text: "Token replaced: the old one is refused now",
+              data: { token: await this.core.rotate(), ...this.core.status() },
+            })
+          return this.done({ ok: true, data: this.core.status() })
         }
         case "test":
           return this.done({ ok: true, data: await bridge.test() })

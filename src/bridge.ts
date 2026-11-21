@@ -20,6 +20,7 @@ import type {
   SendStats,
   SessionState,
 } from "./connectors/types.ts"
+import { Actions, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { redact } from "./filter.ts"
 import {
@@ -92,6 +93,21 @@ export interface Host {
   rename(sessionID: string, title: string): Promise<void>
   /** Wakes a session that holds messages it is not working on. Absent when the host cannot. */
   resume?(sessionID: string): Promise<void>
+  /** The tail of a session's conversation, oldest first. Absent when the host cannot read it. */
+  messages?(
+    sessionID: string,
+    limit: number,
+  ): Promise<Array<{ role: string; text: string; at: number }>>
+  /** The working-tree changes of a folder. Absent when the host cannot read them. */
+  diff?(directory: string): Promise<
+    Array<{
+      file: string
+      status: string
+      additions: number
+      deletions: number
+      patch: string
+    }>
+  >
   /** Primary agents the session can switch to. */
   agents(): Promise<string[]>
   /** Chat models of the configured providers. */
@@ -322,6 +338,9 @@ export class Bridge {
     { model?: string; variant?: string; agent?: string }
   >()
   private readonly commands: Commands
+  /** Every client acts on a session through this. */
+  readonly actions: Actions
+  private watchListener: ((root: string) => void) | undefined
   /** What each connector was last told of a session, to show a change of watch state. */
   private readonly lastStates = new Map<string, SessionState>()
   private readonly states = new Map<
@@ -346,9 +365,23 @@ export class Bridge {
     this.router = router
     this.now = now
     store.onChange = () => this.notify()
+    this.actions = new Actions({
+      cfg,
+      host,
+      now,
+      denial: (facts) => this.denial(facts),
+      setChat: (root, on) => this.setChat(root, on),
+      setWatch: async (root, mode, channel) => {
+        this.setWatch(root, mode, channel)
+        return { ok: true, text: "watch: " + mode }
+      },
+      resume: (root) => this.resume(root),
+      answer: (id, a) => this.answerFromClient(id, a),
+    })
     this.commands = new Commands({
       cfg,
       host,
+      actions: this.actions,
       tel: this.tel,
       now,
       chatEnabled: (root) => this.chat.has(root),
@@ -923,6 +956,19 @@ export class Bridge {
     return this.chat.has(root)
   }
 
+  /** Called after the watch mode of a session changes, to keep it across restarts. */
+  onWatch(fn: (root: string) => void): void {
+    this.watchListener = fn
+  }
+
+  /** Sets whether a session is mirrored, and through which channel. */
+  setWatch(root: string, mode: "on" | "off" | "auto", channel?: string): void {
+    this.router.set(root, mode === "auto" ? undefined : mode === "on", channel)
+    this.watchListener?.(root)
+    void this.retrack(root)
+    this.notify()
+  }
+
   /** Called after chat is switched on or off for a session, to keep it across restarts. */
   onChat(fn: (root: string) => void): void {
     this.chatListener = fn
@@ -1420,7 +1466,7 @@ export class Bridge {
     const delivery: Delivery =
       bang || (busy && this.delivery(root) === "steer") ? "steer" : "queue"
     try {
-      await this.host.prompt(root, text, delivery, m.files)
+      await this.actions.prompt(root, text, delivery, m.files)
     } catch (err) {
       log("prompt_error", { message: (err as Error).message })
       info.outcome = "failed"
@@ -1469,7 +1515,7 @@ export class Bridge {
     if (!this.host.resume)
       return no("This OpenCode cannot resume a session from here. " + where)
     try {
-      await this.host.resume(root)
+      await this.actions.wake(root)
       log("resume", { ok: true })
       return {
         ok: true,
@@ -1586,35 +1632,74 @@ export class Bridge {
         `#${p.id}: could not read that answer. ${ch.hint(p.id, p.questions ?? [])}`,
       )
     }
-    // Claimed before the await: the first answer wins, from either side.
+    const done = await this.commit(p, answer, { id: ch.id, replyID: m.id }, ch)
+    info.outcome = done.outcome
+    return done.out
+  }
+
+  /**
+   * Applies an answer to a prompt: claimed before the await, so the first
+   * answer wins, from either side.
+   */
+  private async commit(
+    p: Pending,
+    answer: Answer,
+    via: { id: string; replyID?: string },
+    ch?: Connector,
+  ): Promise<{ out: Outcome; outcome: "applied" | "failed" }> {
     this.store.update(p.id, {
       state: "answered",
       answeredBy: "phone",
-      answeredVia: ch.id,
+      answeredVia: via.id,
       answeredAt: this.now(),
-      replyID: m.id,
+      replyID: via.replyID,
     })
     this.pendingGauge()
     try {
-      await this.host.replyForm(p.sessionID, p.requestID, answer)
+      await this.actions.answerForm(p.sessionID, p.requestID, answer)
     } catch (err) {
       log("reply_error", { id: p.id, message: (err as Error).message })
       this.store.update(p.id, { state: "failed" })
       this.pendingGauge()
-      info.outcome = "failed"
-      return no(`#${p.id}: not applied (already answered or expired).`)
+      return {
+        outcome: "failed",
+        out: no(`#${p.id}: not applied (already answered or expired).`),
+      }
     }
     const given = redact(
       Object.values(answer).flat().join(" | "),
       this.cfg.redact,
     )
-    info.outcome = "applied"
     this.answered(p, "phone", ch)
     await this.markAnswered(p, {
       outcome: "answered",
-      via: ch.id,
+      via: via.id,
       answer: given,
     })
-    return { ok: true, text: `Answered: ${given}` }
+    return { outcome: "applied", out: { ok: true, text: `Answered: ${given}` } }
+  }
+
+  /** An answer from a client other than a chat: the same rules, the same single winner. */
+  async answerFromClient(
+    id: string,
+    a: { choice?: number; text?: string },
+  ): Promise<Result> {
+    const p = this.store.get(id)
+    if (!p || this.now() - p.askedAt > EXPIRY_MS)
+      return no(`#${id}: unknown or expired id, not applied.`)
+    if (p.state !== "pending")
+      return no(`#${p.id}: already answered, not applied.`)
+    if (p.kind === "permission")
+      return no(
+        `#${p.id}: permissions can only be answered in the OpenCode TUI.`,
+      )
+    const answer = resolveAnswer(
+      p.questions ?? [],
+      a.choice !== undefined
+        ? { id, choice: a.choice }
+        : { id, text: a.text ?? "" },
+    )
+    if (!answer) return no(`#${p.id}: could not read that answer.`)
+    return (await this.commit(p, answer, { id: "api" })).out
   }
 }

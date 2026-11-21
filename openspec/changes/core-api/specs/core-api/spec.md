@@ -74,6 +74,16 @@ The API SHALL be off unless an address is configured. The address SHALL be loopb
 - **WHEN** the configured address is `0.0.0.0` or `::`
 - **THEN** the bridge does not listen and logs the refusal
 
+#### Scenario: Tailscale keyword
+
+- **WHEN** the configured address is `tailscale` and a local interface has an address in `100.64.0.0/10`
+- **THEN** the API listens on that address only, and the status shows it
+
+#### Scenario: Tailscale keyword with no tailnet
+
+- **WHEN** the configured address is `tailscale` and no local interface is in the Tailscale ranges
+- **THEN** there is no listener and the status says that no tailnet address was found
+
 #### Scenario: Tailnet address
 
 - **WHEN** the configured address is in `100.64.0.0/10`
