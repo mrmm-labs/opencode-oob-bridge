@@ -1,0 +1,35 @@
+# Generic example. Replace the placeholders, put the secrets in files next to this one.
+services:
+  relay:
+    image: <your-registry>/oob-relay:<tag>
+    restart: unless-stopped
+    read_only: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      OPERATOR_USER_ID: "<your-telegram-user-id>"
+      MAX_AGE_SECONDS: "3600"
+      CLIENT_IP_HEADER: "X-Forwarded-For"
+      LINK_SECRET_FILE: /run/secrets/link_secret
+      HEARTBEAT_TOKEN_FILE: /run/secrets/heartbeat_token
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/alert_bot_token
+      TELEGRAM_BOT_TOKEN_VERIFY_FILE: /run/secrets/app_bot_token
+      TELEGRAM_CHAT_ID: "<your-chat-id>"
+    secrets: [link_secret, heartbeat_token, alert_bot_token, app_bot_token]
+    ports:
+      # Public side: put a TLS reverse proxy in front of this.
+      - "127.0.0.1:8080:8080"
+      # Link side: set LINK_BIND_ADDRESS to the address your tailnet or private network reaches.
+      - "${LINK_BIND_ADDRESS:-127.0.0.1}:8081:8081"
+      - "127.0.0.1:9090:9090"
+
+secrets:
+  link_secret:
+    file: ./link_secret.txt
+  heartbeat_token:
+    file: ./heartbeat_token.txt
+  alert_bot_token:
+    file: ./alert_bot_token.txt
+  app_bot_token:
+    file: ./app_bot_token.txt

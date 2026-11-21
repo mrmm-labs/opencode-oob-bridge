@@ -13,7 +13,8 @@ import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { redact } from "../filter.ts"
 import { ACTIONS, type Actions } from "./actions.ts"
-import type { TokenStore } from "./auth.ts"
+import { checkInitData, fromHeader } from "../link/initdata.ts"
+import { FailLimiter, type TokenStore } from "./auth.ts"
 import type { Views } from "./views.ts"
 
 export const API_VERSION = "v1"
@@ -66,7 +67,19 @@ export type ApiDeps = {
   ring: EventRing
   version: string
   keepAliveMs?: number
+  /** What a request that came through the relay is checked against. */
+  edge?: {
+    operator(): number | undefined
+    botToken(): string | undefined
+    maxAgeSeconds?: number
+    now?: () => number
+  }
 }
+
+/** A request that arrived on the relay link, not on a socket of ours. */
+export type Edge = { client: string }
+
+export const DEFAULT_INIT_AGE_S = 3600
 
 const send = (res: ServerResponse, status: number, body?: unknown) => {
   if (body === undefined) {
@@ -253,12 +266,45 @@ export function handler(d: ApiDeps) {
     return send(res, 404, { error: "not found" })
   }
 
-  return (req: IncomingMessage, res: ServerResponse) => {
-    if (!d.tokens.check(req.headers.authorization)) return send(res, 401)
+  const fails = new FailLimiter(d.edge?.now)
+  const done = (req: IncomingMessage, res: ServerResponse) =>
     route(req, res).catch(() => {
       if (!res.headersSent) send(res, 500, { error: "internal error" })
       else res.end()
     })
+
+  /** The link counts as an edge: init data only, a short path list, a failed-auth limit. */
+  const viaEdge = (req: IncomingMessage, res: ServerResponse, edge: Edge) => {
+    const client = edge.client.slice(0, 64) || "unknown"
+    if (fails.blocked(client))
+      return send(res, 429, { error: "too many failures" })
+    const p = new URL(req.url ?? "/", "http://core").pathname
+    if (req.method === "GET" && p === "/healthz")
+      return send(res, 200, { ok: true })
+    if (p !== "/v1" && !p.startsWith("/v1/"))
+      return send(res, 404, { error: "not found" })
+    const operator = d.edge?.operator()
+    const token = d.edge?.botToken()
+    const v =
+      operator === undefined || token === undefined
+        ? undefined
+        : checkInitData(fromHeader(req.headers.authorization), {
+            operator,
+            token,
+            maxAgeSeconds: d.edge?.maxAgeSeconds ?? DEFAULT_INIT_AGE_S,
+            now: d.edge?.now,
+          })
+    if (!v?.ok) {
+      fails.fail(client)
+      return send(res, v && !v.ok ? v.status : 401)
+    }
+    return done(req, res)
+  }
+
+  return (req: IncomingMessage, res: ServerResponse, edge?: Edge) => {
+    if (edge) return viaEdge(req, res, edge)
+    if (!d.tokens.check(req.headers.authorization)) return send(res, 401)
+    return done(req, res)
   }
 }
 

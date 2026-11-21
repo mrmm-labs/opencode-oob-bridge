@@ -745,6 +745,29 @@ or a webhook, so the bridge stays the only consumer of the bot. A sleeping lapto
 crash; the alert says "no heartbeat" and does not guess why. `src/deadman.test-util.ts` is a
 reference implementation of the receiver side.
 
+## The relay
+
+To reach the Mini App from outside your tailnet, or to get a dead-man alert that does not depend on your computer, run the relay from [`relay/`](relay/README.md). You build and host it yourself; no image is published. The bridge dials out to it, so nothing listens on your computer:
+
+```jsonc
+{
+  "link": {
+    "url": "ws://<relay-link-address>:8081/link", // loopback, a tailnet address or a *.ts.net name
+    "secret": {
+      "command": [
+        "security",
+        "find-generic-password",
+        "-s",
+        "oob-relay-link",
+        "-w",
+      ],
+    },
+  },
+}
+```
+
+`/oob status` shows the link state. With a link, each heartbeat also travels over it and the relay's acknowledgement counts as an answer.
+
 ## Approvals for local tools
 
 A local tool can ask you to approve one action from your phone. The bridge listens on a unix socket in its state directory (`approvals.sock`, directory `0700`, socket `0600`); there is no TCP listener. The tool sends a request, waits for the answer, and checks that the answer is signed. Telegram is the only channel for approvals; ntfy cannot say who tapped.

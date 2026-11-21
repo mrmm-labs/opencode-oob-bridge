@@ -85,6 +85,7 @@ export type Config = {
   core: { bind?: string; port: number }
   /** The dead-man heartbeat: off unless `url` is set. */
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
+  link: { url?: string; secret?: TokenSource }
   /** Approvals for local tools over a unix socket: off unless `enabled`. */
   approvals: ApprovalsConfig
   /** The card posted when a turn ends with changes or after a long turn. */
@@ -268,6 +269,20 @@ function parseDeadman(raw: unknown): Config["deadman"] | { error: string } {
   const source = token === undefined ? undefined : parseTokenSource(token)
   if (token !== undefined && !source) return { error: "deadman." + TOKEN_ERROR }
   return { url: url?.trim(), token: source, intervalSeconds }
+}
+
+function parseLink(raw: unknown): Config["link"] | { error: string } {
+  if (raw === undefined) return {}
+  if (!isObject(raw)) return { error: "link must be an object" }
+  const { url, secret } = raw
+  if (url !== undefined && (typeof url !== "string" || url.trim() === ""))
+    return { error: "link.url must be a URL" }
+  const source = secret === undefined ? undefined : parseTokenSource(secret)
+  if (secret !== undefined && !source)
+    return {
+      error: 'link.secret must be { "env": NAME } or { "command": [...] }',
+    }
+  return { url: url?.trim(), secret: source }
 }
 
 export const DEFAULT_CORE_PORT = 7842
@@ -540,6 +555,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   if ("error" in core) return core
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
+  const link = parseLink(raw.link)
+  if ("error" in link) return link
   const approvals = parseApprovals(raw.approvals)
   if ("error" in approvals) return approvals
 
@@ -578,6 +595,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     away: { minutes },
     core,
     deadman,
+    link,
     approvals,
     turnCard,
     permissions,

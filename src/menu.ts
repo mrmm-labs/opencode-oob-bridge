@@ -768,6 +768,18 @@ function instanceLines(app: App): string[] {
         ? `Core API: listening on ${i.core.address}`
         : `Core API: not listening (${i.core.reason})`,
     )
+  if (i.link && i.link.state !== "off") {
+    const since = i.link.since
+      ? ago(Date.now() - i.link.since).replace(" ago", "")
+      : "?"
+    lines.push(
+      i.link.state === "up"
+        ? `Relay link: up for ${since}`
+        : i.link.state === "down"
+          ? `Relay link: down for ${since} (${i.link.reason})`
+          : `Relay link: refused (${i.link.reason})`,
+    )
+  }
   if (i.afk)
     lines.push(
       `Away: ${i.afk.away ? "away" : "here"} (${i.afk.mode}${i.afk.until ? `, ${ago(i.afk.until - Date.now()).replace(" ago", "")} left` : ""}), ${i.afk.tuis} window${i.afk.tuis === 1 ? "" : "s"}, last input ${ago(Date.now() - i.afk.lastInputAt)}`,

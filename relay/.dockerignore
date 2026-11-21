@@ -1,0 +1,7 @@
+node_modules
+dist
+deploy
+scripts
+README.md
+**/*.test.ts
+**/*.test-util.ts

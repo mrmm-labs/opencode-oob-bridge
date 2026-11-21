@@ -13,6 +13,38 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(h(a), h(b))
 }
 
+/** Ten failed authentications a minute from one client address block it for five minutes. */
+export class FailLimiter {
+  private readonly fails = new Map<string, number[]>()
+  private readonly until = new Map<string, number>()
+  private readonly now: () => number
+
+  constructor(now: () => number = Date.now) {
+    this.now = now
+  }
+
+  blocked(key: string): boolean {
+    const t = this.now()
+    const u = this.until.get(key)
+    if (u === undefined) return false
+    if (t < u) return true
+    this.until.delete(key)
+    return false
+  }
+
+  fail(key: string): void {
+    const t = this.now()
+    if (this.fails.size > 5000) this.fails.clear()
+    const recent = (this.fails.get(key) ?? []).filter((x) => t - x < 60_000)
+    recent.push(t)
+    this.fails.set(key, recent)
+    if (recent.length >= 10) {
+      this.until.set(key, t + 5 * 60_000)
+      this.fails.delete(key)
+    }
+  }
+}
+
 export class TokenStore {
   private token = ""
   private readonly file: string

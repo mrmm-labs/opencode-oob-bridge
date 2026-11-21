@@ -67,3 +67,70 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
       - run: openspec validate --all --strict
+
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm --dir relay install --frozen-lockfile
+      - run: pnpm --dir relay typecheck
+      - run: pnpm --dir relay test
+      - run: pnpm --dir relay build
+
+  # The image is built, never pushed: once for both architectures, once natively to run it.
+  relay-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - run: docker buildx build --platform linux/amd64,linux/arm64 relay/
+      - run: docker build --tag relay:ci relay/
+      - name: Runs read-only as user 65532
+        run: |
+          docker run -d --name relay --read-only --user 65532:65532 \
+            -e LINK_SECRET="$(printf 'x%.0s' $(seq 1 40))" -p 8080:8080 relay:ci
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8080/healthz && exit 0
+            sleep 1
+          done
+          docker logs relay
+          exit 1
+
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Deny-list
+        env:
+          HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
+          HYGIENE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/hygiene.sh
+
+  # Proves the push script masks a registry: the fake values below are the only ones in play.
+  relay-push-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RELAY_REGISTRY: registry.fake-test.invalid/project
+      RELAY_REGISTRY_USER: fake-test-user
+      RELAY_REGISTRY_TOKEN: fake-test-token-0123456789
+      RELAY_TAG: v0.0.0-test
+      RELAY_PUSH_DRY_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the script and keep what it prints
+        run: bash scripts/relay-push.sh > push.log 2>&1
+      - name: The log holds no fake registry value
+        run: |
+          grep -q '^::add-mask::' push.log
+          if grep -v '^::add-mask::' push.log | grep -q -F -e fake-test; then
+            echo "a fake registry value reached the log"
+            exit 1
+          fi

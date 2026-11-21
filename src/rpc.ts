@@ -107,6 +107,12 @@ export type Snapshot = {
     address?: string
     reason?: string
   }
+  /** The relay link: not configured (absent), refused, down or up, and since when. */
+  link?: {
+    state: "off" | "refused" | "down" | "up"
+    since?: number
+    reason?: string
+  }
   defaultSidebar: "full" | "compact" | "off"
   defaultChannel: string
   defaultDelivery: "queue" | "steer"

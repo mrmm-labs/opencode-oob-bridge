@@ -1,0 +1,5 @@
+# Words that must not appear in a tracked file or a commit message.
+# Case is ignored. Add your own through the HYGIENE_DENYLIST secret, one per line:
+# a registry host, a domain, a tailnet name, a chat id, a user name.
+/Users/
+C:\Users\

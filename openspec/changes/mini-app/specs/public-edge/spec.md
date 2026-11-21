@@ -81,7 +81,7 @@ The edge SHALL reach the bridge only over the tailnet. The preferred way is the 
 
 ### Requirement: The edge pre-filters init data
 
-The edge SHALL refuse a request to `/v1/` that carries no well-formed init data, init data that names another user than the operator, or an `auth_date` older than the configured maximum age. It SHALL NOT claim to have verified the hash: the bridge verifies it.
+The edge SHALL refuse a request to `/v1/` that carries no well-formed init data, init data that names another user than the operator, or an `auth_date` older than the configured maximum age. It SHALL NOT claim to have verified the hash unless it holds a verify-only token and has checked it. The bridge verifies every request in any case.
 
 #### Scenario: Missing init data
 
@@ -113,7 +113,7 @@ The edge SHALL NOT buffer the event stream and SHALL allow an idle timeout of at
 
 ### Requirement: The edge holds no secret for this path
 
-The edge SHALL NOT hold the bot token of the Mini App's bot or the bearer token, SHALL NOT authenticate on the bridge's behalf, and SHALL NOT log the `Authorization` header or the query string. It holds the link secret and nothing else for this path.
+The edge SHALL NOT hold the bearer token and SHALL NOT authenticate on the bridge's behalf. It MAY hold a verify-only copy of the bot token to check init data hashes, which it SHALL NOT use to call Telegram. It SHALL NOT log the `Authorization` header or the query string. Besides the link secret and that token it holds nothing for this path.
 
 #### Scenario: Edge logs
 
