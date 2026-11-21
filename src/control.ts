@@ -22,6 +22,8 @@ import { isObject } from "./util.ts"
 export const PRESENCE_MS = 45_000
 /** A message waits this long before the session is said to be stuck on it. */
 export const STUCK_MS = 60_000
+/** An alert is sent again after this long, if the session is still stuck. */
+export const REALERT_MS = 6 * 3_600_000
 export const SCAN_MS = 15_000
 export const PROBE_MS = 60_000
 const MAX_SESSIONS = 40
@@ -103,7 +105,11 @@ export class Control {
     string,
     { pending: number; since: number }
   >()
-  private readonly alerted = new Set<string>()
+  /** The alert sent for each stuck session: for which suspension, how many messages waited, and when. */
+  private readonly alerts = new Map<
+    string,
+    { key: string; pending: number; at: number }
+  >()
   private readonly pairings = new Map<string, { p: Pairing; done?: boolean }>()
   private seen = 0
   private lastAt: number | undefined
@@ -127,6 +133,7 @@ export class Control {
         pending: s.pending,
       })),
     )
+    o.bridge.onWaiting((id) => this.waitingCount(id))
     o.bridge.subscribe(() => this.v++)
   }
 
@@ -221,7 +228,11 @@ export class Control {
         pending: items.length,
         since: oldest.at,
         source: "events",
-        alerted: this.alerted.has(sessionID + ":" + oldest.id),
+        alerted: this.isAlerted(
+          sessionID,
+          sessionID + ":" + oldest.id,
+          items.length,
+        ),
       })
     }
     for (const [sessionID, p] of this.probed) {
@@ -233,21 +244,51 @@ export class Control {
         pending: p.pending,
         since: p.since,
         source: "db",
-        alerted: this.alerted.has(sessionID + ":db:" + p.since),
+        alerted: this.isAlerted(
+          sessionID,
+          sessionID + ":db:" + p.since,
+          p.pending,
+        ),
       })
     }
     return [...rows.values()].sort((a, b) => a.since - b.since)
   }
 
-  /** Tells the channels about each newly stuck session, once. */
+  /** One alert a suspension: another only when more messages wait, or after six hours. */
+  private isAlerted(id: string, key: string, pending: number): boolean {
+    const a = this.alerts.get(id)
+    return (
+      a !== undefined &&
+      a.key === key &&
+      pending <= a.pending &&
+      this.now() - a.at < REALERT_MS
+    )
+  }
+
+  /** How many messages wait on a session. */
+  waitingCount(sessionID: string): number {
+    let n = 0
+    for (const w of this.waiting.values())
+      if (w.sessionID === sessionID && w.type === "user") n++
+    return n || (this.probed.get(sessionID)?.pending ?? 0)
+  }
+
+  /** Tells the channels about each newly stuck session, once; an alert whose session woke by itself is closed. */
   async scan(): Promise<void> {
-    for (const s of this.stuck()) {
+    const rows = this.stuck()
+    for (const [id] of this.alerts)
+      if (!rows.some((s) => s.id === id)) {
+        this.alerts.delete(id)
+        this.v++
+        await this.o.bridge.alertGone(id)
+      }
+    for (const s of rows) {
       if (s.alerted) continue
       const key =
         s.source === "events"
           ? s.id + ":" + this.oldestWaiting(s.id)
           : s.id + ":db:" + s.since
-      this.alerted.add(key)
+      this.alerts.set(s.id, { key, pending: s.pending, at: this.now() })
       this.v++
       const minutes = Math.max(1, Math.round((this.now() - s.since) / 60_000))
       const sent = await this.o.bridge.stalled(s.id, {
@@ -436,7 +477,7 @@ export class Control {
         }
         case "resume": {
           if (!root) return fail("resume needs a session")
-          const out = await bridge.resume(root)
+          const out = await bridge.resume(root, "sidebar")
           return this.done({ ok: out.ok, text: out.text })
         }
         case "restart": {
