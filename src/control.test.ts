@@ -12,6 +12,7 @@ import { TelegramConnector } from "./connectors/telegram.ts"
 import { PendingStore } from "./pending.ts"
 import { Router } from "./routing.ts"
 import { SettingsStore } from "./settings.ts"
+import { flushLog } from "./logger.ts"
 import { sleep } from "./util.ts"
 
 const CHAT = 4242
@@ -331,11 +332,17 @@ describe("resume: the outcome is observed and reported", () => {
       else process.env.OPENCODE_OOB_BRIDGE_LOG = old
     }
   }
+  // The log is written by a queue that can lag under load: wait for the line.
   const resumeLine = async (file: string) => {
-    await sleep(100)
-    return (await readFile(file, "utf8"))
-      .split("\n")
-      .find((l) => l.includes('"resume"') && l.includes("outcome"))
+    const end = Date.now() + 5000
+    for (;;) {
+      await flushLog()
+      const line = (await readFile(file, "utf8").catch(() => ""))
+        .split("\n")
+        .find((l) => l.includes('"resume"') && l.includes("outcome"))
+      if (line || Date.now() > end) return line
+      await sleep(25)
+    }
   }
 
   it("working: the session starts a turn, and the alert says so and loses its button", async () => {
