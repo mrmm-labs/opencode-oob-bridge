@@ -115,7 +115,7 @@ function setup(over: Partial<ApprovalsConfig> = {}) {
 
 const body = (over: Record<string, unknown> = {}) => ({
   idempotency_key: "k1",
-  requester: { session_id: "ses_1", agent: "build", tool: "bw" },
+  requester: { session_id: "ses_1", agent: "build", tool: "secrets" },
   action_class: "secrets.read",
   scope_summary: "item 4f2a",
   reason: "deploy",

@@ -24,7 +24,7 @@ const view = (over: Partial<ApprovalView> = {}): ApprovalView => ({
   short: "zzzz",
   nonce: "abcdefgh",
   caller: "secrets-tool",
-  requester: { session_id: "ses_1", agent: "build", tool: "bw" },
+  requester: { session_id: "ses_1", agent: "build", tool: "secrets" },
   action_class: "secrets.write",
   level: 2,
   scope: "item <4f2a> & co",

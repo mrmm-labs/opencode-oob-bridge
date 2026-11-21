@@ -18,7 +18,7 @@ const request: RequestRecord = {
   mode: "afk",
   created_at: "2026-11-21T12:00:00.000Z",
   idempotency_key: "k1",
-  requester: { session_id: "ses_1", agent: "build", tool: "bw" },
+  requester: { session_id: "ses_1", agent: "build", tool: "secrets" },
   action_class: "secrets.read",
   scope_summary: "item 4f2a",
   reason: "deploy",
