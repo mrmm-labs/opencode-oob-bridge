@@ -583,6 +583,9 @@ export class Control {
         connected: c.connected,
         lastError: c.lastError,
         warning: c.warning,
+        pollOkAt: c.pollOkAt,
+        sendOkAt: c.sendOkAt,
+        silentMs: c.silentMs,
       })),
       pending: st.pending,
       core: this.core && {

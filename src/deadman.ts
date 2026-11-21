@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto"
 
 import { log } from "./logger.ts"
+import { STALL_MS } from "./util.ts"
 
 export const DEFAULT_INTERVAL_S = 30
 const SEND_TIMEOUT_MS = 10_000
@@ -77,7 +78,12 @@ export type CheckInput = {
   snapshot(): unknown
   rpcRegistered(): boolean
   lockHeld(): Promise<boolean>
-  channels(): Array<{ id: string; enabled: boolean; connected?: boolean }>
+  channels(): Array<{
+    id: string
+    enabled: boolean
+    connected?: boolean
+    silentMs?: number
+  }>
 }
 
 /** Runs the checks; any failure is a reason code. A check that throws is `check_failed`. */
@@ -97,6 +103,11 @@ export async function selfCheck(i: CheckInput): Promise<Health> {
       // A channel that has no notion of being connected counts as connected.
       channels[c.id] = c.connected !== false
       if (!channels[c.id]) reasons.push("channel_down:" + c.id)
+      // A loop that no longer steps says "connected" from its last good poll: the heartbeat must not.
+      if ((c.silentMs ?? 0) > STALL_MS) {
+        channels[c.id] = false
+        reasons.push("poll_stalled:" + c.id)
+      }
     }
   } catch {
     return { state: "degraded", reasons: ["check_failed"], channels }

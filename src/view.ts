@@ -46,6 +46,9 @@ export interface Pilot {
       connected?: boolean
       lastError?: string
       warning?: string
+      pollOkAt?: number
+      sendOkAt?: number
+      silentMs?: number
     }>
     pending: number
   }
