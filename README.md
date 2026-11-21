@@ -336,15 +336,15 @@ How it behaves:
   bot messages. The bot answers with a **reaction on your message** and no text, and changes it
   in place as the message moves on:
 
-  | Emoji | Stage                                                        | Key               |
-  | ----- | ------------------------------------------------------------ | ----------------- |
-  | 👀    | received                                                     | `received`        |
-  | ✍     | queued behind a busy session                                 | `queued`          |
-  | ⚡    | sent to an idle session, or steered into the running turn    | `sent`, `steered` |
-  | 👌    | the session replied                                          | `done`            |
-  | 💔    | delivery failed (the bot also says why, and retries)         | `failed`          |
-  | 🙈    | ignored: no session in this topic, or chat is off or blocked | `ignored`         |
-  | 🤷    | held: the session waits on a question                        | `held`            |
+  | Emoji | Stage                                                                           | Key               |
+  | ----- | ------------------------------------------------------------------------------- | ----------------- |
+  | 👀    | received                                                                        | `received`        |
+  | ✍     | queued behind a busy session                                                    | `queued`          |
+  | ⚡    | sent to an idle session, or steered into the running turn                       | `sent`, `steered` |
+  | 👌    | the session replied                                                             | `done`            |
+  | 💔    | delivery failed (the bot also says why, and retries)                            | `failed`          |
+  | 🙈    | ignored: no session in this topic (one line says so), or chat is off or blocked | `ignored`         |
+  | 🤷    | held: the session waits on a question                                           | `held`            |
 
   `reactions` changes any of them; `reactions.agents` (keyed by agent name) replaces ⚡ for an
   agent, e.g. `{ "build": "👨‍💻" }`. Telegram lets a bot use only a fixed set of emoji; one

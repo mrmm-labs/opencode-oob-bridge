@@ -646,6 +646,7 @@ async function boot(
   bridge.start()
   control.start()
   log("server_started", {
+    version: RUNNING,
     otel: tel.enabled(),
     channels: connectors.map((c) => c.id),
     rules: cfg.rules.length,
