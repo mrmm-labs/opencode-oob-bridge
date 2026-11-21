@@ -29,6 +29,8 @@ export type Capabilities = {
   pairing: boolean
   /** Messages typed in a session's thread may be sent to the session, and its replies are posted back (`reply`). */
   inboundPrompt: boolean
+  /** Keeps an inbound message the core could not deliver and tries it again, saying so in the thread (see `Outcome.retry`). */
+  retriesInbound?: boolean
   /** Can show part of a message collapsed (`turnCard`). Without it a turn card is a header and a short summary. */
   foldable?: boolean
   /** What the connector can prove for an approval: buttons, who answered, typed text. Absent: it carries none. */
@@ -199,6 +201,8 @@ export type Outcome = {
   ask?: { id: string }
   /** The text of a message was sent to a session: the connector may acknowledge it. */
   sent?: boolean
+  /** The message could not be delivered now and may be again: the connector keeps it and tries later. */
+  retry?: boolean
   /** With `sent`: which agent got it, and whether it went in at once, waited or was steered in. */
   delivered?: { agent?: string; how: "sent" | "queued" | "steered" }
 }
