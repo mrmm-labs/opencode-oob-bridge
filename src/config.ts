@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises"
 import { legacyConfigPath, configPath, legacy } from "./paths.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import { parseRedact, type Redact } from "./filter.ts"
+import { DEFAULT_INTERVAL_S } from "./deadman.ts"
 import { parseJsonc } from "./jsonc.ts"
+import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
 import {
   parseFormats,
   parseProfiles,
@@ -68,6 +70,8 @@ export type Config = {
   away: { minutes: number }
   /** The core API listener: off unless `bind` is set. */
   core: { bind?: string; port: number }
+  /** The dead-man heartbeat: off unless `url` is set. */
+  deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
   rules: Rule[]
   redact: Redact
   chat: ChatConfig
@@ -77,6 +81,24 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+}
+
+function parseDeadman(raw: unknown): Config["deadman"] | { error: string } {
+  if (raw === undefined) return { intervalSeconds: DEFAULT_INTERVAL_S }
+  if (!isObject(raw)) return { error: "deadman must be an object" }
+  const { url, token, intervalSeconds = DEFAULT_INTERVAL_S } = raw
+  if (url !== undefined && (typeof url !== "string" || url.trim() === ""))
+    return { error: "deadman.url must be a URL" }
+  if (
+    typeof intervalSeconds !== "number" ||
+    !Number.isInteger(intervalSeconds) ||
+    intervalSeconds < 1 ||
+    intervalSeconds > 3600
+  )
+    return { error: "deadman.intervalSeconds must be 1 to 3600" }
+  const source = token === undefined ? undefined : parseTokenSource(token)
+  if (token !== undefined && !source) return { error: "deadman." + TOKEN_ERROR }
+  return { url: url?.trim(), token: source, intervalSeconds }
 }
 
 export const DEFAULT_CORE_PORT = 7842
@@ -334,6 +356,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
 
   const core = parseCore(raw.core)
   if ("error" in core) return core
+  const deadman = parseDeadman(raw.deadman)
+  if ("error" in deadman) return deadman
 
   const chat = parseChat(raw.chat)
   if ("error" in chat) return chat
@@ -355,6 +379,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     sidebar: sidebar as SidebarMode,
     away: { minutes },
     core,
+    deadman,
     rules,
     redact,
     chat,

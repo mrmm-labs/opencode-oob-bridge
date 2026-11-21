@@ -92,21 +92,24 @@ nothing and opens no connection.**
 }
 ```
 
-| Key                 | Default  | Meaning                                                                          |
-| ------------------- | -------- | -------------------------------------------------------------------------------- |
-| `channels.ntfy`     | none     | The ntfy channel. See [Channels](#channels).                                     |
-| `channels.telegram` | none     | The Telegram channel. See [Channels](#channels).                                 |
-| `defaultChannel`    | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.    |
-| `sidebar`           | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).        |
-| `away.minutes`      | `10`     | Minutes without input in the TUI before matching sessions are mirrored.          |
-| `rules`             | `[]`     | Which sessions are mirrored while you are away. Empty: all.                      |
-| `redact`            | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).             |
-| `permissions`       | tier 3   | Only tier 3 (push only) exists.                                                  |
-| `messages`          | built in | Push formats per kind, overriding the defaults field by field. See below.        |
-| `profiles`          | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.       |
-| `otel`              | off      | OpenTelemetry export. See [Telemetry](#telemetry).                               |
-| `core.bind`         | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address. |
-| `core.port`         | `7842`   | The core API port.                                                               |
+| Key                       | Default  | Meaning                                                                              |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                         |
+| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                     |
+| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.        |
+| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).            |
+| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.              |
+| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                          |
+| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                 |
+| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                      |
+| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.            |
+| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.           |
+| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                   |
+| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.     |
+| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only). |
+| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.            |
+| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                          |
+| `core.port`               | `7842`   | The core API port.                                                                   |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -634,6 +637,42 @@ events carry a type and a session id only: read the session for the rest. Replie
 requests are refused for every client; answer them in the OpenCode TUI.
 
 Within `/v1` changes only add fields, routes and event types, so ignore what you do not know.
+
+## Dead-man's switch
+
+A bridge that has died or hung cannot say so. With `deadman.url` set, the bridge posts a small
+heartbeat to a receiver you run elsewhere, every `deadman.intervalSeconds` (default 30), with
+`Authorization: Bearer <token>`. The receiver notices silence on its own clock and tells you.
+
+```jsonc
+{
+  "deadman": {
+    "url": "https://relay.example.com/beat",
+    "token": { "env": "OOB_DEADMAN_TOKEN" },
+  },
+}
+```
+
+The URL must be https (http only for a loopback address); anything else is refused, logged, and
+nothing is sent. The heartbeat is `{ v, id, seq, at, state, reasons, version, pid, channels }`:
+no session titles, paths, chat ids, usernames or message text. `state` is:
+
+- `up`: the self-check passed. Each beat first runs the TUI's status call, checks its answer holds
+  JSON values only, that the RPC is registered and that this process holds the owner lock, and
+  reads each enabled channel's connection.
+- `degraded`, with reason codes: `snapshot_invalid`, `rpc_missing`, `lock_lost`,
+  `channel_down:<id>`, or `check_failed` when the check itself throws.
+- `stopping`: sent before a restart or a shutdown, so a planned stop is not an outage.
+
+Only the instance that runs the bridge sends. A failed send is logged once per change and never
+delays anything else; missed beats are not queued.
+
+A receiver that follows the contract alerts when three intervals pass in silence (five minutes
+after `stopping`), or on two degraded beats in a row naming the reasons. It alerts once, reminds
+every 30 minutes, says when the bridge is back, and uses `sendMessage` only: never `getUpdates`
+or a webhook, so the bridge stays the only consumer of the bot. A sleeping laptop looks like a
+crash; the alert says "no heartbeat" and does not guess why. `src/deadman.test-util.ts` is a
+reference implementation of the receiver side.
 
 ## Security
 

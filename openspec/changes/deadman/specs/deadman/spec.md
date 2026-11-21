@@ -1,3 +1,7 @@
+## Purpose
+
+The dead-man heartbeat lets a receiver outside the Mac notice that the bridge has died or hung, which the bridge cannot report itself.
+
 ## ADDED Requirements
 
 ### Requirement: The bridge sends a heartbeat to a configured receiver
