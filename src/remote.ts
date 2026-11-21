@@ -199,6 +199,7 @@ export class Remote implements Pilot {
     return {
       channels: this.snap?.channels ?? [],
       pending: this.snap?.pending ?? 0,
+      waiting: this.snap?.waiting ?? [],
       trace: this.snap?.trace ?? [],
     }
   }

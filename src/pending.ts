@@ -18,6 +18,8 @@ export type Pending = {
   title: string
   /** The permission asked for. */
   action?: string
+  /** The agent that asked, which may be a subagent. */
+  agent?: string
   questions?: Question[]
   /** Message reference per channel id, to update the message later. */
   refs?: Record<string, string>

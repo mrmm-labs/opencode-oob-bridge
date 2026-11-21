@@ -611,7 +611,7 @@ describe("Bridge with telegram and another channel", () => {
   })
 
   it("permissions: message without buttons, never answerable", async () => {
-    const b = await bridgeRig()
+    const b = await bridgeRig({ permissions: { notify: "all" } })
     await b.bridge.onEvent({
       type: "permission.asked",
       data: {
