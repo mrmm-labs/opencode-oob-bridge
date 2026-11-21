@@ -92,26 +92,29 @@ nothing and opens no connection.**
 }
 ```
 
-| Key                       | Default  | Meaning                                                                                                         |
-| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
-| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                                                    |
-| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                                                |
-| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.                                   |
-| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).                                       |
-| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.                                         |
-| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                                                     |
-| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                                            |
-| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                                                 |
-| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.                                       |
-| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                      |
-| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                                              |
-| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                |
-| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                            |
-| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.                                       |
-| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                                                     |
-| `turnCard`                | on       | A card when a turn ends with changes or after a long turn: `false` turns it off. See [Turn cards](#turn-cards). |
-| `turnCard.minSeconds`     | `20`     | A turn that changed nothing gets a card only when it ran this long.                                             |
-| `core.port`               | `7842`   | The core API port.                                                                                              |
+| Key                       | Default  | Meaning                                                                                                                                                  |
+| ------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                                                                                             |
+| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                                                                                         |
+| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.                                                                            |
+| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).                                                                                |
+| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.                                                                                  |
+| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                                                                                              |
+| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                                                                                     |
+| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                                                                                          |
+| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.                                                                                |
+| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                                                               |
+| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                                                                                       |
+| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                                                         |
+| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                                                                     |
+| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.                                                                                |
+| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                                                                                              |
+| `turnCard`                | on       | A card when a turn ends with changes or after a long turn: `false` turns it off. See [Turn cards](#turn-cards).                                          |
+| `turnCard.minSeconds`     | `20`     | A turn that changed nothing gets a card only when it ran this long.                                                                                      |
+| `quiet`                   | off      | Silent delivery between `from` and `to` (HH:MM) in `timezone` (default: this computer's). See [Quiet hours and the digest](#quiet-hours-and-the-digest). |
+| `quiet.breakthrough`      | `[]`     | Kinds that still make a sound at night: `failed`, `permission`, `question`.                                                                              |
+| `digest`                  | off      | `true`, or `{ at, empty }`: one summary a day at `at` (default the end of quiet hours); `empty: true` also sends it when nothing happened.               |
+| `core.port`               | `7842`   | The core API port.                                                                                                                                       |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -369,6 +372,12 @@ How it behaves:
   to an agent that may run commands in your project: keep the group private, keep chat off for
   sensitive projects, and put them in `chat.deny`. Use `redact: "title"` if replies must not
   leave the machine.
+
+### Quiet hours and the digest
+
+With `quiet` set, every message between `from` and `to` arrives without a sound or notification (Telegram: notifications off; ntfy: minimum priority). Nothing is held back or dropped, so the topics stay complete; the window may cross midnight and follows the clock of `timezone`, daylight saving included. `quiet.breakthrough` names the kinds that still notify; the default list is empty.
+
+With `digest` set, one message goes out once a day at `digest.at`: what finished and what failed since the last digest, and what waits for you right now (open questions and permissions, stuck sessions; read live, so an answered question is not listed). Titles follow `redact` and secrets are masked. It is not sent when empty. `/digest` sends it on request and counts that period as covered. The records behind it are in `digest.jsonl` in the data directory, kept seven days; losing the file only loses detail.
 
 ### Turn cards
 

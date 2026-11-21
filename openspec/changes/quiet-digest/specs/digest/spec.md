@@ -1,3 +1,7 @@
+## Purpose
+
+The digest is the morning message: what finished, what failed and what waits for an answer since the last one.
+
 ## ADDED Requirements
 
 ### Requirement: A digest is sent at a set time

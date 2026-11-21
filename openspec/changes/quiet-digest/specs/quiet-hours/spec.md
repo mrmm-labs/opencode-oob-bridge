@@ -1,3 +1,7 @@
+## Purpose
+
+Quiet hours keep the phone silent at night without losing anything: messages still arrive, without a sound, and a short list of kinds may break through.
+
 ## ADDED Requirements
 
 ### Requirement: Quiet hours make delivery silent

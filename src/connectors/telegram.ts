@@ -438,9 +438,10 @@ export class TelegramConnector implements Connector {
               link_preview_options: { is_disabled: true },
               // A failure needs attention: it is the one push that may make a sound.
               disable_notification:
-                push.card?.kind === "failed"
+                push.silent ??
+                (push.card?.kind === "failed"
                   ? false
-                  : (push.priority ?? 3) <= 2,
+                  : (push.priority ?? 3) <= 2),
               reply_markup:
                 live && one
                   ? this.keyboard(
@@ -980,6 +981,13 @@ export class TelegramConnector implements Connector {
   }
 
   /** One Bot API call. Honours 429 `retry_after`; throws on any other failure. */
+  /** Asks whether it is quiet hours. */
+  private quiet: (() => boolean) | undefined
+
+  silence(isQuiet: () => boolean): void {
+    this.quiet = isQuiet
+  }
+
   private async call<T>(
     method: string,
     body: unknown,
@@ -988,6 +996,13 @@ export class TelegramConnector implements Connector {
     stats?: SendStats,
     retry = true,
   ): Promise<T> {
+    if (
+      method === "sendMessage" &&
+      this.quiet?.() &&
+      (body as { disable_notification?: boolean }).disable_notification ===
+        undefined
+    )
+      body = { ...(body as object), disable_notification: true }
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
     const base = this.opts.apiBase ?? "https://api.telegram.org"
@@ -1636,7 +1651,10 @@ export class TelegramConnector implements Connector {
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
     const form = new FormData()
-    for (const [k, v] of Object.entries(fields))
+    for (const [k, v] of Object.entries({
+      ...fields,
+      disable_notification: this.quiet?.() ? true : undefined,
+    }))
       if (v !== undefined) form.append(k, String(v))
     form.append(
       file.field,

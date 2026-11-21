@@ -339,7 +339,7 @@ export class NtfyConnector implements Connector {
         title: push.title,
         message: push.message,
         tags: push.tags,
-        priority: push.priority,
+        priority: push.silent ? 1 : push.priority,
         actions: push.prompt
           ? questionActions(
               this.opts.server,
@@ -359,7 +359,7 @@ export class NtfyConnector implements Connector {
         title: push.title,
         message: push.message,
         tags: push.tags,
-        priority: push.priority,
+        priority: push.silent ? 1 : push.priority,
         sequence_id: ref,
       },
       push.stats,

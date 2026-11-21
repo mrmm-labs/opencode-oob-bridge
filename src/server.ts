@@ -19,6 +19,7 @@ import {
 import { connectorTypes } from "./connectors/index.ts"
 import type { Connector } from "./connectors/types.ts"
 import { dataDir, loadConfig, type Config } from "./config.ts"
+import { DigestLog } from "./digest.ts"
 import { Control, sqliteProbe } from "./control.ts"
 import { Core } from "./core/index.ts"
 import { Deadman, selfCheck, urlProblem } from "./deadman.ts"
@@ -460,7 +461,18 @@ async function boot(
   const host = serverHost(ctx, sessions, (r) =>
     forms.ask(emit, r, control.pickTui()),
   )
-  const bridge = new Bridge(cfg, host, connectors, store, router, Date.now, tel)
+  const digest = new DigestLog(join(dir, "digest.jsonl"))
+  await digest.load()
+  const bridge = new Bridge(
+    cfg,
+    host,
+    connectors,
+    store,
+    router,
+    Date.now,
+    tel,
+    digest,
+  )
   const db = join(dirname(dir), "opencode.db")
   const probe = await access(db).then(
     () => sqliteProbe(db),

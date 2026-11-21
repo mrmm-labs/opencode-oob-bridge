@@ -4,6 +4,12 @@ import { legacyConfigPath, configPath, legacy } from "./paths.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import { parseRedact, type Redact } from "./filter.ts"
 import { DEFAULT_INTERVAL_S } from "./deadman.ts"
+import {
+  BREAKTHROUGH,
+  parseClock,
+  validZone,
+  type QuietHours,
+} from "./quiet.ts"
 import { DEFAULT_MIN_SECONDS } from "./turncard.ts"
 import { parseJsonc } from "./jsonc.ts"
 import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
@@ -75,6 +81,10 @@ export type Config = {
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
   /** The card posted when a turn ends with changes or after a long turn. */
   turnCard: { enabled: boolean; minSeconds: number }
+  /** Silent delivery between two clock times: off unless set. */
+  quiet?: QuietHours
+  /** One summary message a day: off unless set. `at` is minutes after local midnight. */
+  digest?: { at: number; empty: boolean }
   rules: Rule[]
   redact: Redact
   chat: ChatConfig
@@ -84,6 +94,51 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+}
+
+function parseQuiet(raw: unknown): QuietHours | undefined | { error: string } {
+  if (raw === undefined) return undefined
+  if (!isObject(raw)) return { error: "quiet must be an object" }
+  const from = parseClock(raw.from)
+  const to = parseClock(raw.to)
+  if (from === undefined || to === undefined || from === to)
+    return {
+      error: "quiet.from and quiet.to must be two different HH:MM times",
+    }
+  const { timezone, breakthrough = [] } = raw
+  if (
+    timezone !== undefined &&
+    (typeof timezone !== "string" || !validZone(timezone))
+  )
+    return { error: "quiet.timezone must be an IANA time zone" }
+  if (
+    !Array.isArray(breakthrough) ||
+    breakthrough.some((k) => !(BREAKTHROUGH as readonly unknown[]).includes(k))
+  )
+    return { error: "quiet.breakthrough lists failed, permission or question" }
+  return {
+    from,
+    to,
+    timezone,
+    breakthrough: breakthrough as QuietHours["breakthrough"],
+  }
+}
+
+function parseDigest(
+  raw: unknown,
+  quiet: QuietHours | undefined,
+): Config["digest"] | { error: string } {
+  if (raw === undefined || raw === false) return undefined
+  const o = raw === true ? {} : raw
+  if (!isObject(o)) return { error: "digest must be a boolean or an object" }
+  const at = o.at === undefined ? quiet?.to : parseClock(o.at)
+  if (at === undefined)
+    return {
+      error: "digest.at must be HH:MM (or set quiet hours to end at that time)",
+    }
+  if (o.empty !== undefined && typeof o.empty !== "boolean")
+    return { error: "digest.empty must be true or false" }
+  return { at, empty: o.empty === true }
 }
 
 function parseTurnCard(raw: unknown): Config["turnCard"] | { error: string } {
@@ -382,6 +437,11 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   const turnCard = parseTurnCard(raw.turnCard)
   if ("error" in turnCard) return turnCard
 
+  const quiet = parseQuiet(raw.quiet)
+  if (quiet && "error" in quiet) return quiet
+  const digest = parseDigest(raw.digest, quiet)
+  if (digest && "error" in digest) return digest
+
   const chat = parseChat(raw.chat)
   if ("error" in chat) return chat
   // "title" hides content, so replies inherit it; a head:<n> preview limit does not.
@@ -404,6 +464,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     core,
     deadman,
     turnCard,
+    quiet,
+    digest,
     rules,
     redact,
     chat,
