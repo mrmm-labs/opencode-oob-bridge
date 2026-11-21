@@ -1564,6 +1564,10 @@ export class TelegramConnector implements Connector {
       this.note("failed", out.text)
       throw new RetryLater(out.text)
     }
+    if (out?.menu) {
+      this.note("held", "waiting on a question")
+      return this.deliver(m.message_thread_id, out)
+    }
     if (out) return this.note("refused", out.text)
     this.note("ignored", "the core had nothing to do with it")
   }

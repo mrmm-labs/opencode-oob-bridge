@@ -478,6 +478,7 @@ export class Bridge {
           ? yes("The overnight plan is ended: nothing acts automatically now.")
           : no("There is no overnight plan running."),
       remote: (root) => void this.remote.add(root),
+      repost: (root) => this.repostQuestion(root),
     })
   }
 
@@ -1011,16 +1012,37 @@ export class Bridge {
       state: "pending",
     })
     this.pendingGauge()
+    await this.pushQuestion(p, r, qvars, reachable)
+    // Answered in the TUI while the message was still being sent.
+    const now = this.store.get(id)
+    if (now && now.state !== "pending" && now.answeredBy === "tui")
+      await this.markAnswered(now, {
+        outcome: now.state === "cancelled" ? "cancelled" : "answered",
+        via: "TUI",
+      })
+  }
+
+  private async pushQuestion(
+    p: Pending,
+    r: NonNullable<Awaited<ReturnType<Bridge["routed"]>>>,
+    qvars: (hint: string) => Vars,
+    reachable: boolean,
+  ) {
+    const questions = p.questions ?? []
     const sent = await this.dispatch(
       "question",
       r.to,
       (ch) => ({
         ...this.fmt(
           "question",
-          qvars(reachable ? ch.hint(id, questions) : NO_WINDOW),
+          qvars(reachable ? ch.hint(p.id, questions) : NO_WINDOW),
           r.facts,
         ),
-        ...this.shape(ch, r.session, reachable ? { id, questions } : undefined),
+        ...this.shape(
+          ch,
+          r.session,
+          reachable ? { id: p.id, questions } : undefined,
+        ),
         ...this.card(ch, "question", r.facts, () => ({
           kind: "question",
           agent: r.vars.agent ?? "agent",
@@ -1030,16 +1052,35 @@ export class Bridge {
           note: reachable ? undefined : NO_WINDOW,
         })),
       }),
-      { root: r.rootID, pending: id },
+      { root: r.rootID, pending: p.id },
     )
     this.remember(p, sent.refs)
-    // Answered in the TUI while the message was still being sent.
-    const now = this.store.get(id)
-    if (now && now.state !== "pending" && now.answeredBy === "tui")
-      await this.markAnswered(now, {
-        outcome: now.state === "cancelled" ? "cancelled" : "answered",
-        via: "TUI",
-      })
+  }
+
+  /** The oldest open question of a session, posted again with its buttons. */
+  async repostQuestion(root: string): Promise<Outcome> {
+    const p = this.openPromptList(root).find((x) => x.kind === "question")
+    if (!p)
+      return no(
+        "That question was answered meanwhile: send your message again.",
+      )
+    const r = await this.routed(root)
+    if (!r) return no("This session is not routed to a channel.")
+    const reachable = this.host.canReplyForm?.() ?? true
+    const questions = p.questions ?? []
+    await this.pushQuestion(
+      p,
+      r,
+      (hint) => ({
+        ...r.vars,
+        id: p.id,
+        thread: r.title ? `${bracketed(truncate(r.title, THREAD_MAX))}\n` : "",
+        body: redact(questionBody(questions), this.cfg.redact),
+        hint,
+      }),
+      reachable,
+    )
+    return yes("Question posted again below. Your message was not sent.")
   }
 
   private async onPermission(
@@ -1957,6 +1998,14 @@ export class Bridge {
     if (this.denied(facts)) {
       info.outcome = "denied"
       return this.hint(root, "Chat is blocked for this session by chat.deny.")
+    }
+    // A session that waits on a question does not take a message behind it: keep it and ask.
+    const asking = this.openPromptList(root).filter(
+      (p) => p.kind === "question",
+    )
+    if (asking.length && !bang) {
+      info.outcome = "held"
+      return this.commands.hold(root, { text, files: m.files }, asking.length)
     }
     const busy = this.host.busy(root)
     // "!" always steers. The configured default steers only a running turn;
