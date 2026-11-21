@@ -676,6 +676,28 @@ export class Control {
               data: r,
             })
       }
+      case "enroll-biometric":
+      case "enroll-passkey": {
+        if (!this.o.cfg.miniApp.url)
+          return fail(
+            "Set miniApp.url first: Face ID and passkeys are asked in the Mini App",
+          )
+        const kind = action === "enroll-biometric" ? "biometric" : "passkey"
+        const r = svc.openEnrolment(kind)
+        return this.done({
+          ok: true,
+          text: `Enrolment open for 5 minutes: ${r.code}`,
+          data: { kind, ...r },
+        })
+      }
+      case "devices":
+        return this.done({ ok: true, data: await svc.devices() })
+      case "revoke-device": {
+        if (!name) return fail("Name the device or credential id")
+        return (await svc.revokeDevice(name))
+          ? this.done({ ok: true, text: `Revoked ${name}` })
+          : fail(`No device or passkey ${name}`)
+      }
       case "rotate-key": {
         const hours = Number(args.hours ?? 24)
         if (!Number.isFinite(hours) || hours < 0 || hours > 24 * 30)

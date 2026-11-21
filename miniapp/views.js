@@ -164,7 +164,11 @@ function screen(state, ctl, now) {
     case "night":
       return night(state, ctl)
     case "info":
-      return info(state)
+      return info(state, ctl)
+    case "approval":
+      return approval(state, ctl)
+    case "enroll":
+      return enroll(state, ctl)
     default:
       return list(state, ctl, now)
   }
@@ -743,7 +747,121 @@ function night(state, ctl) {
   )
 }
 
-function info(state) {
+const FACTOR = {
+  biometric: ["Face ID", "Use Face ID"],
+  passkey: ["Passkey", "Use a passkey"],
+  totp: ["Code", "Send code"],
+}
+
+function approval(state, ctl) {
+  const a = state.approval
+  if (!a) return empty("Loading…")
+  if (a.gone)
+    return card(
+      "Approval",
+      h("p", null, "This request is not waiting for you any more."),
+      button("Back", () => void ctl.go("list")),
+    )
+  if (a.done)
+    return card(
+      "Approval",
+      h("p", null, a.text),
+      button("Close", () => void ctl.go("list"), { kind: "primary" }),
+    )
+  const v = a.view
+  const f = a.factors[a.index]
+  return h(
+    "section",
+    null,
+    card(
+      "Approve #" + v.short,
+      h(
+        "dl",
+        { class: "kv" },
+        h("dt", null, "Class"),
+        h("dd", null, v.action_class),
+        h("dt", null, "Caller"),
+        h("dd", null, v.caller),
+        h("dt", null, "Asks"),
+        h("dd", null, v.scope),
+        v.reason && h("dt", null, "Reason"),
+        v.reason && h("dd", null, v.reason),
+      ),
+    ),
+    card(
+      f ? FACTOR[f][0] : "No method",
+      !f &&
+        h(
+          "p",
+          { class: "hint" },
+          "Nothing on this phone can prove it. Answer at the Mac.",
+        ),
+      f === "totp" &&
+        field("approval-code", {
+          inputmode: "numeric",
+          autocomplete: "one-time-code",
+          maxlength: 6,
+          placeholder: "123456",
+          "aria-label": "6-digit code",
+        }),
+      f &&
+        button(FACTOR[f][1], () => void ctl.verify(drafts["approval-code"]), {
+          kind: "primary",
+          disabled: a.busy,
+        }),
+      a.factors.length > 1 &&
+        button("Use another method", () => ctl.useAnother(), {
+          disabled: a.busy,
+        }),
+      a.text && h("p", { class: "hint", role: "status" }, a.text),
+    ),
+  )
+}
+
+function enroll(state, ctl) {
+  const e = state.enrol
+  return h(
+    "section",
+    null,
+    card(
+      "Set up this phone",
+      h(
+        "p",
+        { class: "hint" },
+        "At the Mac, run the Enrol Face ID or Enrol a passkey command in the approvals menu, then enter the code it shows.",
+      ),
+      field("enrol-code", {
+        autocomplete: "off",
+        autocapitalize: "characters",
+        maxlength: 9,
+        placeholder: "ABCD-EFGH",
+        "aria-label": "Code from the Mac",
+      }),
+      h(
+        "div",
+        { class: "row" },
+        button(
+          "Face ID",
+          () => void ctl.enroll("biometric", drafts["enrol-code"] ?? ""),
+          {
+            kind: "primary",
+            disabled: e?.busy,
+          },
+        ),
+        button(
+          "Passkey",
+          () => void ctl.enroll("passkey", drafts["enrol-code"] ?? ""),
+          {
+            disabled: e?.busy,
+          },
+        ),
+      ),
+      e?.text && h("p", { class: "hint", role: "status" }, e.text),
+    ),
+  )
+}
+
+function info(state, ctl) {
   const m = state.meta
   const s = state.status
   return h(
@@ -795,6 +913,16 @@ function info(state) {
             ),
           ),
     ),
+    m?.approvals &&
+      card(
+        "Approvals",
+        h(
+          "p",
+          { class: "hint" },
+          "Face ID or a passkey for level 2 approvals.",
+        ),
+        button("Set up this phone", () => void ctl.go("enroll")),
+      ),
     card(
       "Actions",
       h(

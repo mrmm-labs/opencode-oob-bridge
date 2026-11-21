@@ -6,6 +6,7 @@ import {
   newSigningKey,
   requestHash,
   signAnswer,
+  signedString,
   verifyAnswer,
   type Answer,
   type RequestRecord,
@@ -133,5 +134,47 @@ describe("signed answers", () => {
     ]
     assert.equal(check(answer(), { keys }).ok, true)
     assert.equal(check(answer(), { keys, now: NOW + 5000 }).ok, false)
+  })
+})
+
+describe("the factor of an L2 answer", () => {
+  const l2 = (over: Partial<Answer> = {}) => {
+    const a = signAnswer(key, {
+      id: request.id,
+      request_hash: requestHash(request),
+      decision: "approve",
+      level: 2,
+      mode: "afk",
+      approver: "42",
+      decided_at: "2026-11-21T12:00:20.000Z",
+      factor: "biometric",
+    })
+    return { ...a, ...over }
+  }
+
+  it("signs the factor under the v2 tag, and verifies it", () => {
+    assert.deepEqual(check(l2(), { minLevel: 2 }), { ok: true })
+    assert.match(signedString(l2()), /^oob-approval-v2\n/)
+    assert.ok(signedString(l2()).endsWith("\nbiometric"))
+  })
+
+  it("refuses a factor changed or added after signing", () => {
+    assert.deepEqual(check(l2({ factor: "totp" }), { minLevel: 2 }), {
+      ok: false,
+      reason: "bad_signature",
+    })
+    assert.deepEqual(check(l2({ factor: undefined }), { minLevel: 2 }), {
+      ok: false,
+      reason: "bad_signature",
+    })
+    assert.deepEqual(check(answer({ factor: "totp" })), {
+      ok: false,
+      reason: "bad_signature",
+    })
+  })
+
+  it("leaves the string of an answer without a factor as it was", () => {
+    assert.match(signedString(answer()), /^oob-approval-v1\n/)
+    assert.equal(signedString(answer()).split("\n").length, 8)
   })
 })

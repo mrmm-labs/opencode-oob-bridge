@@ -12,7 +12,7 @@ Goals:
 
 - One approval service in the bridge, reused by every local tool that needs consent.
 - The phone is a **consent** channel. It never replaces an unlock or a credential.
-- Strength is per action class: a tap for low risk, a tap plus a one-time code for higher risk,
+- Strength is per action class: a tap for low risk, a tap plus a second factor for higher risk,
   the machine itself for the highest.
 - A caller can verify that an answer came from the bridge and not from a process that wrote to its
   socket.
@@ -25,7 +25,7 @@ Non-goals:
   the caller decides what to do with the answer.
 - Unlocking anything. A phone approval only works while the calling tool already holds what it
   needs (for example an unlocked session). If it does not, the caller still needs the machine.
-- Storing a master password or any credential that belongs to a caller. The bridge keeps only its own signing key and its TOTP seed, in the macOS Keychain (section 7.3).
+- Storing a master password or any credential that belongs to a caller. The bridge keeps only its own signing key, its TOTP seed and the L2 device secrets, in the macOS Keychain (section 7.3).
 - A network listener. The endpoint is a local unix socket.
 
 The README line "Never route production approvals through this plugin" describes the plugin
@@ -47,7 +47,7 @@ phone, and at which level (section 6). The default configuration approves nothin
 | Level | What the operator does | Typical classes | Reachable from the phone |
 | --- | --- | --- | --- |
 | L1 | Taps **Approve** or **Deny** | reads, low-risk resolutions | yes |
-| L2 | Taps **Approve**, then types a TOTP code in the chat | writes, high-risk resolutions | yes |
+| L2 | Taps **Approve**, then proves one second factor: Face ID in the Mini App (default), a passkey, or a TOTP code (section 5.4) | writes, high-risk resolutions | yes |
 | L3 | Answers at the machine (biometric prompt, or the host's attended question tool) | the highest-risk classes | no |
 
 - Each action class has a **minimum level**. A request may ask for a higher level, never a lower one.
@@ -58,6 +58,7 @@ phone, and at which level (section 6). The default configuration approves nothin
   machine") with no buttons.
 - The **level used** is part of the answer. Callers must record it as such and never as the
   stronger local method (a phone approval is never recorded as a biometric one).
+- Push buttons (ntfy, a watch) identify nobody, so they are L1 at most and never count as an L2 factor. That path is not built.
 - L2 is the highest level a phone can reach. The operator may assign it to writes and to production-class actions.
 
 ### 3.1 Presence: AFK mode
@@ -132,7 +133,8 @@ not sending secret values: the filter is a net, not a contract.
 | `decided_at` | RFC 3339 UTC, millisecond precision. |
 | `mode` | The mode the request was created in. Signed. |
 | `channel` | `{ type, message_ref }`, for example the Telegram chat and message id. |
-| `reason_code` | Optional: `timeout`, `cooldown`, `bad_code`, `withdrawn`, `present`, `bridge_restart`. |
+| `factor` | Only on an approval at level 2: `biometric`, `passkey` or `totp`. Signed (section 7.2). |
+| `reason_code` | Optional: `timeout`, `cooldown`, `bad_code`, `bad_proof`, `withdrawn`, `present`, `bridge_restart`. |
 | `kid` | Identifier of the signing key. |
 | `sig` | Signature, see section 7. |
 
@@ -212,16 +214,53 @@ approvals?: {
 A class lists the channels it accepts (default `["telegram"]`). If no accepted channel is up at the
 required level, the request fails fast with `unavailable` and does not wait for its ttl.
 
-### 5.4 L2 and the one-time code
+### 5.4 L2 and its factors
 
 1. The operator taps **Approve** on the request message.
-2. The bridge replies in the same chat: "Type the 6-digit code for #ab12".
-3. The operator types the code. The bridge checks it, deletes the message with the code (best effort)
-   and edits the request message to its final state.
+2. The bridge replies in the same chat with the prompt for the second factor. When the Mini App is
+   reachable the prompt has an **Open** button, and it still takes a typed code.
+3. The operator proves **one** factor. The bridge checks it, edits the request message to its final state,
+   and records the factor in the signed answer (7.2).
 
-The code is a standard TOTP (RFC 6238, SHA-1, 6 digits, 30 s step, one step of tolerance). Each time
-step is accepted at most once, so a code seen by someone cannot be replayed. Three wrong codes deny
-the request. The seed is enrolled from the TUI (`/oob approvals totp`, a QR code shown in the terminal only) and stored in the macOS Keychain (section 7.3). It is never written to a file or to `settings.json`, and never sent over a channel. L2 requires a seed to be enrolled; without one, L2 classes fail with `unavailable`.
+`approvals.l2.factors` lists the factors in order (section 6). The default is
+`["biometric", "passkey", "totp"]`. A factor is *offered* only when it is configured and ready. The Mini
+App then keeps the offered factors the phone can actually use, shows the first, and has a **Use another
+method** button for the next. The code can always be typed in the chat, so a phone without the app or
+without biometrics falls back to it with nothing more to do.
+
+| Factor | What the operator does | What the bridge checks | Ready when |
+| --- | --- | --- | --- |
+| `biometric` | Face ID (or a fingerprint) in the Mini App | An HMAC-SHA256 over `oob-l2-biometric-v1`, the request hash and a one-time challenge, keyed by the device secret that only the biometric prompt releases | A device is enrolled and the channel can open the app |
+| `passkey` | A WebAuthn prompt in the Mini App | A signature over the authenticator data and the client data, against the enrolled public key; the challenge is derived from the request hash and a one-time nonce; origin, relying party id hash and the user-verified flag are checked | A credential is enrolled, `miniApp.url` is set, and the webview supports WebAuthn |
+| `totp` | Types the 6-digit code in the chat, or in the app | RFC 6238 (SHA-1, 6 digits, 30 s step, one step of tolerance); a step is accepted once | A seed is enrolled |
+
+Three wrong proofs deny the request (`bad_code` for the code, `bad_proof` for the others). A request fails
+with `unavailable` when no factor is ready.
+
+**Biometric.** The enrolment starts at the Mac (`/oob approvals enroll-biometric`), which is the L3 step. It
+shows a single-use code for 5 minutes. In the app the operator enters the code; the bridge makes a 32-byte secret
+and an id, keeps them in the Keychain, and returns `<id>.<secret>` once. The app saves that string with
+Telegram's `BiometricManager` (`updateBiometricToken`), which keeps it behind Face ID on the device. At approval
+the app fetches a challenge for the request, calls `authenticate`, gets the token, and sends only the HMAC. The
+secret is revoked from the TUI (`/oob approvals revoke-device <id>`); enrolling a device again needs the Mac.
+The Mini App speaks Telegram's biometry events itself and does not load Telegram's script (see the Mini App
+design). The event names are from Telegram's documentation and have not been exercised against a client yet.
+
+**Passkey.** Registered the same way (`/oob approvals enroll-passkey`). The app offers it only when
+`PublicKeyCredential` exists, a user-verifying platform authenticator is available, an enrolled credential
+exists, and the page host equals the relying party id (the host of `miniApp.url`). **On iOS, Telegram's webview is a
+plain WKWebView and probably cannot use passkeys for our relying party id**, so the app will not offer one there; it
+does not pretend to work. Attestation is not verified: registration is already gated by the code from the Mac. The
+signature counter is not stored, because a Keychain write asks for presence at the Mac while the operator is away;
+the single-use challenge stops replay.
+
+**Code.** The seed is enrolled from the TUI (`/oob approvals totp`, a QR code shown in the terminal only) and
+stored in the macOS Keychain (section 7.3). It is never written to a file or to `settings.json`, and never sent over
+a channel. If `totp` is not in the factors, typed codes are ignored. A phone permission reply that needs level 2
+still asks for a typed code, so it needs `totp` in the list.
+
+**Push.** An Approve button on ntfy or an Apple Watch identifies nobody, so it is level 1 at most and never an L2
+factor. It is specified here and not built.
 
 ## 6. Configuration
 
@@ -230,6 +269,7 @@ the request. The seed is enrolled from the TUI (`/oob approvals totp`, a QR code
   "enabled": false,              // off unless set
   "defaultTtl": 120,
   "cooldown": 120,
+  "l2": { "factors": ["biometric", "passkey", "totp"] },   // ordered; the default; "push" is refused
   "classes": {
     "secrets.read":   { "level": 1, "channels": ["telegram"] },
     "secrets.write":  { "level": 2, "channels": ["telegram"] },
@@ -245,7 +285,7 @@ the request. The seed is enrolled from the TUI (`/oob approvals totp`, a QR code
 
 Deny by default: a class not in `classes`, or not listed for the calling caller, is refused. A caller
 can never raise its own class's level or add a channel. Operator identity, the TOTP seed reference,
-caller keys and the signing key live in the state directory or behind secret references, not in this
+caller keys, device secrets and the signing key live in the state directory or behind secret references, not in this
 file.
 
 ## 7. Authentication and signatures
@@ -283,6 +323,8 @@ oob-approval-v1
 <decided_at>
 ```
 
+An answer that approves at level 2 also carries `factor` (`biometric`, `passkey` or `totp`), and the factor is signed: the string then starts with `oob-approval-v2` and ends with one more line, `<factor>`. An answer without a factor (L1, deny, expiry) is the string above, unchanged. A caller that copied the first version of `verifyAnswer` refuses a v2 answer instead of ignoring the field; update the copy. A caller that needs a particular factor checks `factor` after the signature.
+
 `request_hash` is the SHA-256 of the canonical JSON of the stored request (sorted keys, no spaces).
 A caller verifies, in order: signature with the key named by `kid`; `id` is one it created;
 `request_hash` matches its own copy of the request; `decided_at` lies between its send time and
@@ -292,7 +334,7 @@ overlap the operator sets.
 
 ### 7.3 Key storage
 
-The bridge's Ed25519 signing key and the TOTP seed are stored in the **macOS Keychain**. Neither is ever a file.
+The bridge's Ed25519 signing key, the TOTP seed and the L2 device secrets and public keys (the item `l2-devices`) are stored in the **macOS Keychain**. None is ever a file.
 
 - **Access rule.** The items' access list names only the host executable that runs the plugin (the OpenCode
   binary). It never says "allow all applications". Any other process that asks gets a Keychain prompt on the Mac
@@ -304,7 +346,7 @@ The bridge's Ed25519 signing key and the TOTP seed are stored in the **macOS Key
 - **In memory.** The private key and the seed are read when needed and held only for the signature or the code
   check.
 - **Rotation and loss.** Losing an item means a new key id, re-pairing each caller, and re-enrolling the TOTP
-  seed.
+  seed and each device.
 
 Limits to state plainly:
 
@@ -321,11 +363,16 @@ Limits to state plainly:
 
 | Threat | What happens | Mitigation | Remaining risk |
 | --- | --- | --- | --- |
-| **Stolen phone, unlocked** | Attacker taps Approve | L1 classes are exposed. L2 needs the code | If the authenticator app is on the same phone, L2 gives little. Keep the seed on another device |
+| **Stolen phone, unlocked** | Attacker taps Approve | L1 classes are exposed. L2 needs a second factor | See the next three rows: what protects L2 depends on the factor |
+| **Biometric factor: the same phone** | The phone that taps also holds the Face ID secret | The secret is released only by Face ID, never leaves the device except as an HMAC, and the HMAC is bound to one request and one challenge | A thief who has the unlocked phone and can pass Face ID (or force it) meets both the tap and L2. One device is both factors. For writes you cannot allow that on, list only `["totp"]` and keep the seed on another device |
+| **TOTP factor: a second device** | The code is on a different device than the phone | The seed is on another device, so the phone alone does not pass L2 | Typed in a chat Telegram can read; a code seen over a shoulder can be used once, within its step. If the authenticator app is on the same phone, TOTP gives no more than biometric |
+| **Passkey factor** | A thief needs the platform authenticator's user verification | Challenge bound to the request, origin and relying party id checked, user-verified flag required | A synced passkey follows its cloud account. No attestation check. Not available in an iOS Telegram webview |
+| **Enrolment stolen** | Someone enrols their device | Enrolment starts at the Mac, the code is single use and lasts 5 minutes, and only the operator's init data can send it | The secret crosses the relay once, at enrolment. Someone who watches the code at the Mac within 5 minutes and holds the operator's session passes |
+| **Lost phone with an enrolled device** | The secret stays on the device | Revoke it from the TUI; the HMAC then fails | Until revoked, Face ID is the only gate |
 | **Stolen phone, locked** | None | Device lock, Telegram passcode | Notification previews show the redacted summary |
 | **Compromised Telegram account** (session hijack, SIM swap) | Attacker can tap | User id check does not help: it is the same account. L2 code is not in Telegram | L1 classes are exposed. Keep L1 to reads |
 | **Leaked bot token** | Attacker can read what the bot sends and can send as the bot, but cannot make Telegram report a tap as the operator's user id | Callback data carries a request id and nonce. The user id comes from Telegram, not from our message | They can read redacted summaries, and can deny by spamming. Rotate the token |
-| **Replay** of an answer or a tap | Reuse for another action | Single use per id, request hash in the signature, one-time ntfy tokens, TOTP step used once, ttl | A caller that does not record spent ids is on its own |
+| **Replay** of an answer or a tap | Reuse for another action | Single use per id, request hash in the signature, one-time ntfy tokens, TOTP step used once, a one-time challenge per biometric or passkey proof, ttl | A caller that does not record spent ids is on its own |
 | **Malicious local process calls the socket** | Asks the operator to approve something misleading, or floods | Socket perms, per-caller key, class allowlist per caller, rate limit, cooldown, a visible requester line | A process running as the same user can read caller keys. This boundary is the user account |
 | **Forged answer to a caller** (a process pretends to be the bridge) | Caller believes it was approved | Signature over the request hash, verified with a public key the process cannot use to sign. The private key is in the Keychain, readable only by the host binary | Code inside the host process (another plugin) can sign |
 | **Another process reads the Keychain items** | It could sign answers or compute codes | The access rule admits only the host binary; any other process prompts or is refused | Code inside the host process, and anything the operator allows at a prompt |
@@ -333,12 +380,14 @@ Limits to state plainly:
 | **Misleading request text** | Operator approves the wrong thing | The caller writes the summary, but the message states the caller, session, class and level, and the text is plain, redacted and length-capped | Operators still have to read it |
 | **Telegram reads the chat** | Metadata and summaries are visible to Telegram | Summaries carry identifiers only, never values | Telegram is not end-to-end encrypted for bots |
 
-### What the L2 code protects
+### What L2 protects
 
 It protects against someone who can tap but does not hold the second factor: a session hijack, a
-leaked bot token, a bystander with the unlocked phone if the seed is elsewhere, and an accidental tap.
-It does not protect against someone who has both the chat and the seed, or against a compromise of the
-machine, where code in the host process can read the seed from the Keychain.
+leaked bot token, a bystander with the phone when the factor is not on it (a code seed on another
+device), and an accidental tap. With Face ID the same phone is both the tap and the factor, so a thief
+the face lets in is not stopped.
+It does not protect against someone who has both the chat and the factor, or against a compromise of the
+machine, where code in the host process can read the seed and the device secrets from the Keychain.
 
 ## 9. MCP elicitation
 

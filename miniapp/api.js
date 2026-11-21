@@ -62,6 +62,19 @@ export class Api {
   meta() {
     return this.request("GET", "/v1/meta")
   }
+  approval(id) {
+    return this.request("GET", "/v1/approvals/" + encodeURIComponent(id))
+  }
+  approvalProof(id, body) {
+    return this.request(
+      "POST",
+      "/v1/approvals/" + encodeURIComponent(id) + "/proof",
+      body,
+    )
+  }
+  enrol(body) {
+    return this.request("POST", "/v1/approvals/enroll", body)
+  }
   status() {
     return this.request("GET", "/v1/status")
   }

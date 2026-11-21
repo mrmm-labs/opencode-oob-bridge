@@ -1,5 +1,5 @@
 /** What a connector and the approval engine say to each other. */
-import type { Decision } from "./sign.ts"
+import type { Decision, Factor } from "./sign.ts"
 
 export type ChannelCaps = {
   buttons: boolean
@@ -23,6 +23,8 @@ export type ApprovalView = {
   expiresAt: number
   /** Set on a view that asks for a code only. */
   code?: boolean
+  /** The factors on offer, in order, on the prompt for a second factor. */
+  factors?: Factor[]
 }
 
 export type Settled = {
@@ -34,6 +36,15 @@ export type Settled = {
 }
 
 export type TapResult = { ok: boolean; text: string; next?: "code" }
+
+type Res = { status: number; body: unknown }
+
+/** What the Mini App's routes call: the second factor of a request, and enrolment. */
+export interface AppApprovals {
+  appView(id: string): Promise<Res>
+  appProof(id: string, body: Record<string, unknown>): Promise<Res>
+  enrol(body: Record<string, unknown>): Promise<Res>
+}
 
 /** What a connector calls when the operator taps or types. */
 export interface ApprovalHandler {

@@ -54,6 +54,7 @@ function rig(over = {}) {
     api,
     now: () => 1000,
     start: over.start,
+    device: over.device,
     makeStream: (h) => (
       (hooks = h), { start() {}, stop: () => stops.push("stop") }
     ),
@@ -309,5 +310,231 @@ describe("forms", () => {
     r.ctl.cancelForm(q)
     await r.ctl.submit(q)
     assert.equal(sent.length, 0)
+  })
+})
+
+describe("second factor of an approval", () => {
+  const view = (over = {}) => ({
+    id: "A1",
+    short: "ab12",
+    caller: "tool",
+    action_class: "secrets.write",
+    scope: "item 4f2a",
+    request_hash: "h",
+    challenge: "c1",
+    factors: ["biometric", "passkey", "totp"],
+    ...over,
+  })
+  const device = (support, over = {}) => ({
+    support: async () => support,
+    biometricProof: async () => ({ device: "dD", proof: "p" }),
+    passkeyProof: async () => ({ credential: { id: "x" } }),
+    ...over,
+  })
+
+  it("opens from a start parameter on the first factor this phone can use, in the bridge's order", async () => {
+    const r = rig({
+      start: "a_A1",
+      approval: async () => view(),
+      device: device({ biometric: true, passkey: true }),
+    })
+    await r.ctl.boot()
+    const a = r.ctl.state.approval
+    assert.equal(r.ctl.state.route.name, "approval")
+    assert.deepEqual(a.factors, ["biometric", "passkey", "totp"])
+    assert.equal(a.factors[a.index], "biometric")
+    r.ctl.useAnother()
+    assert.equal(
+      r.ctl.state.approval.factors[r.ctl.state.approval.index],
+      "passkey",
+    )
+    r.ctl.useAnother()
+    r.ctl.useAnother()
+    assert.equal(r.ctl.state.approval.index, 0)
+  })
+
+  it("skips what the phone cannot do and ends at the code", async () => {
+    const r = rig({
+      approval: async () => view(),
+      device: device({ biometric: false, passkey: false }),
+    })
+    await r.ctl.openApproval("A1")
+    assert.deepEqual(r.ctl.state.approval.factors, ["totp"])
+  })
+
+  it("keeps the code out when the bridge does not offer it", async () => {
+    const r = rig({
+      approval: async () => view({ factors: ["biometric"] }),
+      device: device({ biometric: false }),
+    })
+    await r.ctl.openApproval("A1")
+    assert.deepEqual(r.ctl.state.approval.factors, [])
+  })
+
+  it("sends the proof of the factor on screen and shows it done", async () => {
+    const sent = []
+    const r = rig({
+      approval: async () => view(),
+      approvalProof: async (id, b) => (
+        sent.push([id, b]), { ok: true, text: "Approved." }
+      ),
+      device: device({ biometric: true }),
+    })
+    await r.ctl.openApproval("A1")
+    await r.ctl.verify()
+    assert.deepEqual(sent, [
+      [
+        "A1",
+        { factor: "biometric", challenge: "c1", device: "dD", proof: "p" },
+      ],
+    ])
+    assert.equal(r.ctl.state.approval.done, true)
+    assert.equal(r.ctl.state.approval.text, "Approved.")
+  })
+
+  it("falls back to the code: another method, then a typed code", async () => {
+    const sent = []
+    const r = rig({
+      approval: async () => view(),
+      approvalProof: async (id, b) => (
+        sent.push(b), { ok: true, text: "Approved." }
+      ),
+      device: device({ biometric: true }),
+    })
+    await r.ctl.openApproval("A1")
+    r.ctl.useAnother()
+    await r.ctl.verify("12")
+    assert.match(r.ctl.state.approval.text, /6 digits/)
+    assert.equal(sent.length, 0)
+    await r.ctl.verify("123456")
+    assert.deepEqual(sent, [{ factor: "totp", code: "123456" }])
+  })
+
+  it("asks for a new challenge after a wrong proof, and stops when the bridge denied", async () => {
+    let n = 0
+    const r = rig({
+      approval: async () => view({ challenge: "c" + ++n }),
+      approvalProof: async () => ({ ok: false, text: "Wrong: 2 left." }),
+      device: device({ biometric: true }),
+    })
+    await r.ctl.openApproval("A1")
+    await r.ctl.verify()
+    assert.equal(r.ctl.state.approval.view.challenge, "c2")
+    assert.equal(r.ctl.state.approval.text, "Wrong: 2 left.")
+    assert.equal(r.ctl.state.approval.busy, false)
+    const d = rig({
+      approval: async () => view(),
+      approvalProof: async () => ({
+        ok: false,
+        text: "Denied.",
+        state: "denied",
+      }),
+      device: device({ biometric: true }),
+    })
+    await d.ctl.openApproval("A1")
+    await d.ctl.verify()
+    assert.equal(d.ctl.state.approval.done, true)
+    assert.equal(d.ctl.state.approval.ok, false)
+  })
+
+  it("reports a refused Face ID without calling the bridge", async () => {
+    const sent = []
+    const r = rig({
+      approval: async () => view(),
+      approvalProof: async (id, b) => (sent.push(b), { ok: true }),
+      device: device(
+        { biometric: true },
+        {
+          biometricProof: async () => ({
+            error: "Face ID did not release the secret.",
+          }),
+        },
+      ),
+    })
+    await r.ctl.openApproval("A1")
+    await r.ctl.verify()
+    assert.equal(sent.length, 0)
+    assert.match(r.ctl.state.approval.text, /Face ID/)
+  })
+
+  it("says so when the request is not waiting any more", async () => {
+    const r = rig({
+      approval: async () => {
+        throw err(404)
+      },
+      device: device({}),
+    })
+    await r.ctl.openApproval("A1")
+    assert.equal(r.ctl.state.approval.gone, true)
+  })
+})
+
+describe("enrolling this phone", () => {
+  const dev = (over = {}) => ({
+    prepareBiometric: async () => ({}),
+    saveToken: async () => true,
+    createPasskey: async () => ({ credential: { id: "k" } }),
+    ...over,
+  })
+
+  it("asks Telegram for Face ID before spending the code, then keeps the token", async () => {
+    const order = []
+    const r = rig({
+      enrol: async () => (
+        order.push("enrol"), { ok: true, device: "dD", token: "dD.s" }
+      ),
+      device: dev({
+        prepareBiometric: async () => (order.push("prepare"), {}),
+        saveToken: async (t) => (order.push("save:" + t), true),
+      }),
+    })
+    await r.ctl.enroll("biometric", "ABCD-EFGH")
+    assert.deepEqual(order, ["prepare", "enrol", "save:dD.s"])
+    assert.equal(r.ctl.state.enrol.ok, true)
+  })
+
+  it("does not spend the code when Face ID is refused", async () => {
+    const r = rig({
+      enrol: async () => assert.fail("spent"),
+      device: dev({ prepareBiometric: async () => ({ error: "No Face ID." }) }),
+    })
+    await r.ctl.enroll("biometric", "X")
+    assert.equal(r.ctl.state.enrol.text, "No Face ID.")
+  })
+
+  it("names the device to revoke when Telegram did not keep the token", async () => {
+    const r = rig({
+      enrol: async () => ({ ok: true, device: "dD", token: "dD.s" }),
+      device: dev({ saveToken: async () => false }),
+    })
+    await r.ctl.enroll("biometric", "X")
+    assert.match(r.ctl.state.enrol.text, /Revoke dD/)
+    assert.notEqual(r.ctl.state.enrol.ok, true)
+  })
+
+  it("enrols a passkey in two calls", async () => {
+    const calls = []
+    const r = rig({
+      enrol: async (b) => (
+        calls.push(b),
+        b.credential
+          ? { ok: true }
+          : { ok: true, challenge: "ch", rp: {}, user: {} }
+      ),
+      device: dev(),
+    })
+    await r.ctl.enroll("passkey", "X")
+    assert.equal(calls.length, 2)
+    assert.deepEqual(calls[1].credential, { id: "k" })
+    assert.equal(r.ctl.state.enrol.ok, true)
+  })
+
+  it("shows the bridge's refusal of a wrong code", async () => {
+    const r = rig({
+      enrol: async () => ({ ok: false, text: "That code is not right." }),
+      device: dev(),
+    })
+    await r.ctl.enroll("passkey", "X")
+    assert.equal(r.ctl.state.enrol.text, "That code is not right.")
   })
 })

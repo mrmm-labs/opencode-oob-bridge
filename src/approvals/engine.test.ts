@@ -21,6 +21,14 @@ import {
 } from "./sign.ts"
 import { RecordStore } from "./store.ts"
 import { code, step } from "./totp.ts"
+import {
+  biometricProof,
+  emptyEnrolled,
+  passkeyChallenge,
+  type Enrolled,
+} from "./factors.ts"
+import type { Factor } from "./sign.ts"
+import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto"
 
 const SEED = Buffer.from("12345678901234567890")
 const T0 = Date.parse("2026-11-21T12:00:00.000Z")
@@ -34,6 +42,10 @@ class Chan implements ChannelPort {
     replyText: true,
   }
   isUp = true
+  appOpen = false
+  app() {
+    return this.appOpen
+  }
   op: string | undefined = "42"
   sent: ApprovalView[] = []
   asked: ApprovalView[] = []
@@ -88,6 +100,8 @@ function setup(over: Partial<ApprovalsConfig> = {}) {
     mode: "afk" as Mode,
     seed: SEED as Uint8Array | undefined,
     ready: true,
+    enrolled: emptyEnrolled() as Enrolled,
+    rp: undefined as { id: string; origin: string } | undefined,
   }
   const key: SigningKey = newSigningKey()
   const ch = new Chan()
@@ -105,6 +119,8 @@ function setup(over: Partial<ApprovalsConfig> = {}) {
       },
       signingReady: async () => t.ready,
       seed: async () => t.seed,
+      enrolled: async () => t.enrolled,
+      rp: () => t.rp,
       store,
       mask: filterSecrets,
       id: () => `ID${String(++n).padStart(4, "0")}`,
@@ -730,6 +746,9 @@ describe("approvals: restart, events and status", () => {
     assert.deepEqual((await s.a.status()).channels[0].levels, [1, 2])
     s.t.seed = undefined
     assert.deepEqual((await s.a.status()).channels[0].levels, [1])
+    s.t.enrolled.biometric.dAAA = "c2VjcmV0"
+    s.ch.appOpen = true
+    assert.deepEqual((await s.a.status()).channels[0].levels, [1, 2])
     s.ch.op = undefined
     assert.deepEqual((await s.a.status()).channels[0].levels, [])
   })
@@ -739,5 +758,346 @@ describe("approvals: restart, events and status", () => {
     const b = ulid(2_000_000)
     assert.equal(a.length, 26)
     assert.ok(a < b)
+  })
+})
+
+describe("approvals: L2 factors", () => {
+  const SECRET = Buffer.from("device-secret-0123456789abcdef!!").toString(
+    "base64url",
+  )
+  const rp = { id: "app.example.com", origin: "https://app.example.com" }
+
+  const rig = (over: Partial<ApprovalsConfig> = {}) => {
+    const s = setup(over)
+    s.t.enrolled.biometric.dDEV = SECRET
+    s.ch.appOpen = true
+    return s
+  }
+  const waiting = async (s: ReturnType<typeof setup>) => {
+    const { b } = await made(s, { action_class: "secrets.write" })
+    await tap(s, b.id)
+    return b
+  }
+  type View = {
+    factors: Factor[]
+    challenge: string
+    request_hash: string
+    passkey?: { challenge: string; rp: string; credentials: string[] }
+  }
+  const view = async (s: ReturnType<typeof setup>, id: string) =>
+    (await s.a.appView(id)).body as View
+  const proof = (
+    s: ReturnType<typeof setup>,
+    id: string,
+    b: Record<string, unknown>,
+  ) => s.a.appProof(id, b)
+  const bio = (v: View, over: Record<string, unknown> = {}) => ({
+    factor: "biometric",
+    device: "dDEV",
+    challenge: v.challenge,
+    proof: biometricProof(
+      Buffer.from(SECRET, "base64url"),
+      v.request_hash,
+      v.challenge,
+    ),
+    ...over,
+  })
+  const state = (s: ReturnType<typeof setup>, id: string) =>
+    s.a.get("secrets-tool", id).body as Created
+
+  it("offers the configured factors that are ready, in the configured order", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    assert.deepEqual(s.ch.asked[0].factors, ["biometric", "totp"])
+    assert.deepEqual((await view(s, b.id)).factors, ["biometric", "totp"])
+    const t = rig({ l2: { factors: ["totp", "biometric"] } })
+    await waiting(t)
+    assert.deepEqual(t.ch.asked[0].factors, ["totp", "biometric"])
+  })
+
+  it("leaves a factor out until it is ready: no app, no device, no passkey host", async () => {
+    const s = setup()
+    s.t.enrolled.biometric.dDEV = SECRET
+    await waiting(s)
+    assert.deepEqual(s.ch.asked[0].factors, ["totp"])
+    const p = rig()
+    p.t.enrolled.passkeys.cred = "x"
+    const b = await waiting(p)
+    assert.ok(!(await view(p, b.id)).factors.includes("passkey"))
+    p.t.rp = rp
+    assert.deepEqual((await view(p, b.id)).factors, [
+      "biometric",
+      "passkey",
+      "totp",
+    ])
+  })
+
+  it("approves at L2 on a right Face ID proof and signs the factor", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    const v = await view(s, b.id)
+    const r = await proof(s, b.id, bio(v))
+    assert.equal(r.status, 200)
+    const got = state(s, b.id)
+    assert.equal(got.state, "approved")
+    assert.equal(got.answer?.level, 2)
+    assert.equal(got.answer?.factor, "biometric")
+    const v2 = verifyAnswer({
+      answer: got.answer!,
+      keys: [{ kid: s.key.kid, publicKey: s.key.publicKey }],
+      request: got.request,
+      sentAt: T0,
+      now: T0,
+      minLevel: 2,
+    })
+    assert.deepEqual(v2, { ok: true })
+  })
+
+  it("spends the challenge at the first proof, right or wrong", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    const v = await view(s, b.id)
+    assert.equal((await proof(s, b.id, bio(v, { proof: "00" }))).status, 422)
+    assert.equal((await proof(s, b.id, bio(v))).status, 422)
+    const again = await view(s, b.id)
+    assert.equal((await proof(s, b.id, bio(again))).status, 200)
+  })
+
+  it("refuses a proof made for another request, another challenge or a revoked device", async () => {
+    const s = rig()
+    const one = await waiting(s)
+    const v1 = await view(s, one.id)
+    const two = await made(s, {
+      action_class: "secrets.write",
+      idempotency_key: "k2",
+    })
+    await tap(s, two.b.id)
+    const v2 = await view(s, two.b.id)
+    assert.equal(
+      (await proof(s, two.b.id, { ...bio(v2), proof: bio(v1).proof })).status,
+      422,
+    )
+    const v1b = await view(s, one.id)
+    assert.equal(
+      (await proof(s, one.id, bio(v1b, { challenge: v1.challenge }))).status,
+      422,
+    )
+    const v1c = await view(s, one.id)
+    delete s.t.enrolled.biometric.dDEV
+    assert.equal((await proof(s, one.id, bio(v1c))).status, 409)
+    assert.equal(state(s, one.id).state, "awaiting_code")
+  })
+
+  it("denies after three wrong proofs with bad_proof", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    for (let i = 0; i < 3; i++) {
+      const v = await view(s, b.id)
+      await proof(s, b.id, bio(v, { proof: "00" }))
+    }
+    const got = state(s, b.id)
+    assert.equal(got.state, "denied")
+    assert.equal(got.reason_code, "bad_proof")
+  })
+
+  it("takes the code in the app, with the factor recorded, and a step only once", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    const c = code(SEED, step(T0))
+    assert.equal(
+      (await proof(s, b.id, { factor: "totp", code: c })).status,
+      200,
+    )
+    assert.equal(state(s, b.id).answer?.factor, "totp")
+    const n = await made(s, {
+      action_class: "secrets.write",
+      idempotency_key: "k2",
+    })
+    await tap(s, n.b.id)
+    assert.equal(
+      (await proof(s, n.b.id, { factor: "totp", code: c })).status,
+      422,
+    )
+  })
+
+  it("records totp for a code typed in the chat", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    await s.a.typed({ channel: "tg", userId: "42", text: code(SEED, step(T0)) })
+    assert.equal(state(s, b.id).answer?.factor, "totp")
+  })
+
+  it("falls back to the typed code when the app is not available", async () => {
+    const s = setup()
+    const b = await waiting(s)
+    assert.deepEqual(s.ch.asked[0].factors, ["totp"])
+    await s.a.typed({ channel: "tg", userId: "42", text: code(SEED, step(T0)) })
+    assert.equal(state(s, b.id).state, "approved")
+  })
+
+  it("ignores a typed code when totp is not a listed factor", async () => {
+    const s = rig({ l2: { factors: ["biometric"] } })
+    const b = await waiting(s)
+    assert.deepEqual(s.ch.asked[0].factors, ["biometric"])
+    assert.equal(
+      await s.a.typed({
+        channel: "tg",
+        userId: "42",
+        text: code(SEED, step(T0)),
+      }),
+      "ignored",
+    )
+    assert.equal(
+      (await proof(s, b.id, { factor: "totp", code: code(SEED, step(T0)) }))
+        .status,
+      409,
+    )
+    assert.equal(state(s, b.id).state, "awaiting_code")
+  })
+
+  it("fails an L2 request at once when no factor is ready", async () => {
+    const s = setup({ l2: { factors: ["biometric"] } })
+    assert.equal(
+      err((await made(s, { action_class: "secrets.write" })).r),
+      "unavailable",
+    )
+  })
+
+  it("does not serve the app for a request that has not been tapped, or a finished one", async () => {
+    const s = rig()
+    const { b } = await made(s, { action_class: "secrets.write" })
+    assert.equal((await s.a.appView(b.id)).status, 404)
+    await tap(s, b.id)
+    const v = await view(s, b.id)
+    await proof(s, b.id, bio(v))
+    assert.equal((await s.a.appView(b.id)).status, 404)
+    assert.equal((await proof(s, b.id, bio(v))).status, 404)
+  })
+
+  it("withdraws when the operator is at the Mac, and expires on time", async () => {
+    const s = rig()
+    const b = await waiting(s)
+    const v = await view(s, b.id)
+    s.t.mode = "present"
+    assert.equal((await proof(s, b.id, bio(v))).status, 409)
+    assert.equal(state(s, b.id).state, "withdrawn")
+    const t = rig()
+    const x = await waiting(t)
+    const vx = await view(t, x.id)
+    t.t.now += 600_000
+    assert.equal((await proof(t, x.id, bio(vx))).status, 409)
+    assert.equal(state(t, x.id).state, "expired")
+  })
+
+  it("approves on a valid passkey assertion and refuses a wrong origin or unverified user", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    })
+    const spki = (
+      publicKey.export({ type: "spki", format: "der" }) as Buffer
+    ).toString("base64url")
+    const s = rig()
+    s.t.rp = rp
+    s.t.enrolled.passkeys.cred1 = spki
+    const b = await waiting(s)
+    const assertion = async (
+      o: { origin?: string; flags?: number; rpId?: string } = {},
+    ) => {
+      const v = await view(s, b.id)
+      const challenge = v.passkey!.challenge
+      assert.equal(challenge, passkeyChallenge(v.request_hash, v.challenge))
+      const data = Buffer.concat([
+        createHash("sha256")
+          .update(o.rpId ?? rp.id)
+          .digest(),
+        Buffer.from([o.flags ?? 0x05, 0, 0, 0, 1]),
+      ])
+      const client = Buffer.from(
+        JSON.stringify({
+          type: "webauthn.get",
+          challenge,
+          origin: o.origin ?? rp.origin,
+        }),
+      )
+      const sig = edSign(
+        "sha256",
+        Buffer.concat([data, createHash("sha256").update(client).digest()]),
+        privateKey,
+      )
+      return {
+        factor: "passkey",
+        challenge: v.challenge,
+        credential: {
+          id: "cred1",
+          authenticatorData: data.toString("base64url"),
+          clientDataJSON: client.toString("base64url"),
+          signature: sig.toString("base64url"),
+        },
+      }
+    }
+    assert.equal(
+      (
+        await proof(
+          s,
+          b.id,
+          await assertion({ origin: "https://evil.example" }),
+        )
+      ).status,
+      422,
+    )
+    assert.equal(
+      (await proof(s, b.id, await assertion({ flags: 0x01 }))).status,
+      422,
+    )
+    assert.equal(
+      (await proof(s, b.id, await assertion({ rpId: "other.example.com" })))
+        .status,
+      422,
+    )
+    assert.equal(state(s, b.id).state, "denied")
+    const t = rig()
+    t.t.rp = rp
+    t.t.enrolled.passkeys.cred1 = spki
+    const x = await waiting(t)
+    const ok = await (async () => {
+      const v = await view(t, x.id)
+      const data = Buffer.concat([
+        createHash("sha256").update(rp.id).digest(),
+        Buffer.from([0x05, 0, 0, 0, 1]),
+      ])
+      const client = Buffer.from(
+        JSON.stringify({
+          type: "webauthn.get",
+          challenge: v.passkey!.challenge,
+          origin: rp.origin,
+        }),
+      )
+      const sig = edSign(
+        "sha256",
+        Buffer.concat([data, createHash("sha256").update(client).digest()]),
+        privateKey,
+      )
+      return proof(t, x.id, {
+        factor: "passkey",
+        challenge: v.challenge,
+        credential: {
+          id: "cred1",
+          authenticatorData: data.toString("base64url"),
+          clientDataJSON: client.toString("base64url"),
+          signature: sig.toString("base64url"),
+        },
+      })
+    })()
+    assert.equal(ok.status, 200)
+    assert.equal(state(t, x.id).answer?.factor, "passkey")
+  })
+
+  it("never counts a tap on a channel that proves nobody as L2", async () => {
+    const s = rig()
+    s.ch.caps = { buttons: true, approver: "none", replyText: true }
+    assert.equal(
+      err((await made(s, { action_class: "secrets.write" })).r),
+      "unavailable",
+    )
   })
 })

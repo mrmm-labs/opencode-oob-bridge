@@ -140,6 +140,47 @@ describe("Telegram approvals: messages", () => {
   })
 })
 
+describe("Telegram approvals: second factor prompt", () => {
+  const APP = {
+    url: "https://app.example.com/app/",
+    link: "https://t.me/examplebot/app",
+  }
+
+  it("opens the app from the prompt in a private chat and still takes a typed code", async () => {
+    const r = await rig({ chatId: "42" })
+    r.channel.launch(APP)
+    assert.equal(r.channel.appOpen(), true)
+    await r.channel.approvalCode(view({ factors: ["biometric", "totp"] }))
+    const m = r.tg.of("sendMessage")[0].body
+    assert.match(m.text, /Verify #zzzz.*open the app, or type the 6-digit code/)
+    assert.equal(m.reply_markup.force_reply, undefined)
+    const b = m.reply_markup.inline_keyboard.flat()[0]
+    assert.equal(b.web_app.url, APP.url + "?s=a_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+    await r.done()
+  })
+
+  it("uses the direct link in a group, and says nothing about a code when totp is not listed", async () => {
+    const r = await rig()
+    r.channel.launch(APP)
+    await r.channel.approvalCode(view({ factors: ["biometric"] }))
+    const m = r.tg.of("sendMessage")[0].body
+    assert.doesNotMatch(m.text, /code/)
+    const b = m.reply_markup.inline_keyboard.flat()[0]
+    assert.equal(b.url, APP.link + "?startapp=a_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+    await r.done()
+  })
+
+  it("asks for the code only when the app is not on offer or not launched", async () => {
+    const r = await rig({ chatId: "42" })
+    assert.equal(r.channel.appOpen(), false)
+    await r.channel.approvalCode(view({ factors: ["totp"] }))
+    const m = r.tg.of("sendMessage")[0].body
+    assert.match(m.text, /Type the 6-digit code for #zzzz/)
+    assert.equal(m.reply_markup.force_reply, true)
+    await r.done()
+  })
+})
+
 describe("Telegram approvals: who answers", () => {
   it("passes the user id of the tapper, not the chat id, to the handler", async () => {
     const r = await rig()
