@@ -6,7 +6,7 @@ Telegram Mini Apps are web pages opened inside Telegram. They receive **init dat
 
 ### D1. The bridge serves the app
 
-The static files ship in the npm package and the bridge serves them under `/app/`. One origin, one version: the app cannot be newer than the API it calls. The edge is then a pure reverse proxy.
+The static files ship in the npm package and the bridge serves them under `/app/`. One origin, one version: the app cannot be newer than the API it calls. The relay is then a pure relay: the assets travel over the link like the API, and when the link is down the relay answers 503 with a static page that says the Mac is offline.
 
 ### D2. No third-party script
 
@@ -14,11 +14,11 @@ The app reads its launch parameters (init data, theme) from the URL hash and loa
 
 ### D3. Authentication happens at the bridge
 
-The bridge holds the bot token, so it verifies init data itself: the secret key is the HMAC-SHA256 of the token with the key `WebAppData`, and the hash is the HMAC of the sorted `key=value` lines. It compares in constant time, checks the user id against the paired operator, and rejects init data older than `miniApp.maxAgeSeconds` (default 3600). The bot token never leaves the Mac.
+The bridge holds the bot token, so it verifies init data itself: the secret key is the HMAC-SHA256 of the token with the key `WebAppData`, and the hash is the HMAC of the sorted `key=value` lines. It compares in constant time, checks the user id against the paired operator, and rejects init data older than `miniApp.maxAgeSeconds` (default 3600). The bot token never leaves the Mac, so the relay cannot verify the hash. It pre-filters instead (init data present, the operator's user id, a fresh `auth_date`) to drop junk before it reaches the link, and the bridge decides. No secret is placed in the Mini App script, because a key shipped to a browser is public; init data is the only credential the page can carry.
 
 ### D4. Two schemes, two doors
 
-Direct tailnet clients may use the bearer token or init data. A request whose source is a configured edge proxy (`core.edgeProxies`) may use **only** init data, so a leaked bearer token is useless through the public hostname. Behind the proxy the real client address comes from `X-Forwarded-For`, trusted only when the source is an edge proxy.
+Direct tailnet clients may use the bearer token or init data. A request that arrives through the relay link, or whose source is a configured edge proxy (`core.edgeProxies`, the fallback mode), may use **only** init data, so a leaked bearer token is useless through the public hostname. The real client address is the `client` field of a link frame, or `X-Forwarded-For` in the fallback mode, trusted only from those sources.
 
 ### D5. The edge contract is checkable
 
@@ -30,5 +30,5 @@ Exactly the core actions, with the same refusals. Destructive actions (stop, und
 
 ## Risks
 
-- A public hostname leads to a laptop. Mitigation: D3 and D4, path allow-list, rate limits at the edge and at the bridge, the private path only from the proxy.
+- A public hostname leads to a laptop. Mitigation: D3 and D4, a path allow-list at the relay and the bridge, rate limits at both, and a transport the bridge dials out on (`relay-link`), so nothing listens for the internet.
 - Init data replay within its lifetime. Mitigation: a one-hour default, short-lived only for read screens, and a confirmation for destructive actions.

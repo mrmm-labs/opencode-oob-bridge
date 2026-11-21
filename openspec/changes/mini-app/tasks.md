@@ -1,7 +1,7 @@
 ## 1. Bridge
 
 - [ ] 1.1 Init data verification: HMAC, constant-time compare, user id, age. Verify: tests with fixtures for a valid, tampered, stale and wrong-user string.
-- [ ] 1.2 `core.edgeProxies`: init-data-only for those sources, trusted `X-Forwarded-For`, failed-auth rate limit (10 a minute, 5-minute block). Verify: tests for a bearer token from a proxy source, and for the rate limit.
+- [ ] 1.2 Init-data-only for the relay link (from `relay-link`) and for `core.edgeProxies` (fallback), trusted `X-Forwarded-For`, failed-auth rate limit (10 a minute, 5-minute block). Verify: tests for a bearer token from a proxy source, and for the rate limit.
 - [ ] 1.3 Serve `/app/` with the content security policy and `GET /healthz`. Verify: tests for headers and for the route list.
 
 ## 2. App
@@ -18,4 +18,4 @@
 
 ## 4. Edge
 
-- [ ] 4.1 `pnpm run edge:check <url>`. Verify: it passes against a local proxy in a test and against the real hostname once the operator has set up the hosting.
+- [ ] 4.1 `pnpm run edge:check <url>`, including: a bearer token is refused and `/admin` is 404. Verify: it passes against a local proxy in a test and against the real hostname once the operator has set up the hosting.
