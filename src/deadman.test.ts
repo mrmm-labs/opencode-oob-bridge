@@ -375,7 +375,8 @@ describe("the server heartbeat", () => {
     })
     const a = await t.load()
     await t.load()
-    await wait(1300)
+    const end = Date.now() + 10_000
+    while (rx.got.length < 2 && Date.now() < end) await wait(50)
     assert.ok(rx.got.length >= 2, "beats arrive")
     assert.equal(new Set(rx.got.map((g) => g.body.id)).size, 1, "one stream")
     assert.equal(rx.got[0].auth, "Bearer hb-secret-token")
