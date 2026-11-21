@@ -300,6 +300,8 @@ export interface Connector {
   menu?(commands: MenuCommand[]): void
   /** The user id stored at pairing: the only person whose tap or code answers an approval. Undefined until known. */
   operator?(): string | undefined
+  /** Tells the connector where the Mini App is, so it can offer it. Called once at start. */
+  launch?(app: { url: string; link?: string }): void
   /** Where the taps and typed codes of approvals go. Only with `capabilities.approvals`. */
   onApproval?(h: ApprovalHandler): void
   /** Posts an approval request with Approve and Deny; the reference of the message. Never throws. */

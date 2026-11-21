@@ -83,15 +83,19 @@ export type Detail = Summary & {
     additions: number
     deletions: number
   }>
+  /** False when no window can take a form reply: answer at the Mac. */
+  canAnswer: boolean
   questions: Array<{
     id: string
     title: string
     askedAt: number
     items: Array<{
       key: string
+      header: string
       text: string
       options: string[]
       multiple: boolean
+      custom: boolean
     }>
   }>
   permissions: Array<{ id: string; title: string; askedAt: number }>
@@ -243,6 +247,7 @@ export class Views {
       tail,
       todos,
       diff,
+      canAnswer: this.o.host.canReplyForm?.() ?? true,
       questions: prompts
         .filter((p) => p.kind === "question" && p.state === "pending")
         .map((p) => ({
@@ -251,9 +256,11 @@ export class Views {
           askedAt: p.askedAt,
           items: (p.questions ?? []).map((q) => ({
             key: q.key,
+            header: this.text(q.header),
             text: this.text(q.text),
             options: q.options.map((o) => this.text(o)),
             multiple: q.multiple,
+            custom: q.custom,
           })),
         })),
       permissions: prompts

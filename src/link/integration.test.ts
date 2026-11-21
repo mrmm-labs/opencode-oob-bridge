@@ -23,7 +23,7 @@ function bridge(url: string, secret = SECRET) {
     } as never,
     actions: { available: () => [] } as never,
     control: {} as never,
-    cfg: {} as never,
+    cfg: { permissions: { remote: "once" } } as never,
     tokens,
     ring: {} as never,
     version: "9.9.9",

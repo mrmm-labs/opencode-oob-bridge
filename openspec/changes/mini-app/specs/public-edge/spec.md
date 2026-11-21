@@ -21,12 +21,7 @@ The API SHALL accept `Authorization: tma <init data>` as a credential. The bridg
 
 ### Requirement: The public path accepts init data only
 
-A request that arrives through the relay link, or whose source is a configured edge proxy, SHALL be accepted only with init data. A bearer token from such a source SHALL be refused. A request from another private address MAY use either scheme. No secret SHALL be embedded in the Mini App script.
-
-#### Scenario: Bearer through the proxy
-
-- **WHEN** a request from an edge proxy address carries the bearer token
-- **THEN** it is refused with 401
+A request that arrives through the relay link SHALL be accepted only with init data, and a bearer token on it SHALL be refused. A direct request on the tailnet SHALL be accepted only with the bearer token. No secret SHALL be embedded in the Mini App script.
 
 #### Scenario: Bearer through the link
 
@@ -35,11 +30,11 @@ A request that arrives through the relay link, or whose source is a configured e
 
 ### Requirement: The client address is trusted only from the edge
 
-The bridge SHALL take the client address from the `client` field of a relay-link frame, or from `X-Forwarded-For` only when the connection comes from a configured edge proxy, and SHALL ignore the header otherwise. After 10 failed authentications a minute from one client address it SHALL answer 429 for five minutes.
+The bridge SHALL take the client address from the `client` field of a relay-link frame and SHALL NOT read any header for it. After 10 failed authentications a minute from one client address it SHALL answer 429 for five minutes.
 
 #### Scenario: Spoofed header
 
-- **WHEN** a direct client sends `X-Forwarded-For`
+- **WHEN** a request on the link carries `X-Forwarded-For`
 - **THEN** the header is ignored
 
 #### Scenario: Guessing

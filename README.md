@@ -126,6 +126,9 @@ nothing and opens no connection.**
 | `quiet.breakthrough`      | `[]`                                                 | Kinds that still make a sound at night: `failed`, `permission`, `question`.                                                                                                   |
 | `digest`                  | off                                                  | `true`, or `{ at, empty }`: one summary a day at `at` (default the end of quiet hours); `empty: true` also sends it when nothing happened.                                    |
 | `core.port`               | `7842`                                               | The core API port.                                                                                                                                                            |
+| `miniApp.url`             | off                                                  | The public `https` address of the [Mini App](#telegram-mini-app). Until it is set the bridge offers no Open button and no menu button.                                        |
+| `miniApp.link`            | none                                                 | The `https://t.me/<bot>/<app>` direct link of the registered app: adds the Open button in group topics.                                                                       |
+| `miniApp.maxAgeSeconds`   | `3600`                                               | How old Telegram init data may be, 60 to 86400.                                                                                                                               |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -716,6 +719,9 @@ network path, not a login.
 | `POST /v1/sessions`                     | Start a session in a `chat.projects` folder                                                  |
 | `POST /v1/sessions/{id}/actions/{name}` | `answer`, `resume`, `stop`, `prompt`, `rename`, `compact`, `model`, `agent`, `watch`, `chat` |
 | `GET /v1/events`                        | Server-sent events, with `Last-Event-ID` resume                                              |
+| `GET /v1/options`                       | Models with variants, agents and the names of `chat.projects` (never a folder)               |
+| `GET /v1/digest`                        | The digest text now, without marking its period as covered                                   |
+| `POST /v1/overnight/end`                | End the overnight plan                                                                       |
 
 A field the bridge cannot fill is returned as `{"unavailable": "<why>"}`, never as an empty value;
 a field that is filled says which `source` it came from. Text passes the secret filter and
@@ -723,7 +729,22 @@ a field that is filled says which `source` it came from. Text passes the secret 
 events carry a type and a session id only: read the session for the rest. Replies to permission
 requests are refused unless `permissions.remote` is set; answer them in the OpenCode TUI.
 
+`/app/` and `GET /healthz` answer without credentials: the first is the static [Mini App](#telegram-mini-app), the second says `ok`. `answer` also takes `answers`, one value per field key, which is applied only when every field is answered with an option (or text, where the field allows typing) and never reads numbers or separators out of the values. `/v1/status` includes the overnight plan as `night`.
+
 Within `/v1` changes only add fields, routes and event types, so ignore what you do not know.
+
+## Telegram Mini App
+
+A page that opens inside Telegram, for what a chat does badly: browsing sessions, reading a conversation tail, reviewing a diff, answering a form with several fields. It is a client of the [core API](#core-api) and is served by the bridge itself under `/app/`, so the page can never be newer than the API it calls.
+
+- **Screens:** the sessions with their state (working, idle, waiting on a question, suspended); a session with its conversation, todos, changed files and patch, questions and permissions; stop, undo, resume and compact (each asks first); model, agent and variant pickers; a message box with queue, steer and continue; a new session in a configured project; the overnight plan (end only) and the digest; version and channels.
+- **Who:** only the Telegram user stored at pairing. The page sends the init data Telegram gives it as `Authorization: tma <init data>`. The bridge checks the HMAC with the bot token, compares in constant time, and accepts only that user id and only init data younger than `miniApp.maxAgeSeconds`. No secret is in the page: a key in a script is readable by anyone.
+- **Through the relay link:** a request that arrives on the relay link is accepted with init data only: a bearer token sent that way is refused, and a direct client on the tailnet uses the bearer token only. After 10 failed authentications a minute from one client address it gets `429` for five minutes.
+- **Permissions:** the buttons follow `permissions.remote`; with it off the app shows the permission without buttons.
+- **Offline:** the page follows the event stream and shows a banner with the time of the last update when it drops. Every action is disabled until it is back.
+- **No third party:** no script, style or font from another origin; the policy allows framing by Telegram's web clients only.
+
+Setup, with a public hostname that serves `/app/` and `/v1/` to the bridge (a relay, or any reverse proxy), is in [`miniapp/README.md`](miniapp/README.md).
 
 ## Dead-man's switch
 

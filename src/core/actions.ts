@@ -35,7 +35,7 @@ export type ActionDeps = {
   resume(root: string): Promise<Result>
   answer(
     promptId: string,
-    a: { choice?: number; text?: string },
+    a: { choice?: number; text?: string; answers?: unknown },
   ): Promise<Result>
   /** The remote-permissions policy: refused until a policy allows it. */
   permissions?: () => boolean
@@ -115,6 +115,24 @@ export class Actions {
         .map((ref) => all.find((x) => x.ref === ref))
         .filter((x): x is ModelOption => x !== undefined)
     return all.slice(0, MAX_MODELS)
+  }
+
+  /** What a client may pick from: models, agents, and the projects it may start a session in (names only). */
+  async options(): Promise<{
+    models: ModelOption[]
+    agents: string[]
+    projects: Array<{ name: string; agent?: string; model?: string }>
+  }> {
+    const [models, agents] = await Promise.all([
+      this.models(),
+      this.d.host.agents().catch(() => [] as string[]),
+    ])
+    const projects = Object.entries(this.d.cfg.chat.projects)
+      .filter(
+        ([, p]) => !this.d.denial({ agent: p.agent, directory: p.directory }),
+      )
+      .map(([name, p]) => ({ name, agent: p.agent, model: p.model }))
+    return { models, agents, projects }
   }
 
   async stop(root: string): Promise<boolean> {
@@ -292,9 +310,11 @@ export class Actions {
         case "answer": {
           const id = str(body.prompt)
           if (!id) return no("answer needs a prompt id")
+          // choice, text or answers: the app sends answers, one value per field
           return await this.d.answer(id, {
             choice: typeof body.choice === "number" ? body.choice : undefined,
             text: str(body.text),
+            answers: body.answers,
           })
         }
         case "permission": {

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { parseReply, resolveAnswer, type Question } from "./inbound.ts"
+import {
+  checkAnswers,
+  parseReply,
+  resolveAnswer,
+  type Question,
+} from "./inbound.ts"
 
 const q = (over: Partial<Question> = {}): Question => ({
   key: "q0",
@@ -94,5 +99,44 @@ describe("resolveAnswer", () => {
     })
     assert.equal(resolveAnswer(two, { id: "x", text: "1" }), undefined)
     assert.equal(resolveAnswer(two, { id: "x", choice: 1 }), undefined)
+  })
+})
+
+describe("checkAnswers", () => {
+  const two = [
+    q({ key: "a", options: ["Yes", "No"], custom: false }),
+    q({ key: "b", options: ["x, y", "z"], multiple: true, custom: true }),
+  ]
+
+  it("takes one value per field, options with commas whole", () => {
+    assert.deepEqual(checkAnswers(two, { a: "No", b: ["x, y", "free"] }), {
+      a: "No",
+      b: ["x, y", "free"],
+    })
+  })
+
+  it("does not read a typed number as an option number", () => {
+    assert.deepEqual(checkAnswers([q()], { q0: "3" }), { q0: "3" })
+  })
+
+  it("refuses a missing field, an extra key, a wrong shape or an unknown value", () => {
+    for (const given of [
+      { a: "Yes" },
+      { a: "Yes", b: ["z"], c: "x" },
+      { a: ["Yes"], b: ["z"] },
+      { a: "Yes", b: "z" },
+      { a: "Maybe", b: ["z"] },
+      { a: "Yes", b: [] },
+      { a: "Yes", b: ["  "] },
+      { a: 1, b: ["z"] },
+      "Yes",
+      null,
+    ])
+      assert.equal(checkAnswers(two, given), undefined, JSON.stringify(given))
+    assert.equal(checkAnswers([], {}), undefined)
+  })
+
+  it("refuses a very long typed answer", () => {
+    assert.equal(checkAnswers([q()], { q0: "x".repeat(2001) }), undefined)
   })
 })

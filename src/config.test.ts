@@ -472,6 +472,43 @@ describe("telegram reactions and media settings", () => {
   })
 })
 
+describe("miniApp", () => {
+  it("is off with a one-hour limit by default", () => {
+    const c = parseConfig(base) as Config
+    assert.deepEqual(c.miniApp, { maxAgeSeconds: 3600 })
+  })
+
+  it("reads the url, the direct link and the limit", () => {
+    const c = parseConfig({
+      ...base,
+      miniApp: {
+        url: "https://app.example.com/app/",
+        link: "https://t.me/examplebot/app/",
+        maxAgeSeconds: 600,
+      },
+    }) as Config
+    assert.deepEqual(c.miniApp, {
+      url: "https://app.example.com/app/",
+      link: "https://t.me/examplebot/app",
+      maxAgeSeconds: 600,
+    })
+  })
+
+  it("refuses a plain http url, a link outside t.me and a bad limit", () => {
+    for (const miniApp of [
+      "x",
+      { url: "http://app.example.com/app/" },
+      { link: "https://example.com/bot/app" },
+      { maxAgeSeconds: 5 },
+      { maxAgeSeconds: "60" },
+    ])
+      assert.ok(
+        "error" in (parseConfig({ ...base, miniApp }) as object),
+        JSON.stringify(miniApp),
+      )
+  })
+})
+
 describe("core", () => {
   it("is off unless bind is set", () => {
     const c = parseConfig(base) as Config
