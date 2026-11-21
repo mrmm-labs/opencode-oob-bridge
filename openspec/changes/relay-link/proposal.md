@@ -21,7 +21,7 @@ The Mini App is reached from a phone through a public HTTPS hostname, and the br
 
 ## Out of scope
 
-The relay itself (a homelab service), the Mini App (change `mini-app`), more than one Mac, a link to anything but the relay.
+The relay itself (a service on the operator's own infrastructure), the Mini App (change `mini-app`), more than one Mac, a link to anything but the relay.
 
 ## Impact
 
