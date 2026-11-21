@@ -52,6 +52,7 @@ import {
   stats,
   type Stats,
 } from "./turncard.ts"
+import { CAPTION_MAX, prepareFile, type FileOutcome } from "./sendfile.ts"
 import { traces } from "./trace.ts"
 import { clock, formatDuration, sleep, truncate } from "./util.ts"
 import type { Gate } from "./approvals/service.ts"
@@ -1662,6 +1663,62 @@ export class Bridge {
     if (this.cfg.chat.mirror === "remote-only" && !remote) return
     r ??= feed?.r ?? (await this.routed(sessionID))
     if (r) await this.postReply(r, text)
+  }
+
+  /**
+   * The `oob_send_file` tool: sends a local file to the Telegram topic the calling session's root already has.
+   * The caption is redacted like a chat reply. Contents and file names are never logged.
+   */
+  async sendFile(
+    sessionID: string,
+    input: { path?: unknown; caption?: unknown; as?: unknown },
+  ): Promise<FileOutcome> {
+    const r = await this.routed(sessionID)
+    if (!r) return { ok: false, error: "this session is not routed to a chat" }
+    const ch = r.to.find((c) => c.file)
+    if (!ch)
+      return { ok: false, error: "no chat channel of this session takes files" }
+    const prep = await prepareFile({
+      path: input.path,
+      as: input.as,
+      cwd: r.root?.directory,
+    })
+    if (!prep.ok) return prep
+    const caption =
+      typeof input.caption === "string"
+        ? redact(input.caption, this.cfg.chat.redact).slice(0, CAPTION_MAX)
+        : ""
+    const file = prep.file
+    const res = await traces.out(
+      "file",
+      { session: r.rootID, agent: r.facts?.agent },
+      async () => {
+        const out = await this.safely(ch, () =>
+          ch.file!(r.session, file, caption),
+        )
+        const id = traces.current()?.id
+        if (out?.ok)
+          log("file_sent", {
+            size: file.size,
+            kind: file.kind,
+            session: r.rootID,
+            trace_id: id,
+          })
+        else
+          log("file_failed", {
+            size: file.size,
+            kind: file.kind,
+            session: r.rootID,
+            trace_id: id,
+            reason: out?.error,
+          })
+        return out
+      },
+      (v) => (v?.ok ? "sent" : "failed"),
+    )
+    return res?.ok
+      ? { ok: true, message: `sent ${file.kind} to the Telegram topic` }
+      : { ok: false, error: res?.error ?? "could not send the file" }
   }
 
   private async postReply(r: Routed, text: string) {

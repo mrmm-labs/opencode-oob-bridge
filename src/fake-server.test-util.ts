@@ -46,6 +46,15 @@ export function fakeServer(
   const calls: Array<[string, unknown]> = []
   let registrations = 0
   let disposed = 0
+  /** Tools the plugin offers agents, as the host's tool editor would collect them. */
+  const agentTools: Array<{
+    name: string
+    execute(
+      input: Record<string, unknown>,
+      c: { sessionID: string },
+    ): Promise<{ content?: string; metadata?: Record<string, unknown> }>
+  }> = []
+  let toolsDisposed = 0
   const opts = { resume: true }
   /** Sessions the host never answers `get` for. */
   const hang = new Set<string>()
@@ -76,6 +85,12 @@ export function fakeServer(
       },
       compact: async (i: unknown) => void calls.push(["compact", i]),
       update: async (i: unknown) => void calls.push(["update", i]),
+    },
+    tool: {
+      transform: async (fn: (e: { add(t: never): void }) => void) => {
+        fn({ add: (t) => void agentTools.push(t as never) })
+        return { dispose: async () => void toolsDisposed++ }
+      },
     },
     agent: { list: async () => ({ data: [] }) },
     model: { list: async () => ({ data: [] }) },
@@ -140,6 +155,8 @@ export function fakeServer(
       tuiEvents.set(type, fn)
       return () => void tuiEvents.delete(type)
     },
+    agentTools,
+    toolsDisposed: () => toolsDisposed,
     registrations: () => registrations,
     disposed: () => disposed,
   }

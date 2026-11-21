@@ -202,6 +202,23 @@ describe("the server half", () => {
     })
   })
 
+  it("offers the oob_send_file tool in each instance, and says why it cannot send", async () => {
+    const t = await setup()
+    const { server, stop } = await t.load()
+    assert.deepEqual(
+      server.agentTools.map((x) => x.name),
+      ["oob_send_file"],
+    )
+    const out = await server.agentTools[0].execute(
+      { path: "/nope" },
+      { sessionID: "root" },
+    )
+    assert.match(out.content ?? "", /^Error: /)
+    assert.equal(out.metadata?.error, true)
+    await stop!()
+    assert.equal(server.toolsDisposed(), 1)
+  })
+
   it("answers with JSON values only: a connector status holding undefined is not refused by the host", async () => {
     const tg = await fakeTelegram()
     const dir = await mkdtemp(join(tmpdir(), "oobb-json-"))

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
@@ -1660,6 +1660,140 @@ describe("answers name where they were given", () => {
       edits(r).find((b) => /Answered at the Mac/.test(b.text)),
     )
     assert.match(e.text, /Answered at the Mac<\/b>: Deny/)
+    await r.done()
+  })
+})
+
+describe("oob_send_file", () => {
+  const sample = async (name: string, data: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "oobb-send-"))
+    const path = join(dir, name)
+    await writeFile(path, data)
+    return path
+  }
+
+  it("sends a document to the topic of the session's root, with a redacted caption, and logs size and trace id without contents", async () => {
+    const logFile = join(
+      await mkdtemp(join(tmpdir(), "oobb-log-")),
+      "bridge.log",
+    )
+    const prev = process.env.OPENCODE_OOB_BRIDGE_LOG
+    process.env.OPENCODE_OOB_BRIDGE_LOG = logFile
+    try {
+      const r = await chatRig()
+      await chatOn(r)
+      const path = await sample("report.md", "FILE-BODY-MARKER")
+      const out = await r.bridge.sendFile("root", {
+        path,
+        caption: "see " + SECRET,
+      })
+      assert.deepEqual(out, {
+        ok: true,
+        message: "sent document to the Telegram topic",
+      })
+      const call = r.tg.of("sendDocument")[0]
+      assert.equal(call.body.fields.message_thread_id, "9001")
+      assert.equal(call.body.fields.document, "FILE-BODY-MARKER")
+      assert.equal(call.body.fields.caption, "see [redacted]")
+      await flushLog()
+      const text = await readFile(logFile, "utf8")
+      const line = text
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .find((l) => l.event === "file_sent")
+      assert.equal(line.size, 16)
+      assert.match(line.trace_id, /^[0-9a-f]{32}$/)
+      assert.ok(!text.includes("FILE-BODY-MARKER"), "no contents in the log")
+      assert.ok(!text.includes("report.md"), "no file name in the log")
+      assert.ok(!text.includes(SECRET))
+      await r.done()
+    } finally {
+      await flushLog()
+      if (prev === undefined) delete process.env.OPENCODE_OOB_BRIDGE_LOG
+      else process.env.OPENCODE_OOB_BRIDGE_LOG = prev
+    }
+  })
+
+  it("sends a small image as a photo under auto, and a document when asked", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    const path = await sample("shot.png", "PNGDATA")
+    assert.equal((await r.bridge.sendFile("root", { path })).ok, true)
+    assert.equal(r.tg.of("sendPhoto")[0].body.fields.message_thread_id, "9001")
+    assert.equal(r.tg.of("sendDocument").length, 0)
+    assert.equal(
+      (await r.bridge.sendFile("root", { path, as: "document" })).ok,
+      true,
+    )
+    assert.equal(r.tg.of("sendDocument").length, 1)
+    await r.done()
+  })
+
+  it("applies the chat redaction mode to the caption", async () => {
+    const r = await chatRig({ chat: { redact: "head:6" } })
+    await chatOn(r)
+    const path = await sample("a.txt", "x")
+    await r.bridge.sendFile("root", { path, caption: "0123456789" })
+    assert.equal(r.tg.of("sendDocument")[0].body.fields.caption, "012345…")
+    await r.done()
+  })
+
+  it("fails clearly, and never uses General, when the session has no topic", async () => {
+    const r = await chatRig()
+    r.router.set("root", true)
+    const path = await sample("a.txt", "x")
+    const out = await r.bridge.sendFile("root", { path })
+    assert.ok(
+      !out.ok && /no Telegram topic/.test(out.error),
+      JSON.stringify(out),
+    )
+    assert.equal(r.tg.of("sendDocument").length, 0)
+    assert.equal(r.tg.of("sendPhoto").length, 0)
+    assert.equal(
+      r.tg.of("createForumTopic").length,
+      0,
+      "no topic is made for it",
+    )
+    await r.done()
+  })
+
+  it("refuses a bad path before any upload", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    const dir = await mkdtemp(join(tmpdir(), "oobb-send-"))
+    for (const path of [dir, join(dir, "missing")]) {
+      const out = await r.bridge.sendFile("root", { path })
+      assert.equal(out.ok, false)
+    }
+    assert.equal(r.tg.of("sendDocument").length, 0)
+    await r.done()
+  })
+
+  it("retries once on a 5xx and succeeds", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    const path = await sample("a.txt", "x")
+    r.tg.fail("sendDocument", 502)
+    const out = await r.bridge.sendFile("root", { path })
+    assert.equal(out.ok, true)
+    assert.equal(r.tg.of("sendDocument").length, 2)
+    await r.done()
+  })
+
+  it("returns a short error after a second 5xx, and does not retry a 4xx", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    const path = await sample("a.txt", "x")
+    r.tg.fail("sendDocument", 500)
+    r.tg.fail("sendDocument", 500)
+    const out = await r.bridge.sendFile("root", { path })
+    assert.ok(!out.ok && /HTTP 500/.test(out.error) && out.error.length <= 200)
+    assert.equal(r.tg.of("sendDocument").length, 2)
+    r.tg.fail("sendDocument", 400)
+    const bad = await r.bridge.sendFile("root", { path })
+    assert.equal(bad.ok, false)
+    assert.equal(r.tg.of("sendDocument").length, 3)
     await r.done()
   })
 })
