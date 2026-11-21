@@ -114,7 +114,7 @@ An answer SHALL be signed with Ed25519 over a string that holds the answer versi
 
 ### Requirement: Keys live in the Keychain and nowhere else
 
-The signing key and the TOTP seed SHALL be stored in the macOS Keychain through the Security framework from the host process, with an access rule that names the host executable only. They SHALL NOT be written to a file or passed to the `security` command. When the Keychain cannot be used the service SHALL report `unavailable` and SHALL NOT fall back to another store. Keys and the seed SHALL be created, replaced or deleted only by a command typed in the TUI at the Mac, never by the socket or a chat.
+The signing key and the TOTP seed SHALL be stored in the macOS Keychain through the Security framework from the host process, with an access rule that names the host executable only. They SHALL NOT be written to a file or passed to the `security` command, and SHALL NOT fall back to another store. They SHALL be created, replaced or deleted only by a command typed in the TUI at the Mac.
 
 #### Scenario: Server read without a prompt
 
