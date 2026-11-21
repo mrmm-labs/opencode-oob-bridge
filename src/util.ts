@@ -15,6 +15,27 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
     signal?.addEventListener("abort", done, { once: true })
   })
 
+/** A host call did not answer in time. */
+export class TimedOut extends Error {
+  constructor(what: string, ms: number) {
+    super(`${what} did not answer in ${Math.round(ms / 1000)}s`)
+  }
+}
+
+/** The promise's result, or a TimedOut after `ms`: one host call that never returns must not hold up the rest. */
+export function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  what: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TimedOut(what, ms)), ms)
+    timer.unref?.()
+  })
+  return Promise.race([p, late]).finally(() => clearTimeout(timer))
+}
+
 export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v)
 

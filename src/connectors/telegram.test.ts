@@ -504,6 +504,8 @@ describe("Bridge with telegram and another channel", () => {
       /Answered<\/b> · Yes\n<i>via telegram · \d\d:\d\d<\/i>/,
     )
     assert.deepEqual(edit.reply_markup, { inline_keyboard: [] })
+    // The other channel is marked after the edit: wait for it.
+    await b.tg.waitFor(() => b.stub.updates[0])
     assert.deepEqual(b.stub.updates, [
       { ref: "ntfy1", message: "Answered from telegram: Yes" },
     ])
