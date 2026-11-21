@@ -59,3 +59,11 @@ jobs:
           NTFY_E2E_URL: http://127.0.0.1:8080
       - if: failure()
         run: docker logs ntfy
+
+  openspec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: openspec validate --all --strict

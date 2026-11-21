@@ -1,0 +1,28 @@
+schema: spec-driven
+
+context: |
+  opencode-oob-bridge is an OpenCode 2 plugin that mirrors sessions to a phone through
+  Telegram and ntfy. The bridge runs once in the OpenCode server; each TUI is a pilot.
+  Language: TypeScript on Node 24, no runtime dependencies, no *Sync calls in src/*.ts.
+  The repo is public: never write usernames, home paths, hostnames or employer names.
+  Use neutral examples (acme, example.com). Telegram is a client of the bridge, not part of its core.
+
+rules:
+  proposal:
+    - State what is out of scope.
+    - Name the existing code and capability the change extends before adding anything new.
+  specs:
+    - Every requirement uses SHALL and has at least one scenario.
+  design:
+    - Say what a client may rely on and what is left to the host (OpenCode) or the channel (Telegram, ntfy).
+  tasks:
+    - Keep each task under 2 hours.
+    - Each task names its verification step (a test, a command, or a delivered file).
+
+operations:
+  apply:
+    guidance:
+      - Run pnpm format, typecheck, lint, build and pnpm test before each commit; pnpm test must end with fail 0.
+  archive:
+    guidance:
+      - Archive only after the change is released and installed.
