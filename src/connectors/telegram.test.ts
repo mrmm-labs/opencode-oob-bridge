@@ -122,7 +122,7 @@ describe("TelegramConnector outbound", () => {
     await r.done()
   })
 
-  it("offers numbered text replies, not buttons, for several questions or many options", async () => {
+  it("steps through several questions with buttons, and offers numbered text for many options", async () => {
     const r = await rig()
     const two = [...yesNo, ...yesNo.map((q) => ({ ...q, key: "q1" }))]
     await r.channel.send({
@@ -140,8 +140,12 @@ describe("TelegramConnector outbound", () => {
       message: "m",
       prompt: { id: "cd34", questions: many },
     })
-    for (const c of r.tg.of("sendMessage"))
-      assert.equal(c.body.reply_markup, undefined)
+    const [first, second] = r.tg.of("sendMessage")
+    assert.match(
+      first.body.reply_markup.inline_keyboard[0][0].callback_data,
+      /^s:ab12:o1$/,
+    )
+    assert.equal(second.body.reply_markup, undefined)
     assert.match(r.channel.hint("ab12", two), /one answer per question/)
     assert.match(r.channel.hint("cd34", many), /number or text/)
     await r.done()
@@ -583,13 +587,17 @@ describe("Bridge with telegram and another channel", () => {
     await b.done()
   })
 
-  it("several questions: no buttons, one numbered reply answers all", async () => {
+  it("several questions: a stepper, and one numbered reply still answers all", async () => {
     const b = await bridgeRig()
     await b.ask("frm_1", [
       { ...yesNoField, key: "q0", title: "A" },
       { ...yesNoField, key: "q1", title: "B" },
     ])
-    assert.equal(b.tg.of("sendMessage")[0].body.reply_markup, undefined)
+    assert.match(
+      b.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard[0][0]
+        .callback_data,
+      /^s:/,
+    )
     b.tg.message(CHAT, "1 | no", 501)
     await b.tg.waitFor(() => b.replies[0])
     assert.deepEqual((b.replies[0] as { answer: unknown }).answer, {

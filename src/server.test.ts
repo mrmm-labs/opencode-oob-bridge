@@ -324,12 +324,10 @@ describe("the server half", () => {
         fields: [{ key: "q0", type: "string", options: [{ label: "Yes" }] }],
       },
     })
+    // No window to make the reply: the push says so and has no buttons, and the bridge stays up.
     const pub = await t.n.waitFor(() => t.n.published[0])
-    await t.n.waitFor(() => t.n.subscribes.length > 0)
-    const body = (pub.body.actions as Array<{ body: string }>)[0].body
-    t.n.send("r1", body)
-    // No window to make the reply: the bridge answers in the channel and stays up.
-    await t.n.waitFor(() => t.n.published[1])
+    assert.equal(pub.body.actions, undefined)
+    assert.match(String(pub.body.message), /Answer this at the Mac/)
     assert.equal(server.prompts.length, 0)
     assert.equal((await status(server)).owner.pid, process.pid)
     await stop!()

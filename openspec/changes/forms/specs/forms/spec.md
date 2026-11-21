@@ -1,3 +1,7 @@
+## Purpose
+
+Forms lets the operator answer a multi-field form, and approve a permission when policy allows, from a phone without a mistake costing anything: one field at a time, a review before the reply, and a logged, opt-in permission path.
+
 ## ADDED Requirements
 
 ### Requirement: A multi-field form is answered one field at a time

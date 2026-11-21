@@ -39,9 +39,17 @@ import {
   keycap,
   renderPush,
   renderStatus,
+  renderStepper,
   renderTurnCard,
   starred,
 } from "./telegram-render.ts"
+import {
+  newStepper,
+  parseAct,
+  step,
+  type Act,
+  type Stepper,
+} from "../stepper.ts"
 import {
   checkAnnounced,
   DEFAULT_MEDIA,
@@ -277,6 +285,8 @@ export class TelegramConnector implements Connector {
     string,
     { choices: Menu["choices"]; page: number }
   >()
+  /** Forms answered field by field, by prompt id. */
+  private readonly steppers = new Map<string, Stepper>()
   /** Force-reply questions of a command: message id to the question's id. */
   private readonly asks = new Map<string, string>()
   private botName: string | undefined
@@ -411,6 +421,12 @@ export class TelegramConnector implements Connector {
     const q = push.prompt
     const live = q && buttonable(q.questions) ? q : undefined
     const one = live?.questions[0]
+    const form =
+      q && q.questions.length > 1
+        ? newStepper(q.id, q.questions, push.title ?? "Question")
+        : undefined
+    if (q && form) this.steppers.set(q.id, form)
+    const view = form && renderStepper(form)
     if (live && one)
       this.prompts.set(live.id, {
         options: one.options,
@@ -427,13 +443,17 @@ export class TelegramConnector implements Connector {
             {
               chat_id: this.chatId,
               message_thread_id: thread,
-              text: renderPush(push, {
-                inTopic: thread !== undefined,
-                footer:
-                  q && push.card?.kind === "question"
-                    ? this.hint(q.id, q.questions)
-                    : undefined,
-              }),
+              text:
+                view?.text ??
+                renderPush(push, {
+                  inTopic: thread !== undefined,
+                  footer:
+                    q && push.card?.kind === "question"
+                      ? this.hint(q.id, q.questions)
+                      : push.permission
+                        ? "Tap a button to answer. Each answer is logged."
+                        : undefined,
+                }),
               parse_mode: "HTML",
               link_preview_options: { is_disabled: true },
               // A failure needs attention: it is the one push that may make a sound.
@@ -442,8 +462,9 @@ export class TelegramConnector implements Connector {
                 (push.card?.kind === "failed"
                   ? false
                   : (push.priority ?? 3) <= 2),
-              reply_markup:
-                live && one
+              reply_markup: view
+                ? { inline_keyboard: view.rows }
+                : live && one
                   ? this.keyboard(
                       live.id,
                       one.options,
@@ -451,24 +472,27 @@ export class TelegramConnector implements Connector {
                       one.custom,
                       new Set(),
                     )
-                  : push.action
-                    ? {
-                        inline_keyboard: [
-                          [
-                            {
-                              text: push.action.label,
-                              callback_data: "ctl:" + push.action.control,
-                            },
+                  : push.permission
+                    ? { inline_keyboard: [this.decisions(push.permission)] }
+                    : push.action
+                      ? {
+                          inline_keyboard: [
+                            [
+                              {
+                                text: push.action.label,
+                                callback_data: "ctl:" + push.action.control,
+                              },
+                            ],
                           ],
-                        ],
-                      }
-                    : undefined,
+                        }
+                      : undefined,
             },
             undefined,
             undefined,
             push.stats,
           )
           const ref = String(m.message_id)
+          if (form) form.msg = m.message_id
           const p = live && this.prompts.get(live.id)
           if (p) p.ref = ref
           if (push.session) this.remember(ref, push.session.id)
@@ -486,7 +510,10 @@ export class TelegramConnector implements Connector {
         }
       }
     } catch (err) {
-      if (push.prompt) this.prompts.delete(push.prompt.id)
+      if (push.prompt) {
+        this.prompts.delete(push.prompt.id)
+        this.steppers.delete(push.prompt.id)
+      }
       this.fail(err)
       return undefined
     }
@@ -855,6 +882,12 @@ export class TelegramConnector implements Connector {
 
   async update(ref: string, push: Push): Promise<boolean> {
     if (!this.chatId) return false
+    for (const [id, s] of this.steppers)
+      if (String(s.msg) === ref) {
+        this.steppers.delete(id)
+        for (const [m, to] of this.typing)
+          if (to === "s:" + id) this.typing.delete(m)
+      }
     for (const [id, p] of this.prompts)
       if (p.ref === ref) {
         this.prompts.delete(id)
@@ -1144,6 +1177,7 @@ export class TelegramConnector implements Connector {
     const asked = m.reply_to_message
       ? this.typing.get(String(m.reply_to_message.message_id))
       : undefined
+    if (asked?.startsWith("s:")) return this.stepText(asked.slice(2), text, m)
     if (asked)
       return void (await this.onInbound?.({
         ...base,
@@ -1362,6 +1396,25 @@ export class TelegramConnector implements Connector {
         inline: true,
       })
     }
+    const st = parseAct(cb.data ?? "")
+    if (st) return this.onStep(cb, st.id, st.act)
+    const perm = /^p:([A-Za-z0-9]+):(o|a|r)$/.exec(cb.data ?? "")
+    if (perm) {
+      const decision = { o: "once", a: "always", r: "reject" }[perm[2]] as
+        | "once"
+        | "always"
+        | "reject"
+      return this.answer(cb.id, {
+        kind: "answer",
+        id: "cb" + cb.id,
+        time: Math.floor(Date.now() / 1000),
+        pendingId: perm[1],
+        decision,
+        text: decision,
+        from: { connector: this.id, chat: String(cb.message.chat.id) },
+        inline: true,
+      })
+    }
     const menu = /^m:([A-Za-z0-9]+):(p?\d+|n)$/.exec(cb.data ?? "")
     if (menu) return this.onMenu(cb, menu[1], menu[2])
     const m = /^([A-Za-z0-9]+):(t?\d+|d|x)$/.exec(cb.data ?? "")
@@ -1410,6 +1463,107 @@ export class TelegramConnector implements Connector {
     } catch (err) {
       this.fail(err)
     }
+  }
+
+  private decisions(p: NonNullable<Push["permission"]>) {
+    const names = {
+      once: ["Allow once", "o"],
+      always: ["Always", "a"],
+      reject: ["Deny", "r"],
+    } as const
+    return p.choices.map((c) => ({
+      text: names[c][0],
+      callback_data: "p:" + p.id + ":" + names[c][1],
+    }))
+  }
+
+  /** Shows the stepper's current state in its message. */
+  private async redraw(s: Stepper, message_id: number) {
+    const v = renderStepper(s)
+    try {
+      await this.call("editMessageText", {
+        chat_id: this.chatId,
+        message_id,
+        text: v.text,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: v.rows },
+      })
+    } catch (err) {
+      if (!/not modified/i.test((err as Error).message)) this.fail(err)
+    }
+  }
+
+  /** A button of a form stepper. */
+  private async onStep(
+    cb: NonNullable<Update["callback_query"]>,
+    id: string,
+    act: Act | "write",
+  ): Promise<void> {
+    const s = this.steppers.get(id)
+    if (!s)
+      return this.toast(
+        cb.id,
+        `No longer active here: answer in the TUI, or send "#${id} 1 | 2".`,
+      )
+    s.msg = cb.message!.message_id
+    if (act === "write") {
+      await this.toast(cb.id)
+      try {
+        const m = await this.call<{ message_id: number }>("sendMessage", {
+          chat_id: this.chatId,
+          message_thread_id: cb.message!.message_thread_id,
+          text: `Type your answer for question ${s.at + 1} of #${id}`,
+          reply_markup: {
+            force_reply: true,
+            input_field_placeholder: "Your answer",
+          },
+        })
+        this.typing.set(String(m.message_id), "s:" + id)
+      } catch (err) {
+        this.fail(err)
+      }
+      return
+    }
+    const out = step(s, act)
+    if (out.cancel) {
+      this.steppers.delete(id)
+      await this.toast(cb.id, "Cancelled")
+      await this.call("editMessageText", {
+        chat_id: this.chatId,
+        message_id: s.msg,
+        text: "Cancelled here: nothing was sent. The question is still open, answer it in the TUI.",
+        reply_markup: { inline_keyboard: [] },
+      }).catch((err) => this.fail(err))
+      return
+    }
+    if (out.reply !== undefined)
+      return this.answer(cb.id, {
+        kind: "answer",
+        id: "cb" + cb.id,
+        time: Math.floor(Date.now() / 1000),
+        pendingId: id,
+        text: out.reply,
+        from: { connector: this.id, chat: String(cb.message!.chat.id) },
+        inline: true,
+      })
+    await this.toast(cb.id, out.toast)
+    if (!out.toast) await this.redraw(s, s.msg)
+  }
+
+  /** A typed answer for the field the stepper is on. */
+  private async stepText(
+    id: string,
+    text: string,
+    m: NonNullable<Update["message"]>,
+  ): Promise<void> {
+    const s = this.steppers.get(id)
+    if (!s) return
+    const out = step(s, { t: "text", text })
+    if (out.toast) {
+      await this.deliver(m.message_thread_id, { ok: false, text: out.toast })
+      return
+    }
+    if (s.msg !== undefined) await this.redraw(s, s.msg)
   }
 
   /** "✏️ Type an answer": the bot asks for it, and a reply to that message is the answer. */

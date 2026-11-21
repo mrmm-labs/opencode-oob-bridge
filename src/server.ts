@@ -221,6 +221,7 @@ export function serverHost(
   ctx: Context,
   sessions: Sessions,
   forms: (r: Omit<FormRelay, "token">) => Promise<void>,
+  canReplyForm?: () => boolean,
 ): Host {
   return {
     async session(id) {
@@ -235,6 +236,9 @@ export function serverHost(
     },
     replyForm: (sessionID, formID, answer) =>
       forms({ sessionID, formID, answer }),
+    canReplyForm,
+    replyPermission: (sessionID, requestID, decision) =>
+      ctx.permission.reply({ sessionID, requestID, decision } as never),
     prompt: async (sessionID, text, delivery, files) => {
       await ctx.session.prompt({
         sessionID,
@@ -458,8 +462,11 @@ async function boot(
     }
   })
   let control!: Control
-  const host = serverHost(ctx, sessions, (r) =>
-    forms.ask(emit, r, control.pickTui()),
+  const host = serverHost(
+    ctx,
+    sessions,
+    (r) => forms.ask(emit, r, control.pickTui()),
+    () => control.pickTui() !== undefined,
   )
   const digest = new DigestLog(join(dir, "digest.jsonl"))
   await digest.load()

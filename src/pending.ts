@@ -16,6 +16,8 @@ export type Pending = {
   sessionID: string
   rootSessionID: string
   title: string
+  /** The permission asked for. */
+  action?: string
   questions?: Question[]
   /** Message reference per channel id, to update the message later. */
   refs?: Record<string, string>

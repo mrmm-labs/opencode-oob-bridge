@@ -104,7 +104,7 @@ describe("actions", () => {
 
   it("is the only route from an adapter to the host", async () => {
     const { execFile } = await import("node:child_process")
-    const re = String.raw`\bhost\.(interrupt|prompt|compact|rename|switchAgent|switchModel|createSession|replyForm|resume)\(`
+    const re = String.raw`\bhost\.(interrupt|prompt|compact|rename|switchAgent|switchModel|createSession|replyForm|replyPermission|resume)\(`
     const out = await new Promise<string>((res) =>
       execFile(
         "grep",

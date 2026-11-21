@@ -38,6 +38,10 @@ export type ActionDeps = {
   ): Promise<Result>
   /** The remote-permissions policy: refused until a policy allows it. */
   permissions?: () => boolean
+  permission?(
+    promptId: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<Result>
 }
 
 /** Thrown when a rule refuses an action before the host is called. */
@@ -78,7 +82,9 @@ export class Actions {
     reason?: string
   }> {
     const off: Partial<Record<ActionName, string>> = {
-      permission: "no policy allows permission replies from a client",
+      ...(this.d.permissions?.()
+        ? {}
+        : { permission: "no policy allows permission replies from a client" }),
       ...(this.d.host.undo
         ? {}
         : { undo: "no source in this process can revert a session" }),
@@ -185,6 +191,16 @@ export class Actions {
     }
   }
 
+  async replyPermission(
+    sessionID: string,
+    requestID: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<void> {
+    if (!this.d.host.replyPermission)
+      throw new Refused("This OpenCode cannot answer a permission from here.")
+    await this.d.host.replyPermission(sessionID, requestID, decision)
+  }
+
   async answerForm(
     sessionID: string,
     formID: string,
@@ -275,12 +291,24 @@ export class Actions {
             text: str(body.text),
           })
         }
-        case "permission":
-          return this.d.permissions?.()
-            ? no("Permission replies are not implemented for clients yet.")
-            : no(
-                "Permission replies from a client are refused: no policy allows them. Answer in the OpenCode TUI.",
-              )
+        case "permission": {
+          if (!this.d.permissions?.() || !this.d.permission)
+            return no(
+              "Permission replies from a client are refused: no policy allows them. Answer in the OpenCode TUI.",
+            )
+          const id = str(body.prompt)
+          const decision = body.decision
+          if (
+            !id ||
+            (decision !== "once" &&
+              decision !== "always" &&
+              decision !== "reject")
+          )
+            return no(
+              "permission needs a prompt id and a decision: once, always or reject",
+            )
+          return await this.d.permission(id, decision)
+        }
         case "resume":
           await this.gate(root)
           return await this.d.resume(root)
