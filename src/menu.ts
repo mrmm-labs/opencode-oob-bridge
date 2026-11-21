@@ -688,6 +688,30 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
       run: () => status(ctx, app),
     }),
     sub({
+      name: "trace",
+      title: "Trace",
+      description:
+        "Show the last Telegram updates and messages sent (default 5, at most 20): the path each took and how it ended.",
+      group: "Plugin",
+      args: [
+        {
+          name: "n",
+          kind: "text",
+          title: "How many",
+          placeholder: "5",
+          optional: true,
+        },
+      ],
+      run: async (v) => {
+        const lines = await app.pilot.traceLines(Number(v.n) || 5)
+        if (!lines) return toast(ctx, "The bridge does not answer", "warning")
+        await ctx.ui.dialog.alert({
+          title: `${TITLE}: trace`,
+          message: lines.join("\n"),
+        })
+      },
+    }),
+    sub({
       name: "version",
       title: "Version",
       description:
@@ -849,6 +873,7 @@ async function status(ctx: Context, app: App): Promise<void> {
       ].join("\n")
     }),
   )
+  lines.push(...st.trace)
   lines.push(`Open prompts: ${st.pending}`)
   if (root) lines.push(`This session: ${describe(app, root)}`)
   await ctx.ui.dialog.alert({

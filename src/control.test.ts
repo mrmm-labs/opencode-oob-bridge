@@ -642,6 +642,15 @@ describe("version", () => {
     await r.done()
   })
 
+  it("answers the trace op with lines, and the snapshot carries the counters", async () => {
+    const r = await rig()
+    const out = await r.control.op("trace", { n: 3 })
+    assert.equal(out.ok, true)
+    assert.ok(Array.isArray((out.data as { lines: string[] }).lines))
+    assert.match(r.control.snapshot([]).trace![0], /^Telegram in: \d+ received/)
+    await r.done()
+  })
+
   it("answers the version op with the report, and /version in a chat with the text", async () => {
     const r = await rig({ version: "0.22.0", installed: "0.23.0" })
     const out = await r.control.op("version")

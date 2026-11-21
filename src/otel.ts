@@ -31,7 +31,7 @@ export const traceIdFor = (session: string | undefined): string =>
 
 const newSpanId = () => randomBytes(8).toString("hex")
 
-type Span = {
+export type Span = {
   name: string
   traceId: string
   spanId: string
@@ -339,6 +339,23 @@ export class Telemetry {
         this.arm()
       },
     }
+  }
+
+  /** A span measured by the caller, on a trace id of its own. */
+  emit(s: {
+    name: string
+    traceId: string
+    spanId: string
+    parentSpanId?: string
+    start: number
+    end: number
+    attrs: Labels
+    error?: string
+  }): void {
+    if (!this.target) return
+    if (this.queue.length >= MAX_QUEUE) this.queue.shift()
+    this.queue.push(s)
+    this.arm()
   }
 
   /** Runs `fn` inside a span; the span's outcome is `ok` or the error. */

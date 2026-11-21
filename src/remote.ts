@@ -199,7 +199,15 @@ export class Remote implements Pilot {
     return {
       channels: this.snap?.channels ?? [],
       pending: this.snap?.pending ?? 0,
+      trace: this.snap?.trace ?? [],
     }
+  }
+
+  /** The last `n` Telegram traces, from the bridge. */
+  async traceLines(n: number): Promise<string[] | undefined> {
+    const r = await this.op("trace", { n })
+    const d = r?.data as { lines?: string[] } | undefined
+    return r?.ok ? d?.lines : undefined
   }
 
   /** One line for each place two versions differ: disk, server half, this TUI half. */

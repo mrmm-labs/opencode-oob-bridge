@@ -136,6 +136,8 @@
   //   "link": "https://t.me/examplebot/app",
   // },
 
+  // How much bridge.log holds: "warn" (failures), "info" (every inbound and outbound outcome, default) or "debug" (also each step).
+  // "log": { "level": "info" },
   // OpenTelemetry (OTLP/HTTP JSON). Off unless an endpoint is set here or in
   // OTEL_EXPORTER_OTLP_ENDPOINT (and OTEL_EXPORTER_OTLP_HEADERS). Spans and
   // metrics carry ids, kinds, counts and timings: never message text, titles,

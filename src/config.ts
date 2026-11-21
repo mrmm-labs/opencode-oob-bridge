@@ -15,6 +15,7 @@ import { DEFAULT_EXCLUDE, type DiffTheme } from "./diffimage.ts"
 import { WAKE_KINDS, type Brief, type WakeKind } from "./overnight.ts"
 import { DEFAULT_MIN_SECONDS } from "./turncard.ts"
 import { parseJsonc } from "./jsonc.ts"
+import { LOG_LEVELS, type LogLevel } from "./trace.ts"
 import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
 import {
   parseFormats,
@@ -117,6 +118,8 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+  /** How much the bridge log holds: `warn` failures only, `info` every inbound and outbound outcome (default), `debug` also each step. */
+  log: { level: LogLevel }
 }
 
 function parseQuiet(raw: unknown): QuietHours | undefined | { error: string } {
@@ -612,6 +615,19 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   if ("error" in miniApp) return miniApp
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
+  let logLevel: LogLevel = "info"
+  if (raw.log !== undefined) {
+    if (!isObject(raw.log)) return { error: "log must be an object" }
+    const lv = raw.log.level
+    if (lv !== undefined) {
+      if (
+        typeof lv !== "string" ||
+        !(LOG_LEVELS as readonly string[]).includes(lv)
+      )
+        return { error: `log.level must be one of ${LOG_LEVELS.join(", ")}` }
+      logLevel = lv as LogLevel
+    }
+  }
   const link = parseLink(raw.link)
   if ("error" in link) return link
   const approvals = parseApprovals(raw.approvals)
@@ -667,6 +683,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     messages,
     profiles,
     otel,
+    log: { level: logLevel },
   }
 }
 
