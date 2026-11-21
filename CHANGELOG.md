@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.30.0...v0.31.0) (2026-11-21)
+
+
+### Features
+
+* trace every Telegram update and send, with log levels, metrics, /trace and a dashboard ([#106](https://github.com/mrmm-labs/opencode-oob-bridge/issues/106)) ([18657ca](https://github.com/mrmm-labs/opencode-oob-bridge/commit/18657ca223f1366cee089fbe1497b46bc97d39fb))
+
 ## [0.30.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.29.1...v0.30.0) (2026-11-21)
 
 
