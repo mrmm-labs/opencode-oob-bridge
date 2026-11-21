@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.14.0...v0.15.0) (2026-11-21)
+
+
+### Features
+
+* dead-man heartbeat to a configured receiver ([#48](https://github.com/mrmm-labs/opencode-oob-bridge/issues/48)) ([1dbc2f8](https://github.com/mrmm-labs/opencode-oob-bridge/commit/1dbc2f8d3598b9cd3f090dcdf4a829d935a9744d))
+
 ## [0.14.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.13.2...v0.14.0) (2026-11-21)
 
 
