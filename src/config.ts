@@ -104,7 +104,11 @@ export type Config = {
   /** The card posted when a turn ends with changes or after a long turn. */
   turnCard: { enabled: boolean; minSeconds: number }
   /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
-  permissions: { remote: "off" | "once" | "all" }
+  permissions: {
+    remote: "off" | "once" | "all"
+    /** How a permission that cannot be answered from a chat reaches it: one edited digest, each one, or none. */
+    notify: "digest" | "all" | "off"
+  }
   diff: { exclude: string[]; theme: DiffTheme }
   overnight: {
     /** Kinds that notify with sound during a plan. */
@@ -177,12 +181,14 @@ function parseDigest(
 function parsePermissions(
   raw: unknown,
 ): Config["permissions"] | { error: string } {
-  if (raw === undefined) return { remote: "off" }
+  if (raw === undefined) return { remote: "off", notify: "digest" }
   if (!isObject(raw)) return { error: "permissions must be an object" }
-  const { remote = "off" } = raw
+  const { remote = "off", notify = "digest" } = raw
   if (remote !== "off" && remote !== "once" && remote !== "all")
     return { error: "permissions.remote must be off, once or all" }
-  return { remote }
+  if (notify !== "digest" && notify !== "all" && notify !== "off")
+    return { error: "permissions.notify must be digest, all or off" }
+  return { remote, notify }
 }
 
 function parseOvernight(raw: unknown): Config["overnight"] | { error: string } {

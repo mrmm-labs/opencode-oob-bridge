@@ -39,6 +39,7 @@ async function chatRig(
     posts?: string[]
     agent?: string
     failPrompt?: boolean | number
+    permissions?: Record<string, unknown>
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -72,6 +73,7 @@ async function chatRig(
     // These tests are about the host's own queue; the held-message path has its own file.
     chat: { queueSteerSeconds: 0, ...o.chat },
     redact: o.redact,
+    permissions: o.permissions,
   }) as Config
   const prompts: Array<{
     sessionID: string
@@ -314,7 +316,7 @@ describe("chat from Telegram: access", () => {
   })
 
   it("permissions are never answered from a chat", async () => {
-    const r = await chatRig()
+    const r = await chatRig({ permissions: { notify: "all" } })
     await chatOn(r)
     await r.bridge.onEvent({
       type: "permission.asked",
@@ -1380,6 +1382,123 @@ describe("chat from Telegram: tracing", () => {
       r.sends().find((b) => /← text/.test(b.text)),
     )
     assert.match(out.text, /delivered/)
+    await r.done()
+  })
+})
+
+describe("permission digest", () => {
+  const ask = (r: Rig, id: string, action: string, sessionID = "root") =>
+    r.bridge.onEvent({
+      type: "permission.asked",
+      data: { id, sessionID, action, resources: ["x"] },
+    } as unknown as BridgeEvent)
+  const answer = (r: Rig, id: string) =>
+    r.bridge.onEvent({
+      type: "permission.replied",
+      data: { requestID: id, sessionID: "root" },
+    } as unknown as BridgeEvent)
+  const digests = (r: Rig) =>
+    r.sends().filter((b) => /permissions? waiting/.test(b.text))
+  const edits = (r: Rig) => r.tg.of("editMessageText").map((c) => c.body)
+  const shown = (r: Rig) => [...digests(r), ...edits(r)]
+  const rig = async (permissions?: Record<string, unknown>) => {
+    const r = await chatRig({ permissions })
+    r.bridge.digestGapMs = 60
+    await chatOn(r)
+    return r
+  }
+
+  it("posts one digest for many permissions and edits it, instead of one message each", async () => {
+    const r = await rig()
+    for (let i = 0; i < 5; i++) await ask(r, "per_" + i, "shell")
+    await r.tg.waitFor(() => digests(r)[0])
+    await r.tg.waitFor(() => shown(r).find((b) => /5 permissions/.test(b.text)))
+    assert.equal(digests(r).length, 1, "one message")
+    assert.ok(!r.sends().some((b) => /needs permission/.test(b.text)))
+    assert.match(shown(r).at(-1)!.text, /shell ×5/)
+    await r.done()
+  })
+
+  it("breaks the count down by agent and action", async () => {
+    const r = await rig()
+    await ask(r, "per_1", "shell")
+    await ask(r, "per_2", "shell")
+    await ask(r, "per_3", "webfetch")
+    await r.tg.waitFor(() =>
+      [...digests(r), ...edits(r)].find((b) =>
+        /3 permissions[\s\S]*coord · shell ×2, coord · webfetch ×1/.test(
+          b.text,
+        ),
+      ),
+    )
+    await r.done()
+  })
+
+  it("counts down as permissions are answered, then says none are waiting", async () => {
+    const r = await rig()
+    await ask(r, "per_1", "shell")
+    await ask(r, "per_2", "shell")
+    await r.tg.waitFor(() => shown(r).find((b) => /2 permissions/.test(b.text)))
+    await answer(r, "per_1")
+    await r.tg.waitFor(() =>
+      edits(r).find((b) => /1 permission waiting/.test(b.text)),
+    )
+    await answer(r, "per_2")
+    await r.tg.waitFor(() => edits(r).find((b) => /none waiting/.test(b.text)))
+    await r.done()
+  })
+
+  it("edits no faster than the gap", async () => {
+    const r = await rig()
+    r.bridge.digestGapMs = 400
+    await ask(r, "per_1", "shell")
+    await r.tg.waitFor(() => digests(r)[0])
+    await ask(r, "per_2", "shell")
+    await ask(r, "per_3", "shell")
+    await new Promise((x) => setTimeout(x, 150))
+    assert.equal(edits(r).length, 0, "within the gap")
+    await r.tg.waitFor(() => edits(r)[0], 4000)
+    assert.equal(edits(r).length, 1, "the two changes share one edit")
+    assert.match(edits(r)[0].text, /3 permissions/)
+    await r.done()
+  })
+
+  it("off posts nothing, but /oob status lists what waits", async () => {
+    const r = await rig({ notify: "off" })
+    await ask(r, "per_1", "shell")
+    await new Promise((x) => setTimeout(x, 200))
+    assert.ok(
+      ![...r.sends(), ...edits(r)].some((b) => /permission/.test(b.text)),
+    )
+    assert.match(
+      r.bridge.status().waiting![0],
+      /1 permission waiting \(coord · shell ×1\)/,
+    )
+    await r.done()
+  })
+
+  it("all posts each permission as before", async () => {
+    const r = await rig({ notify: "all" })
+    await ask(r, "per_1", "shell")
+    await ask(r, "per_2", "shell")
+    await r.tg.waitFor(
+      () => r.sends().filter((b) => /needs permission/.test(b.text))[1],
+    )
+    assert.equal(digests(r).length, 0)
+    await r.done()
+  })
+
+  it("a permission a chat can answer is posted with its buttons whatever notify says", async () => {
+    const r = await rig({ remote: "once", notify: "off" })
+    r.bridge.digestGapMs = 60
+    ;(r.bridge as unknown as { host: Host }).host.replyPermission =
+      async () => {}
+    await ask(r, "per_1", "shell")
+    const p = await r.tg.waitFor(() =>
+      r.sends().find((b) => /needs permission/.test(b.text)),
+    )
+    assert.ok(p.reply_markup, "buttons")
+    assert.equal(digests(r).length, 0)
     await r.done()
   })
 })

@@ -102,6 +102,8 @@ export type Snapshot = {
   back?: { id: number; text: string; at: number }
   channels: ChannelRow[]
   pending: number
+  /** Permissions waiting at the Mac, one line per session. */
+  waiting?: string[]
   sessions: SessionRow[]
   stuck: StuckRow[]
   events: { seen: number; lastAt?: number }

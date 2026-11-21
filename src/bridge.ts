@@ -29,6 +29,7 @@ import { Actions, Refused, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { buildPatch, drawDiff, fileList } from "./diffimage.ts"
 import { filterSecrets, redact } from "./filter.ts"
+import { breakdown, permissionDigest } from "./permdigest.ts"
 import {
   checkAnswers,
   resolveAnswer,
@@ -312,6 +313,8 @@ const yes = (text: string): Outcome => ({ ok: true, text })
 export type BridgeStatus = {
   channels: Array<{ id: string; enabled: boolean } & ConnectorStatus>
   pending: number
+  /** Permissions waiting at the Mac, one line per session. */
+  waiting?: string[]
 }
 
 type Patch = {
@@ -331,6 +334,8 @@ const NO_WINDOW =
 const DIGEST_TICK_MS = 30_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
+/** The shortest time between two edits of a permission digest. */
+export const PERM_DIGEST_GAP_MS = 10_000
 
 export class Bridge {
   private readonly controllers = new Map<string, AbortController>()
@@ -351,6 +356,18 @@ export class Bridge {
   /** The working tree when each running turn began. */
   private readonly digestLog: DigestLog
   private digestTimer: ReturnType<typeof setInterval> | undefined
+  /** Shortest time between two edits of a permission digest; tests shorten it. */
+  digestGapMs = PERM_DIGEST_GAP_MS
+  private readonly permDigests = new Map<
+    string,
+    {
+      refs: Record<string, string>
+      at: number
+      timer?: ReturnType<typeof setTimeout>
+      busy?: boolean
+      again?: boolean
+    }
+  >()
   private readonly before = new Map<string, Promise<Stats | undefined>>()
   /** The latest turn card of a session on a connector, until its buttons are removed. */
   private readonly cards = new Map<
@@ -678,7 +695,22 @@ export class Bridge {
         ...c.status(),
       })),
       pending: this.store.list().filter((p) => p.state === "pending").length,
+      waiting: this.waitingLines(),
     }
+  }
+
+  private waitingLines(): string[] {
+    const roots = new Set(
+      this.store
+        .list()
+        .filter((p) => p.kind === "permission" && p.state === "pending")
+        .map((p) => p.rootSessionID),
+    )
+    return [...roots].map((root) => {
+      const w = this.waitingPermissions(root)
+      const name = this.lastStates.get(root)?.name ?? root
+      return `${name}: ${w.length} permission${w.length === 1 ? "" : "s"} waiting (${breakdown(w)})`
+    })
   }
 
   /** A notice to every enabled channel; which of them took it. */
@@ -724,6 +756,8 @@ export class Bridge {
     )
     for (const f of this.feeds.values()) clearTimeout(f.timer)
     this.feeds.clear()
+    for (const d of this.permDigests.values()) clearTimeout(d.timer)
+    this.permDigests.clear()
     for (const c of this.cards.values()) clearTimeout(c.timer)
     this.cards.clear()
     for (const ac of this.watchers) ac.abort()
@@ -1135,31 +1169,107 @@ export class Bridge {
       rootSessionID: r.rootID,
       title: f.title,
       action: d.action,
+      agent: r.vars.agent,
       askedAt: this.now(),
       state: "pending",
     })
     this.pendingGauge()
-    const sent = await this.dispatch(
-      "permission",
-      r.to,
-      (ch) => ({
-        ...f,
-        ...this.shape(ch, r.session),
-        permission:
-          ch.capabilities.buttons && this.permissionChoices().length
-            ? { id, choices: this.permissionChoices() }
-            : undefined,
-        ...this.card(ch, "permission", r.facts, () => ({
-          kind: "permission",
-          agent: r.vars.agent ?? "agent",
-          project: r.project,
-          session: r.title,
-          detail: redact(detail, this.cfg.redact),
-        })),
-      }),
-      { root: r.rootID, pending: id },
-    )
+    // A permission a chat can answer is always posted with its buttons; the rest follow `permissions.notify`.
+    const mode = this.permissionChoices().length
+      ? "all"
+      : this.cfg.permissions.notify
+    const to =
+      mode === "all" ? r.to : r.to.filter((c) => !c.capabilities.inboundPrompt)
+    const sent =
+      to.length === 0
+        ? { refs: {} }
+        : await this.dispatch(
+            "permission",
+            to,
+            (ch) => ({
+              ...f,
+              ...this.shape(ch, r.session),
+              permission:
+                ch.capabilities.buttons && this.permissionChoices().length
+                  ? { id, choices: this.permissionChoices() }
+                  : undefined,
+              ...this.card(ch, "permission", r.facts, () => ({
+                kind: "permission",
+                agent: r.vars.agent ?? "agent",
+                project: r.project,
+                session: r.title,
+                detail: redact(detail, this.cfg.redact),
+              })),
+            }),
+            { root: r.rootID, pending: id },
+          )
     this.remember(p, sent.refs)
+    if (mode === "digest") this.permDigestTouch(r.rootID)
+  }
+
+  private waitingPermissions(root: string): Pending[] {
+    return this.store
+      .list()
+      .filter(
+        (p) =>
+          p.kind === "permission" &&
+          p.state === "pending" &&
+          p.rootSessionID === root,
+      )
+  }
+
+  /** Schedules the session's digest: the first goes out at once, later edits at most one per `digestGapMs`. */
+  private permDigestTouch(root: string) {
+    const d = this.permDigests.get(root) ?? { refs: {}, at: 0 }
+    this.permDigests.set(root, d)
+    if (d.timer) return
+    const wait = Math.max(0, d.at + this.digestGapMs - this.now())
+    d.timer = setTimeout(() => {
+      d.timer = undefined
+      void this.permDigestFlush(root)
+    }, wait)
+    d.timer.unref?.()
+  }
+
+  private async permDigestFlush(root: string) {
+    const d = this.permDigests.get(root)
+    if (!d) return
+    if (d.busy) {
+      d.again = true
+      return
+    }
+    d.busy = true
+    try {
+      d.at = this.now()
+      const waiting = this.waitingPermissions(root)
+      const first = Object.keys(d.refs).length === 0
+      if (waiting.length === 0 && first)
+        return void this.permDigests.delete(root)
+      const r = await this.routed(root)
+      if (!r) return
+      const text = permissionDigest(waiting)
+      const to = r.to.filter((c) => c.capabilities.inboundPrompt)
+      const { refs } = await this.dispatch(
+        "permission",
+        to,
+        (ch) => ({ ...text, ...this.shape(ch, r.session) }),
+        {
+          root,
+          refs: first ? undefined : d.refs,
+          session: r.session,
+        },
+      )
+      Object.assign(d.refs, refs)
+      if (waiting.length === 0) this.permDigests.delete(root)
+    } catch (err) {
+      log("permission_digest_error", { message: (err as Error).message })
+    } finally {
+      d.busy = false
+      if (d.again) {
+        d.again = false
+        this.permDigestTouch(root)
+      }
+    }
   }
 
   /** Shows a session's state on the connectors that keep a live view of it. */
@@ -1867,6 +1977,8 @@ export class Bridge {
         : o.via === "TUI"
           ? "Answered in the TUI"
           : `Answered from ${o.via}: ${o.answer}`
+    if (p.kind === "permission" && this.cfg.permissions.notify === "digest")
+      this.permDigestTouch(p.rootSessionID)
     const f = this.fmt("closed", { id: p.id, title: p.title, note })
     const time = clock(this.now())
     const quote = redact(

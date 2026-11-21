@@ -589,6 +589,7 @@ export class Control {
         silentMs: c.silentMs,
       })),
       pending: st.pending,
+      waiting: st.waiting,
       core: this.core && {
         state: this.core.status().state,
         address: this.core.status().address,

@@ -875,6 +875,7 @@ async function status(ctx: Context, app: App): Promise<void> {
   )
   lines.push(...st.trace)
   lines.push(`Open prompts: ${st.pending}`)
+  for (const w of st.waiting ?? []) lines.push(`  🔐 ${w}`)
   if (root) lines.push(`This session: ${describe(app, root)}`)
   await ctx.ui.dialog.alert({
     title: `${TITLE} status`,

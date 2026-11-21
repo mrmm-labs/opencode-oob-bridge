@@ -652,9 +652,23 @@ describe("permissions.remote", () => {
   it("is off by default and takes once or all", () => {
     const c = (permissions?: unknown) =>
       (parseConfig({ ...base, permissions }) as Config).permissions
-    assert.deepEqual(c(), { remote: "off" })
-    assert.deepEqual(c({ remote: "once" }), { remote: "once" })
-    assert.deepEqual(c({ remote: "all" }), { remote: "all" })
+    assert.deepEqual(c(), { remote: "off", notify: "digest" })
+    assert.deepEqual(c({ remote: "once" }), {
+      remote: "once",
+      notify: "digest",
+    })
+    assert.deepEqual(c({ remote: "all" }), { remote: "all", notify: "digest" })
+  })
+  it("notify is digest, all or off", () => {
+    const c = (permissions?: unknown) =>
+      (parseConfig({ ...base, permissions }) as Config).permissions
+    for (const notify of ["digest", "all", "off"])
+      assert.equal(c({ notify }).notify, notify)
+    for (const notify of ["some", true, 1])
+      assert.ok(
+        "error" in
+          (parseConfig({ ...base, permissions: { notify } }) as object),
+      )
   })
   it("refuses anything else", () => {
     for (const permissions of ["all", { remote: "always" }, { remote: true }])

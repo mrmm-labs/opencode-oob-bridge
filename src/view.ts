@@ -51,6 +51,7 @@ export interface Pilot {
       silentMs?: number
     }>
     pending: number
+    waiting?: string[]
     trace: string[]
   }
   /** The `/oob trace` lines; undefined when the bridge does not answer. */
