@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.15.0...v0.16.0) (2026-11-21)
+
+
+### Features
+
+* command menu with undo, resume, afk and digest ([#51](https://github.com/mrmm-labs/opencode-oob-bridge/issues/51)) ([42f4370](https://github.com/mrmm-labs/opencode-oob-bridge/commit/42f437064fde25be4b8d70dffa8e6c77e7a71915))
+
 ## [0.15.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.14.0...v0.15.0) (2026-11-21)
 
 
