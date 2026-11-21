@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.23.0...v0.24.0) (2026-11-21)
+
+
+### Features
+
+* /oob version and /version show what is installed and what each half runs ([#78](https://github.com/mrmm-labs/opencode-oob-bridge/issues/78)) ([0d56796](https://github.com/mrmm-labs/opencode-oob-bridge/commit/0d56796165295e31913bf63f0cd1c617c92e61ae))
+
 ## [0.23.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.22.0...v0.23.0) (2026-11-21)
 
 
