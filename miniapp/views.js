@@ -804,7 +804,7 @@ function info(state) {
           h(
             "li",
             null,
-            h("span", { class: "grow path" }, a.name),
+            h("span", { class: "name" }, a.name),
             h("span", { class: "sub" }, a.available ? "available" : a.reason),
           ),
         ),
