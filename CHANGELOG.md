@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.32.1...v0.33.0) (2026-11-21)
+
+
+### Features
+
+* one edited digest for permissions that a chat cannot answer ([#114](https://github.com/mrmm-labs/opencode-oob-bridge/issues/114)) ([d055312](https://github.com/mrmm-labs/opencode-oob-bridge/commit/d055312fed3215e078f174e4d16d34749497a981))
+
 ## [0.32.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.32.0...v0.32.1) (2026-11-21)
 
 
