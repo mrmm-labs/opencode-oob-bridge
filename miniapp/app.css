@@ -337,6 +337,17 @@ textarea {
 .path {
   overflow-wrap: anywhere;
 }
+.files .name {
+  flex: none;
+}
+.files .name + .sub {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+.files + button {
+  margin-top: 12px;
+}
 .add {
   color: var(--ok);
 }
