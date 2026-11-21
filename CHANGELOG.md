@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.32.0...v0.32.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* answer questions from a channel through the service, with no window open ([#112](https://github.com/mrmm-labs/opencode-oob-bridge/issues/112)) ([a52d08a](https://github.com/mrmm-labs/opencode-oob-bridge/commit/a52d08a593ea71b13cc4f2fae1f6eee940ae1c8c))
+
 ## [0.32.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.31.0...v0.32.0) (2026-11-21)
 
 
