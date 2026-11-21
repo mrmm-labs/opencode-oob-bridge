@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.34.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.33.0...v0.34.0) (2026-11-21)
+
+
+### Features
+
+* show markdown tables readably in Telegram ([#116](https://github.com/mrmm-labs/opencode-oob-bridge/issues/116)) ([3bb5765](https://github.com/mrmm-labs/opencode-oob-bridge/commit/3bb5765567b421eea740778ab0b9ad11329524cd))
+
 ## [0.33.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.32.1...v0.33.0) (2026-11-21)
 
 
