@@ -84,7 +84,129 @@ function textBlock(lines: string[]): string {
 
 const fence = /^```\s*([^\s`]*)\s*$/
 
-type Block = { code: boolean; lang: string; lines: string[] }
+type Block = {
+  code: boolean
+  lang: string
+  lines: string[]
+  /** A GFM table: the header row, the separator, then the rows. */
+  table?: boolean
+}
+
+/** Widest a table can be, in monospace characters, to stay a `<pre>` grid. */
+export const NARROW = 40
+
+/** The cells of a table row; a pipe in a code span or after a backslash belongs to the cell. */
+function cells(row: string): string[] {
+  const out: string[] = []
+  let cur = ""
+  let code = false
+  const s = row.trim().replace(/^\|/, "")
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === "\\" && s[i + 1] === "|") {
+      cur += "|"
+      i++
+    } else if (c === "`") {
+      code = !code
+      cur += c
+    } else if (c === "|" && !code) {
+      out.push(cur.trim())
+      cur = ""
+    } else cur += c
+  }
+  // A trailing pipe closes the last cell; without one the last cell is still open.
+  if (cur.trim() || !/\|\s*$/.test(row)) out.push(cur.trim())
+  return out
+}
+
+const SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
+
+/** Whether `head` and `sep` start a GFM table. */
+const startsTable = (head: string, sep: string): boolean =>
+  head.includes("|") &&
+  sep.includes("|") &&
+  SEPARATOR.test(sep) &&
+  cells(head).length === cells(sep).length
+
+/** Cuts the tables out of a run of text lines. */
+function carve(lines: string[]): Block[] {
+  const out: Block[] = []
+  let text: string[] = []
+  const flush = () => {
+    if (text.length) out.push({ code: false, lang: "", lines: text })
+    text = []
+  }
+  for (let i = 0; i < lines.length; i++) {
+    if (i + 1 < lines.length && startsTable(lines[i], lines[i + 1])) {
+      flush()
+      let j = i + 2
+      while (j < lines.length && lines[j].trim() && lines[j].includes("|")) j++
+      out.push({ code: false, lang: "", lines: lines.slice(i, j), table: true })
+      i = j - 1
+    } else text.push(lines[i])
+  }
+  flush()
+  return out
+}
+
+/** A cell without its markdown, for the monospace grid. */
+const plain = (s: string): string =>
+  s
+    .replace(/\[([^\]\n]+)\]\([^)\s]+\)/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\*\*(?=\S)([^\n]+?)(?<=\S)\*\*/g, "$1")
+    .replace(/(?<![\w_])__(?=\S)([^\n]+?)(?<=\S)__(?![\w_])/g, "$1")
+    .replace(/~~(?=\S)([^\n]+?)(?<=\S)~~/g, "$1")
+    .replace(/(?<![\w*])\*(?![\s*])([^*\n]+?)(?<![\s*])\*(?![\w*])/g, "$1")
+    .replace(/(?<![\w_])_(?![\s_])([^_\n]+?)(?<![\s_])_(?![\w_])/g, "$1")
+
+const width = (s: string) => [...s].length
+
+function pad(s: string, w: number, align: string): string {
+  const gap = " ".repeat(Math.max(0, w - width(s)))
+  if (align === "r") return gap + s
+  if (align === "c") {
+    const left = Math.floor(gap.length / 2)
+    return gap.slice(0, left) + s + gap.slice(left)
+  }
+  return s + gap
+}
+
+/** A table as a monospace grid when it is narrow, and as one block per row when it is not. */
+function renderTable(lines: string[]): string {
+  const head = cells(lines[0])
+  const n = head.length
+  const aligns = cells(lines[1]).map((c) =>
+    c.startsWith(":") && c.endsWith(":") ? "c" : c.endsWith(":") ? "r" : "l",
+  )
+  const rows = lines
+    .slice(2)
+    .map((l) => Array.from({ length: n }, (_, i) => cells(l)[i] ?? ""))
+  const grid = [head, ...rows].map((r) => r.map(plain))
+  const widths = head.map((_, i) => Math.max(...grid.map((r) => width(r[i]))))
+  const total = widths.reduce((a, b) => a + b, 0) + 2 * (n - 1)
+  if (total <= NARROW) {
+    const line = (r: string[]) =>
+      r
+        .map((c, i) => pad(c, widths[i], aligns[i]))
+        .join("  ")
+        .trimEnd()
+    const rule = widths.map((w) => "─".repeat(w)).join("  ")
+    return `<pre>${esc([line(grid[0]), rule, ...grid.slice(1).map(line)].join("\n"))}</pre>`
+  }
+  return rows
+    .map((r) => {
+      const first = inline(r[0])
+      return [
+        /<b>/.test(first) ? first : `<b>${first}</b>`,
+        ...r
+          .slice(1)
+          .map((c, i) => (c ? `${inline(head[i + 1])}: ${inline(c)}` : ""))
+          .filter(Boolean),
+      ].join("\n")
+    })
+    .join("\n\n")
+}
 
 /** Splits markdown into fenced code blocks and runs of text lines. */
 function blocks(md: string): Block[] {
@@ -107,10 +229,11 @@ function blocks(md: string): Block[] {
   }
   // An unclosed fence (a reply still streaming) is shown as code too.
   if (cur) out.push(cur)
-  return out
+  return out.flatMap((b) => (b.code ? [b] : carve(b.lines)))
 }
 
 const renderBlock = (b: Block): string => {
+  if (b.table) return renderTable(b.lines)
   if (b.code) {
     const body = esc(b.lines.join("\n"))
     return LANG.test(b.lang)
@@ -173,7 +296,20 @@ function pieces(md: string, limit: number): string[] {
     const whole = b.code ? `\`\`\`${b.lang}\n${text}\n\`\`\`` : text
     if (!whole.trim()) continue
     if (fits(whole)) out.push(whole)
-    else if (b.code) cut(text, (t) => `\`\`\`${b.lang}\n${t}\n\`\`\``)
+    else if (b.table) {
+      // Between rows, each piece with the header again.
+      const [head, sep, ...rows] = b.lines
+      let cur: string[] = []
+      for (const row of rows) {
+        const next = [head, sep, ...cur, row].join("\n")
+        if (cur.length && !fits(next)) {
+          out.push([head, sep, ...cur].join("\n"))
+          cur = []
+        }
+        cur.push(row)
+      }
+      if (cur.length) out.push([head, sep, ...cur].join("\n"))
+    } else if (b.code) cut(text, (t) => `\`\`\`${b.lang}\n${t}\n\`\`\``)
     else {
       // Paragraphs, then lines.
       for (const para of text.split(/\n{2,}/))
