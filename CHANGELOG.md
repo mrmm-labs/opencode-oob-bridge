@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.27.0...v0.27.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* never poll one bot twice, and report a 409 as a conflict ([#94](https://github.com/mrmm-labs/opencode-oob-bridge/issues/94)) ([7b737d9](https://github.com/mrmm-labs/opencode-oob-bridge/commit/7b737d94fd1c982b3b4822aa8637e6433ae0f760))
+
 ## [0.27.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.26.0...v0.27.0) (2026-11-21)
 
 
