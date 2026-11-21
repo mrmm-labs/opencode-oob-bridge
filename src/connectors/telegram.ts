@@ -8,7 +8,6 @@
  * answered by replying to the message with numbers or text. Only the paired
  * chat is heard; everything else is dropped unread.
  */
-import { AsyncLocalStorage } from "node:async_hooks"
 import { createHash, randomInt } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
@@ -28,6 +27,7 @@ import { filterSecrets } from "../filter.ts"
 import { parseReply, type Question } from "../inbound.ts"
 import { log } from "../logger.ts"
 import type { Telemetry } from "../otel.ts"
+import { traces, type Class, type Rec } from "../trace.ts"
 import {
   lazyToken,
   parseTokenSource,
@@ -208,8 +208,13 @@ type Update = {
   }
 }
 
-/** What became of one update: set by the code that handled it, logged once it ends. */
-type InboundTrace = { outcome: string; reason?: string; kind: string }
+/** How an update's last outcome counts: heard, turned away, or lost. */
+const classOf = (outcome: string): Class =>
+  outcome === "refused" || outcome === "rejected"
+    ? "refused"
+    : outcome === "error" || outcome === "ignored" || outcome === "failed"
+      ? "dropped"
+      : "delivered"
 
 /**
  * The receive loops running in this process, by bot. A loop that replaces one
@@ -339,7 +344,8 @@ export class TelegramConnector implements Connector {
   private restored: Promise<void> | undefined
   /** Per chat and topic: updates are handled in order, and one stuck topic does not hold up another. */
   private readonly lanes = new Map<string, Promise<void>>()
-  private readonly trace = new AsyncLocalStorage<InboundTrace>()
+  /** The trace of each update that is not finished. */
+  private readonly recs = new Map<number, Rec>()
   /** Whether the paired chat is a forum; undefined until asked. */
   private forum: boolean | undefined
   private topics: Map<string, Topic> | undefined
@@ -1202,6 +1208,7 @@ export class TelegramConnector implements Connector {
     const base = this.opts.apiBase ?? "https://api.telegram.org"
     for (let attempt = 0; ; attempt++) {
       const timeout = AbortSignal.timeout(timeoutMs)
+      const t0 = this.now()
       let res: Response
       try {
         res = await this.fetch(`${base}/bot${token}/${method}`, {
@@ -1212,6 +1219,12 @@ export class TelegramConnector implements Connector {
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         })
       } catch (err) {
+        if (!signal?.aborted)
+          traces.api(method, {
+            ms: this.now() - t0,
+            ok: false,
+            code: timeout.aborted ? "timeout" : "network",
+          })
         // A call that hung on a dead connection is tried once more, on a new one.
         if (!signal?.aborted && method !== "getUpdates" && attempt < 1) {
           log("telegram_call_retry", {
@@ -1231,6 +1244,12 @@ export class TelegramConnector implements Connector {
             parameters?: { retry_after?: number }
           }
         | undefined
+      traces.api(method, {
+        ms: this.now() - t0,
+        ok: json?.ok === true,
+        code: res.status,
+        text: filterSecrets(json?.description ?? ""),
+      })
       if (json?.ok) {
         if (method !== "getUpdates") this.sendOkAt = this.now()
         return json.result as T
@@ -1317,7 +1336,12 @@ export class TelegramConnector implements Connector {
           const fresh = await this.inbox.add(updates)
           this.offset = Math.max(...updates.map((u) => u.update_id)) + 1
           await this.saveOffset()
-          for (const u of fresh) this.dispatch(u, 0)
+          for (const u of fresh) {
+            traces.bump("inbound", "received")
+            this.begin(u)
+            this.dispatch(u, 0)
+          }
+          traces.setQueue(this.inbox.size)
         }
       } catch (err) {
         if (signal.aborted) return
@@ -1357,6 +1381,18 @@ export class TelegramConnector implements Connector {
     return this.restored
   }
 
+  private begin(u: Update): Rec {
+    const m = u.message ?? u.callback_query?.message
+    const rec = traces.start("in", this.kindOf(u), {
+      event: "telegram_inbound",
+      update_id: u.update_id,
+      message_id: m?.message_id,
+      thread: m?.message_thread_id,
+    })
+    this.recs.set(u.update_id, rec)
+    return rec
+  }
+
   private laneOf(u: Update): string {
     const m = u.message ?? u.callback_query?.message
     return `${m?.chat.id}:${m?.message_thread_id ?? 0}`
@@ -1389,10 +1425,7 @@ export class TelegramConnector implements Connector {
 
   /** Records what became of the update being handled. */
   private note(outcome: string, reason?: string): void {
-    const t = this.trace.getStore()
-    if (!t) return
-    t.outcome = outcome
-    t.reason = reason
+    traces.annotate({ outcome, reason })
   }
 
   /** One update, start to end: its outcome is always logged, a failed delivery is retried and said so. */
@@ -1400,12 +1433,15 @@ export class TelegramConnector implements Connector {
     const t0 = this.now()
     const delays = this.opts.retryMs ?? RETRY_MS
     const limit = this.opts.handleMs ?? HANDLE_MS
-    const rec: InboundTrace = { outcome: "handled", kind: this.kindOf(u) }
+    const rec = this.recs.get(u.update_id) ?? this.begin(u)
+    rec.outcome = "handled"
+    rec.reason = undefined
+    if (attempt === 0) traces.step("queued", { ms: t0 - rec.startedAt }, rec)
     let retry = false
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       await Promise.race([
-        this.trace.run(rec, () => this.onUpdate(u)),
+        traces.run(rec, () => this.onUpdate(u)),
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error("timed out after " + limit / 1000 + "s")),
@@ -1421,36 +1457,43 @@ export class TelegramConnector implements Connector {
     } finally {
       clearTimeout(timer)
     }
-    const m = u.message ?? u.callback_query?.message
+    traces.step(
+      "handle",
+      { ms: this.now() - t0, ok: !["error", "failed"].includes(rec.outcome) },
+      rec,
+    )
     const again = retry && attempt < delays.length && !this.signal?.aborted
-    log("telegram_inbound", {
-      update_id: u.update_id,
-      message_id: m?.message_id,
-      thread: m?.message_thread_id,
-      kind: rec.kind,
-      outcome: rec.outcome,
-      reason: rec.reason,
+    traces.line(rec, {
       attempt,
       retry_in_s: again ? delays[attempt] / 1000 : undefined,
-      ms: this.now() - t0,
     })
     if (rec.outcome === "error" && u.message && rec.kind !== "command")
       void this.react(u.message.message_id, "failed")
     if (rec.outcome === "error" && u.message)
-      await this.deliver(u.message.message_thread_id, {
-        ok: false,
-        text: "⚠ Could not handle that message: " + rec.reason,
-      }).catch(() => {})
+      await traces
+        .run(rec, () =>
+          this.deliver(u.message!.message_thread_id, {
+            ok: false,
+            text: "⚠ Could not handle that message: " + rec.reason,
+          }),
+        )
+        .catch(() => {})
     if (retry && u.message)
-      await this.deliver(u.message.message_thread_id, {
-        ok: false,
-        text: again
-          ? `⚠ Not delivered (${rec.reason}). Trying again in ${delays[attempt] / 1000}s.`
-          : `⚠ Not delivered after ${attempt + 1} tries (${rec.reason}). Send it again when the session is back.`,
-      }).catch(() => {})
+      await traces
+        .run(rec, () =>
+          this.deliver(u.message!.message_thread_id, {
+            ok: false,
+            text: again
+              ? `⚠ Not delivered (${rec.reason}). Trying again in ${delays[attempt] / 1000}s.`
+              : `⚠ Not delivered after ${attempt + 1} tries (${rec.reason}). Send it again when the session is back.`,
+          }),
+        )
+        .catch(() => {})
     // Stopping: what is not done stays in the journal for the next start.
     if (retry && !again && this.signal?.aborted) return
     if (again) {
+      traces.bump("inbound", "retried")
+      traces.step("retry", { ms: delays[attempt] }, rec)
       const wait = setTimeout(
         () => this.dispatch(u, attempt + 1),
         delays[attempt],
@@ -1459,6 +1502,9 @@ export class TelegramConnector implements Connector {
       return
     }
     await this.inbox.done(u.update_id)
+    this.recs.delete(u.update_id)
+    traces.setQueue(this.inbox.size)
+    traces.finish(rec, { cls: classOf(rec.outcome), line: false })
   }
 
   private async loadOffset(): Promise<number | undefined> {
