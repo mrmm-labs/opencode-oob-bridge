@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.2...v0.26.0) (2026-11-21)
+
+
+### Features
+
+* relay with public edge, private link and dead-man receiver ([#88](https://github.com/mrmm-labs/opencode-oob-bridge/issues/88)) ([95be0b3](https://github.com/mrmm-labs/opencode-oob-bridge/commit/95be0b33b7962d4c121de2c2c64476799c4be70d))
+
 ## [0.25.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.1...v0.25.2) (2026-11-21)
 
 
