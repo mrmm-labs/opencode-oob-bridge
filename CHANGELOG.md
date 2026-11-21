@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.27.1...v0.28.0) (2026-11-21)
+
+
+### Features
+
+* a Telegram Mini App served by the core API, for sessions, diffs and forms ([#93](https://github.com/mrmm-labs/opencode-oob-bridge/issues/93)) ([4932d52](https://github.com/mrmm-labs/opencode-oob-bridge/commit/4932d52e0c3a58825f911a9e3733b6b2cacc52d5))
+
 ## [0.27.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.27.0...v0.27.1) (2026-11-21)
 
 
