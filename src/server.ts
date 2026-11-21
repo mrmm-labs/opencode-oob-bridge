@@ -39,6 +39,7 @@ import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
 import { isObject, sleep, TimedOut, withTimeout } from "./util.ts"
 import { startWatchdog } from "./watchdog.ts"
+import { serviceClient, type ServiceClient } from "./serviceclient.ts"
 import { RUNNING } from "./version.ts"
 
 type Context = Plugin.Context
@@ -235,7 +236,7 @@ export function serverHost(
   ctx: Context,
   sessions: Sessions,
   forms: (r: Omit<FormRelay, "token">) => Promise<void>,
-  canReplyForm?: () => boolean,
+  canReplyForm?: () => boolean | Promise<boolean>,
 ): Host {
   return {
     async session(id) {
@@ -440,6 +441,7 @@ async function boot(
   dir: string,
   rpcRegistered: () => boolean,
   instances = 1,
+  service: ServiceClient = serviceClient(),
 ): Promise<Running> {
   const tel = new Telemetry(resolveOtel(cfg.otel))
   traces.attach(tel, cfg.log.level)
@@ -486,11 +488,28 @@ async function boot(
     }
   })
   let control!: Control
+  // The service answers a form with no window open; a TUI relays it only when the service cannot.
+  const replyForm = async (r: Omit<FormRelay, "token">): Promise<void> => {
+    if (await service.ready()) {
+      try {
+        return await service.reply(r)
+      } catch (err) {
+        log("form_reply_service_failed", { message: (err as Error).message })
+        if (control.pickTui() === undefined)
+          throw new Error(
+            "The OpenCode service refused the answer (" +
+              (err as Error).message +
+              "). Answer it at the Mac.",
+          )
+      }
+    }
+    return forms.ask(emit, r, control.pickTui())
+  }
   const host = serverHost(
     ctx,
     sessions,
-    (r) => forms.ask(emit, r, control.pickTui()),
-    () => control.pickTui() !== undefined,
+    replyForm,
+    async () => control.pickTui() !== undefined || (await service.ready()),
   )
   const digest = new DigestLog(join(dir, "digest.jsonl"))
   await digest.load()
@@ -722,9 +741,11 @@ class Hub {
   private chain: Promise<unknown> = Promise.resolve()
 
   private readonly standbyMs: number
+  private readonly service: ServiceClient | undefined
 
-  constructor(standbyMs = STANDBY_MS) {
+  constructor(standbyMs = STANDBY_MS, service?: ServiceClient) {
     this.standbyMs = standbyMs
+    this.service = service
   }
 
   private serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -835,6 +856,7 @@ class Hub {
       this.dir,
       () => [...this.members].some((m) => m.reg !== undefined),
       this.members.size,
+      this.service,
     )
   }
 
@@ -873,7 +895,7 @@ const HUB = Symbol.for("oob-bridge.hub.1")
 /** Joins this instance to the bridge of the process, starting it if no instance has. */
 export async function startServer(
   ctx: Context,
-  o: { standbyMs?: number } = {},
+  o: { standbyMs?: number; service?: ServiceClient } = {},
 ): Promise<(() => Promise<void>) | undefined> {
   const cfg = await loadConfig()
   if (!cfg) return undefined
@@ -883,7 +905,7 @@ export async function startServer(
   }
   // On globalThis so a second copy of this module still finds the same hub.
   const g = globalThis as unknown as { [HUB]?: Hub }
-  const hub = (g[HUB] ??= new Hub(o.standbyMs))
+  const hub = (g[HUB] ??= new Hub(o.standbyMs, o.service))
   const leave = await hub.join(ctx, cfg)
   return async () => {
     await leave()

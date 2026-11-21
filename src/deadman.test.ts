@@ -15,7 +15,7 @@ import {
   type Heartbeat,
 } from "./deadman.ts"
 import { Receiver } from "./deadman.test-util.ts"
-import { fakeServer } from "./fake-server.test-util.ts"
+import { fakeServer, noService } from "./fake-server.test-util.ts"
 import { startServer } from "./server.ts"
 
 const up = async () => ({ state: "up" as const, reasons: [], channels: {} })
@@ -352,7 +352,7 @@ describe("the server heartbeat", () => {
     Object.assign(process.env, env)
     const load = async () => {
       const server = fakeServer()
-      const stop = await startServer(server.ctx)
+      const stop = await startServer(server.ctx, { service: noService })
       if (stop) stops.push(stop)
       return { server, stop: stop! }
     }

@@ -1746,6 +1746,7 @@ export class TelegramConnector implements Connector {
           undefined,
           false,
         )
+        log("telegram_reaction", { message_id: messageId, stage, ok: true })
         this.reacted.delete(messageId)
         this.reacted.set(messageId, emoji)
         while (this.reacted.size > REACTED_MAX)
@@ -1764,10 +1765,10 @@ export class TelegramConnector implements Connector {
     return run
   }
 
-  /** The session replied: every message of it that waits becomes 👌. */
-  private replied(session: string): void {
+  /** The session replied: every message of it that waits becomes 👌, or 💔 when the reply could not be sent. */
+  private replied(session: string, stage: Stage = "done"): void {
     for (const id of this.awaiting.get(session) ?? [])
-      void this.react(id, "done")
+      void this.react(id, stage)
     this.awaiting.delete(session)
   }
 
@@ -2755,6 +2756,7 @@ export class TelegramConnector implements Connector {
       return { parts: messages.length, documents: rest ? 1 : 0 }
     } catch (err) {
       this.fail(err)
+      this.replied(session.id, "failed")
       return undefined
     }
   }

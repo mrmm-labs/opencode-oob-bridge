@@ -247,7 +247,7 @@ export class Views {
       tail,
       todos,
       diff,
-      canAnswer: this.o.host.canReplyForm?.() ?? true,
+      canAnswer: (await this.o.host.canReplyForm?.()) ?? true,
       questions: prompts
         .filter((p) => p.kind === "question" && p.state === "pending")
         .map((p) => ({

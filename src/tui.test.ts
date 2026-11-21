@@ -5,7 +5,11 @@ import { join } from "node:path"
 import { after, before, describe, it } from "node:test"
 
 import { fakeNtfy } from "./connectors/fake-ntfy.test-util.ts"
-import { fakeServer, type FakeServer } from "./fake-server.test-util.ts"
+import {
+  fakeServer,
+  noService,
+  type FakeServer,
+} from "./fake-server.test-util.ts"
 import { startServer } from "./server.ts"
 import { fakeTelegram } from "./connectors/fake-telegram.test-util.ts"
 import type { SidebarView } from "./sidebar.ts"
@@ -146,7 +150,9 @@ function fakeCtx(
 /** Starts the server half in a fake server, as the OpenCode server would load it. */
 async function serve(env: Record<string, string>) {
   const server = fakeServer()
-  const stop = await withEnv(env, () => startServer(server.ctx))
+  const stop = await withEnv(env, () =>
+    startServer(server.ctx, { service: noService }),
+  )
   return { server, stop }
 }
 
