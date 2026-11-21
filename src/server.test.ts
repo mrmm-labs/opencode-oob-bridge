@@ -10,7 +10,8 @@ import { fakeServer } from "./fake-server.test-util.ts"
 import plugin from "./index.ts"
 import { formRelay } from "./remote.ts"
 import { RPC_ID, type Snapshot } from "./rpc.ts"
-import { startServer } from "./server.ts"
+import { startServer, timings } from "./server.ts"
+import { TimedOut, withTimeout } from "./util.ts"
 
 async function withEnv<T>(
   vars: Record<string, string>,
@@ -311,6 +312,62 @@ describe("the server half", () => {
     assert.equal(server.disposed(), 0)
     await stop!()
     await t.n.close()
+  })
+
+  it("a session the host never answers for does not stop the events of the others", async () => {
+    const t = await setup()
+    const { server, stop } = await t.load()
+    server.hang.add("stuck")
+    server.emit("session.execution.started", { sessionID: "stuck" })
+    server.emit("session.text.delta", {
+      sessionID: "stuck",
+      assistantMessageID: "m",
+      ordinal: 0,
+      delta: "x",
+    })
+    server.emit("form.created", {
+      form: {
+        id: "frm_2",
+        sessionID: "root",
+        metadata: { kind: "question" },
+        fields: [{ key: "q0", type: "string", options: [{ label: "Yes" }] }],
+      },
+    })
+    const pub = await t.n.waitFor(() => t.n.published[0])
+    assert.match(String(pub.body.message), /Answer this at the Mac/)
+    await stop!()
+    await t.n.close()
+  })
+
+  it("goes on without a host answer after the time limit", async () => {
+    const t = await setup()
+    const keep = timings.sessionGetMs
+    timings.sessionGetMs = 50
+    try {
+      const { server, stop } = await t.load()
+      server.hang.add("root")
+      server.emit("form.created", {
+        form: {
+          id: "frm_3",
+          sessionID: "root",
+          metadata: { kind: "question" },
+          fields: [{ key: "q0", type: "string", options: [{ label: "Yes" }] }],
+        },
+      })
+      await t.n.waitFor(() => t.n.published[0])
+      await stop!()
+    } finally {
+      timings.sessionGetMs = keep
+    }
+    await t.n.close()
+  })
+
+  it("withTimeout rejects a call that never returns and passes one that does", async () => {
+    await assert.rejects(
+      withTimeout(new Promise(() => {}), 20, "host"),
+      TimedOut,
+    )
+    assert.equal(await withTimeout(Promise.resolve(7), 20, "host"), 7)
   })
 
   it("says why a form answer cannot be made when no window is attached", async () => {

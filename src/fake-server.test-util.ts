@@ -39,11 +39,14 @@ export function fakeServer(
   let registrations = 0
   let disposed = 0
   const opts = { resume: true }
+  /** Sessions the host never answers `get` for. */
+  const hang = new Set<string>()
 
   const ctx = {
     location: { directory: "/w/shop" },
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
+        if (hang.has(sessionID)) return new Promise<never>(() => {})
         const s = sessions[sessionID]
         if (!s) throw new Error("not found")
         return s
@@ -106,6 +109,7 @@ export function fakeServer(
   return {
     ctx: ctx as unknown as Plugin.Context,
     sessions,
+    hang,
     prompts,
     synthetics,
     calls,

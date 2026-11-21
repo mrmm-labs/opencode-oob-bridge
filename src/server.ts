@@ -34,7 +34,7 @@ import { definition, type FormRelay } from "./rpc.ts"
 import { Router } from "./routing.ts"
 import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
-import { isObject, sleep } from "./util.ts"
+import { isObject, sleep, TimedOut, withTimeout } from "./util.ts"
 import { RUNNING } from "./version.ts"
 
 type Context = Plugin.Context
@@ -67,6 +67,8 @@ const RESUME_TEXT =
   "Continue from where you left off: messages are waiting in your inbox. This was started from the chat bridge."
 const FORM_WAIT_MS = 10_000
 const STANDBY_MS = 15_000
+/** How long a call to the host may take before the bridge goes on without its answer; tests shorten it. */
+export const timings = { sessionGetMs: 8_000 }
 
 type Info = {
   id: string
@@ -460,8 +462,14 @@ async function boot(
 
   const sessions = new Sessions(async (id) => {
     try {
-      return (await ctx.session.get({ sessionID: id })) as unknown as Info
-    } catch {
+      return (await withTimeout(
+        ctx.session.get({ sessionID: id }),
+        timings.sessionGetMs,
+        "session.get",
+      )) as unknown as Info
+    } catch (err) {
+      if (err instanceof TimedOut)
+        log("host_timeout", { call: "session.get", message: err.message })
       return undefined
     }
   })
@@ -557,13 +565,38 @@ async function boot(
   }
 
   const ac = new AbortController()
+  const handle = async (ev: { type: string; data?: unknown }, id?: string) => {
+    await sessions.ensure(id)
+    sessions.apply(ev)
+    core.event(ev.type, id ? sessions.root(id) : undefined)
+    if ((EVENTS as string[]).includes(ev.type))
+      void bridge.onEvent(ev as unknown as BridgeEvent)
+  }
+  // The stream is read at once and never waits for the host: events of one session run in order,
+  // and a session the host does not answer for holds up no other.
+  const lanes = new Map<string, Promise<void>>()
+  const dispatch = (ev: { type: string; data?: unknown }, id?: string) => {
+    const fail = (err: unknown) =>
+      log("event_error", { type: ev.type, message: (err as Error).message })
+    if (!id) return void handle(ev).catch(fail)
+    const next = (lanes.get(id) ?? Promise.resolve())
+      .then(() => handle(ev, id))
+      .catch(fail)
+      .finally(() => {
+        if (lanes.get(id) === next) lanes.delete(id)
+      })
+    lanes.set(id, next)
+  }
   const feed = async () => {
     while (!ac.signal.aborted) {
+      const opened = Date.now()
+      let seen = 0
       try {
         for await (const e of ctx.event.subscribe({
           types: [...EVENTS, ...WATCH] as never,
           signal: ac.signal,
         })) {
+          seen++
           const ev = e as unknown as { type: string; data?: unknown }
           control.onEvent(ev)
           const d = (isObject(ev.data) ? ev.data : {}) as Record<
@@ -575,12 +608,10 @@ async function boot(
             (typeof d.sessionID === "string" && d.sessionID) ||
             (typeof form.sessionID === "string" && form.sessionID) ||
             undefined
-          await sessions.ensure(id || undefined)
-          sessions.apply(ev)
-          core.event(ev.type, id ? sessions.root(id) : undefined)
-          if ((EVENTS as string[]).includes(ev.type))
-            void bridge.onEvent(ev as unknown as BridgeEvent)
+          dispatch(ev, id || undefined)
         }
+        if (!ac.signal.aborted)
+          log("event_stream_ended", { events: seen, ms: Date.now() - opened })
       } catch (err) {
         if (!ac.signal.aborted)
           log("event_stream_error", { message: (err as Error).message })

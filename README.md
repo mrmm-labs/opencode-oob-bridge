@@ -405,6 +405,10 @@ With `permissions.remote` at `once` or `all`, the permission message carries but
 
 Each Telegram update is written to `telegram-inbox.jsonl` in the data directory before Telegram is told it arrived, and marked done once handled. A restart handles the unfinished ones again. Updates run in order per topic and in parallel across topics, so a stuck session does not stop the others, and one update may take at most 90 seconds. If the session cannot take a message, the topic says why and the bridge tries again after 5 s, 30 s and 2 min. Every update gets one `telegram_inbound` line in `bridge.log` (kind, topic, outcome, reason, never the text); the core adds one `inbound` line per message.
 
+### Events never wait on one session
+
+The server half reads the host's events at once and hands each to a lane for its session, so a session the host does not answer for delays only itself; `session.get` is abandoned after 8 seconds (`host_timeout` in the log). A stream that ends without an error is logged as `event_stream_ended`.
+
 ### Quiet hours and the digest
 
 With `quiet` set, every message between `from` and `to` arrives without a sound or notification (Telegram: notifications off; ntfy: minimum priority). Nothing is held back or dropped, so the topics stay complete; the window may cross midnight and follows the clock of `timezone`, daylight saving included. `quiet.breakthrough` names the kinds that still notify; the default list is empty.
