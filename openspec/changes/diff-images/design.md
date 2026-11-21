@@ -10,7 +10,7 @@ Trade-off: no anti-aliasing and no characters outside Latin-1. The patch documen
 
 Width 900 px, cell 16×32 px, so **56 columns**. A phone shows the image about 390 pt wide, so a glyph is about 14 px tall on screen, and a tap opens it at full size. Lines longer than 56 columns wrap with a ↪ marker and are never cut.
 
-### D3. Limits
+### D3. Limits (amended)
 
 At most 70 lines per image and at most three images per Diff. Further hunks are only in the patch, and the caption says so. Images go as one album. The patch is a `.diff` document of at most 20 MB.
 
@@ -25,3 +25,5 @@ Files matching `diff.exclude` (default `**/.env*`, `**/*.pem`, `**/*secret*`, `*
 ## Risks
 
 A hand-made font and encoder have bugs. Mitigation: golden-image tests, and a check that decodes the PNG back with a small reader in the test.
+
+Amendment: Telegram shrinks a photo longer than 1280 px, so an image holds 38 rows (1,216 px) rather than 70; "at most 70 lines" still holds. The font is rasterised from Cascadia Code (OFL 1.1) at 8x16, not a hand-drawn set, and is about 3 KB of data. The core API Diff keeps returning the patch as text; the images are made for chat channels.

@@ -269,6 +269,12 @@ export interface Connector {
     data: string,
     caption: string,
   ): Promise<boolean>
+  /** Sends images as one album (one image alone as a photo) with a caption; true when it did. Never throws. */
+  photos?(
+    session: NonNullable<Push["session"]>,
+    images: Uint8Array[],
+    caption: string,
+  ): Promise<boolean>
   /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
   silence?(isQuiet: () => boolean): void
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */

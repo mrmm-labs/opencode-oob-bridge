@@ -216,6 +216,13 @@ type Stream = {
   running: boolean
 }
 
+type UploadFile = {
+  field: string
+  name: string
+  data: string | Uint8Array
+  type?: string
+}
+
 /** A 429 the caller chose not to wait for. */
 class RateLimited extends Error {
   readonly retryAfter: number
@@ -1822,11 +1829,11 @@ export class TelegramConnector implements Connector {
     await done
   }
 
-  /** Multipart upload: a text file with a caption. */
+  /** Multipart upload: one or more files, with fields. */
   private async upload(
     method: string,
     fields: Record<string, string | number | undefined>,
-    file: { field: string; name: string; data: string },
+    file: UploadFile | UploadFile[],
   ): Promise<void> {
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
@@ -1836,11 +1843,12 @@ export class TelegramConnector implements Connector {
       disable_notification: this.quiet?.() ? true : undefined,
     }))
       if (v !== undefined) form.append(k, String(v))
-    form.append(
-      file.field,
-      new Blob([file.data], { type: "text/markdown" }),
-      file.name,
-    )
+    for (const f of Array.isArray(file) ? file : [file])
+      form.append(
+        f.field,
+        new Blob([f.data as never], { type: f.type ?? "text/markdown" }),
+        f.name,
+      )
     const base = this.opts.apiBase ?? "https://api.telegram.org"
     const res = await this.fetch(`${base}/bot${token}/${method}`, {
       method: "POST",
@@ -2194,6 +2202,49 @@ export class TelegramConnector implements Connector {
     } catch (err) {
       if (!/not modified|not found/i.test((err as Error).message))
         this.fail(err)
+    }
+  }
+
+  async photos(
+    session: NonNullable<Push["session"]>,
+    images: Uint8Array[],
+    caption: string,
+  ): Promise<boolean> {
+    if (!this.chatId || images.length === 0) return false
+    try {
+      const thread = await this.thread(session)
+      const files = images.map((data, i) => ({
+        field: `p${i}`,
+        name: `diff-${i + 1}.png`,
+        data,
+        type: "image/png",
+      }))
+      const base = { chat_id: this.chatId, message_thread_id: thread }
+      if (files.length === 1)
+        await this.upload(
+          "sendPhoto",
+          { ...base, caption },
+          { ...files[0], field: "photo" },
+        )
+      else
+        await this.upload(
+          "sendMediaGroup",
+          {
+            ...base,
+            media: JSON.stringify(
+              files.map((f, i) => ({
+                type: "photo",
+                media: `attach://${f.field}`,
+                ...(i === 0 ? { caption } : {}),
+              })),
+            ),
+          },
+          files,
+        )
+      return true
+    } catch (err) {
+      this.fail(err)
+      return false
     }
   }
 

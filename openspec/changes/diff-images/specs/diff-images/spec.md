@@ -1,3 +1,7 @@
+## Purpose
+
+Diff images lets the operator read what a session changed on a phone: highlighted, bounded images drawn by the bridge, with the patch as the lossless fallback and secret files never drawn.
+
 ## ADDED Requirements
 
 ### Requirement: Diff sends images and the patch
