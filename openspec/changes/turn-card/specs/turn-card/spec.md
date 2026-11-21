@@ -1,3 +1,7 @@
+## Purpose
+
+The turn card tells the operator what a finished turn did without opening the Mac: a one-line result, a collapsed summary and file list, and buttons to look at the diff, carry on or stop.
+
 ## ADDED Requirements
 
 ### Requirement: A turn card is posted for a turn with changes or a long turn

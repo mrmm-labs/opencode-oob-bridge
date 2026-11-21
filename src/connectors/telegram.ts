@@ -39,6 +39,7 @@ import {
   keycap,
   renderPush,
   renderStatus,
+  renderTurnCard,
   starred,
 } from "./telegram-render.ts"
 import {
@@ -73,6 +74,7 @@ import type {
   Push,
   SendStats,
   SessionState,
+  TurnCard,
 } from "./types.ts"
 
 const MAX_BUTTONS = 10
@@ -229,6 +231,7 @@ export class TelegramConnector implements Connector {
     threads: true,
     pairing: true,
     inboundPrompt: true,
+    foldable: true,
   }
   readonly id: string
   readonly notify: { finished: boolean; failed: boolean }
@@ -1330,7 +1333,8 @@ export class TelegramConnector implements Connector {
         inline: true,
       })
     }
-    if (cb.data === "ctl:resume") {
+    const ctl = /^ctl:(resume|diff|continue|stop)$/.exec(cb.data ?? "")
+    if (ctl) {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
       return this.answer(cb.id, {
@@ -1338,7 +1342,7 @@ export class TelegramConnector implements Connector {
         id: "cb" + cb.id,
         time: Math.floor(Date.now() / 1000),
         sessionKey,
-        text: "resume",
+        text: ctl[1],
         from: { connector: this.id, chat: String(cb.message.chat.id) },
         inline: true,
       })
@@ -1852,6 +1856,76 @@ export class TelegramConnector implements Connector {
     } catch (err) {
       this.fail(err)
       return undefined
+    }
+  }
+
+  async turnCard(
+    session: NonNullable<Push["session"]>,
+    card: TurnCard,
+    o: { chat: boolean },
+  ): Promise<string | undefined> {
+    if (!this.chatId) return undefined
+    try {
+      const thread = await this.thread(session)
+      const m = await this.call<{ message_id: number }>("sendMessage", {
+        chat_id: this.chatId,
+        message_thread_id: thread,
+        text: renderTurnCard(card),
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        disable_notification: true,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "Diff", callback_data: "ctl:diff" },
+              ...(o.chat
+                ? [{ text: "Continue", callback_data: "ctl:continue" }]
+                : []),
+              { text: "Stop", callback_data: "ctl:stop" },
+            ],
+          ],
+        },
+      })
+      this.remember(m.message_id, session.id)
+      return String(m.message_id)
+    } catch (err) {
+      this.fail(err)
+      return undefined
+    }
+  }
+
+  async unbutton(ref: string): Promise<void> {
+    if (!this.chatId) return
+    try {
+      await this.call("editMessageReplyMarkup", {
+        chat_id: this.chatId,
+        message_id: Number(ref),
+        reply_markup: { inline_keyboard: [] },
+      })
+    } catch (err) {
+      if (!/not modified|not found/i.test((err as Error).message))
+        this.fail(err)
+    }
+  }
+
+  async document(
+    session: NonNullable<Push["session"]>,
+    name: string,
+    data: string,
+    caption: string,
+  ): Promise<boolean> {
+    if (!this.chatId) return false
+    try {
+      const thread = await this.thread(session)
+      await this.upload(
+        "sendDocument",
+        { chat_id: this.chatId, message_thread_id: thread, caption },
+        { field: "document", name, data },
+      )
+      return true
+    } catch (err) {
+      this.fail(err)
+      return false
     }
   }
 

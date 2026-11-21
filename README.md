@@ -92,24 +92,26 @@ nothing and opens no connection.**
 }
 ```
 
-| Key                       | Default  | Meaning                                                                              |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------ |
-| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                         |
-| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                     |
-| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.        |
-| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).            |
-| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.              |
-| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                          |
-| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                 |
-| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                      |
-| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.            |
-| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.           |
-| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                   |
-| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.     |
-| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only). |
-| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.            |
-| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                          |
-| `core.port`               | `7842`   | The core API port.                                                                   |
+| Key                       | Default  | Meaning                                                                                                         |
+| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| `channels.ntfy`           | none     | The ntfy channel. See [Channels](#channels).                                                                    |
+| `channels.telegram`       | none     | The Telegram channel. See [Channels](#channels).                                                                |
+| `defaultChannel`          | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.                                   |
+| `sidebar`                 | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).                                       |
+| `away.minutes`            | `10`     | Minutes without input in the TUI before matching sessions are mirrored.                                         |
+| `rules`                   | `[]`     | Which sessions are mirrored while you are away. Empty: all.                                                     |
+| `redact`                  | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).                                            |
+| `permissions`             | tier 3   | Only tier 3 (push only) exists.                                                                                 |
+| `messages`                | built in | Push formats per kind, overriding the defaults field by field. See below.                                       |
+| `profiles`                | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.                                      |
+| `otel`                    | off      | OpenTelemetry export. See [Telemetry](#telemetry).                                                              |
+| `core.bind`               | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address.                                |
+| `deadman.url`             | off      | Where the [heartbeat](#dead-mans-switch) goes: an https URL (http on loopback only).                            |
+| `deadman.token`           | none     | The receiver's bearer token: `{ "env": NAME }` or `{ "command": [...] }`.                                       |
+| `deadman.intervalSeconds` | `30`     | Seconds between heartbeats.                                                                                     |
+| `turnCard`                | on       | A card when a turn ends with changes or after a long turn: `false` turns it off. See [Turn cards](#turn-cards). |
+| `turnCard.minSeconds`     | `20`     | A turn that changed nothing gets a card only when it ran this long.                                             |
+| `core.port`               | `7842`   | The core API port.                                                                                              |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -367,6 +369,10 @@ How it behaves:
   to an agent that may run commands in your project: keep the group private, keep chat off for
   sensitive projects, and put them in `chat.deny`. Use `redact: "title"` if replies must not
   leave the machine.
+
+### Turn cards
+
+When a turn of a mirrored session ends and it changed a file, or ran at least `turnCard.minSeconds`, the bot posts one card in the topic. The first line is always visible: `✅ Done · 14 files · +320 −41 · 3m12s`. The last paragraph of the final reply and the changed files (15, then "+N more") sit in a block Telegram shows collapsed. Under it: **Diff** sends the patch as a file, **Continue** sends `continue` to the session (left out when chat is off), **Stop** interrupts the running turn. A new card, or an hour, takes the buttons off the old one. Counts are what the turn changed in the working tree; when the tree cannot be read the card shows no counts. Subagent turns get no card, and a channel that cannot fold gets the first line and a short summary.
 
 ### Commands
 

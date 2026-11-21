@@ -536,3 +536,21 @@ describe("deadman", () => {
       )
   })
 })
+
+describe("turnCard", () => {
+  const base = { channels: { telegram: { token: { env: "X" } } } }
+  it("is on with 20 seconds by default, off with false, and takes minSeconds", () => {
+    const c = (turnCard?: unknown) =>
+      (parseConfig({ ...base, turnCard }) as Config).turnCard
+    assert.deepEqual(c(), { enabled: true, minSeconds: 20 })
+    assert.equal(c(false).enabled, false)
+    assert.deepEqual(c({ minSeconds: 0 }), { enabled: true, minSeconds: 0 })
+  })
+  it("refuses a value that is not a boolean or a sensible object", () => {
+    for (const turnCard of ["yes", { minSeconds: -1 }, { minSeconds: "5" }])
+      assert.ok(
+        "error" in (parseConfig({ ...base, turnCard }) as object),
+        JSON.stringify(turnCard),
+      )
+  })
+})
