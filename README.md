@@ -38,8 +38,13 @@ on|off|auto` overrides it for the instance.
 - **Suspended sessions.** When a session holds messages it is not working on (a prompt you queued
   that never ran, subagent results nobody delivered), the bridge sends a notice to the session's
   topic with a **▶ Resume** button. The button wakes the session through the host's synthetic-message
-  call. If the host refuses, the notice says to open it at the Mac. Away mode itself cannot be
-  changed from a chat.
+  call and then says what it observed, on the notice itself, whose button goes: the session is
+  working again, it took its waiting messages, or nothing changed in 30 seconds (open it at the
+  Mac). If the host refuses, the notice says to open it at the Mac. A suspension gets one notice;
+  another comes only when more messages wait or after six hours, and a notice whose session woke
+  by itself says so. A second tap on a used notice wakes nothing. Every resume logs a `resume` line
+  with the session, the source (`button`, `command` or `sidebar`), the outcome and the time. Away mode
+  itself cannot be changed from a chat.
 - **Question forms.** The server plugin API has no form-reply call; only a TUI has one. A form
   answered from a chat is handed to an attached TUI, which makes the reply. With no TUI attached
   the answer is refused and the chat says to answer at the Mac.
@@ -741,7 +746,9 @@ reference implementation of the receiver side.
 - Away means no input in any attached TUI; keystrokes alone do not count. With no TUI it is always
   away.
 - Waking a suspended session uses the host's synthetic-message call; the host has no dedicated
-  resume call, so a session it refuses to wake has to be opened at the Mac.
+  resume call, so a session it refuses to wake has to be opened at the Mac. Whether a resume
+  worked is observed for 30 seconds: a session that starts a turn is `working`, one whose inbox
+  empties is `drained`, anything else is `no_effect`.
 - In OpenCode 2.3 the built-in subagents have no `question` tool, so subagent questions only come
   from agents you give it to. Subagent permission prompts are mirrored as usual.
 - A session that is interrupted (for example by rejecting a permission) sends no finished push.

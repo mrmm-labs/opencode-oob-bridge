@@ -887,7 +887,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
     const woken: string[] = []
     const r = await rig({ host: { resume: async (id) => void woken.push(id) } })
     r.say("/resume", THREAD)
-    await r.answered(/Resuming/)
+    await r.answered(/Waking it/)
     assert.deepEqual(woken, ["root"])
     await r.done()
   })
@@ -906,7 +906,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
     await r.answered(/Wake which session/)
     assert.deepEqual(buttons(lastMenu(r)), ["shop (2 waiting)"])
     tap(r, "shop (2 waiting)")
-    await r.answered(/Resuming/)
+    await r.answered(/Waking it/)
     assert.deepEqual(woken, ["root"])
     await r.done()
   })

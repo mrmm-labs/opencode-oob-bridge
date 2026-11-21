@@ -49,7 +49,7 @@ import {
   stats,
   type Stats,
 } from "./turncard.ts"
-import { clock, formatDuration, truncate } from "./util.ts"
+import { clock, formatDuration, sleep, truncate } from "./util.ts"
 
 export type SessionInfo = {
   id: string
@@ -381,6 +381,16 @@ export class Bridge {
   /** Every client acts on a session through this. */
   readonly actions: Actions
   private watchListener: ((root: string) => void) | undefined
+  private waitingSource: ((id: string) => number) | undefined
+  /** The alert sent for each stuck session, and whether its button was used. */
+  private readonly alerts = new Map<
+    string,
+    { refs: Record<string, string>; used: boolean }
+  >()
+  /** How long a Resume is watched, and how often; tests shorten both. */
+  private resumeWatchMs = 30_000
+  private resumePollMs = 500
+  private readonly watchers = new Set<AbortController>()
   private stuckSource:
     | (() => Array<{ id: string; label: string; pending: number }>)
     | undefined
@@ -495,6 +505,11 @@ export class Bridge {
     this.stuckSource = fn
   }
 
+  /** How many messages wait on a session, to tell a resume that took them from one that did nothing. */
+  onWaiting(fn: (id: string) => number): void {
+    this.waitingSource = fn
+  }
+
   /** What `/afk` answers in a chat: the state, never a way to change it. */
   afkStatus(): string {
     const away = this.router.away()
@@ -600,6 +615,8 @@ export class Bridge {
     this.feeds.clear()
     for (const c of this.cards.values()) clearTimeout(c.timer)
     this.cards.clear()
+    for (const ac of this.watchers) ac.abort()
+    this.watchers.clear()
     clearInterval(this.digestTimer)
     this.digestTimer = undefined
     await this.store.flush()
@@ -1853,7 +1870,7 @@ export class Bridge {
     if (m.text === "resume") {
       info.root = root
       info.outcome = "applied"
-      return this.resume(root)
+      return this.resume(root, "button")
     }
     if (m.text === "diff" || m.text === "continue" || m.text === "stop") {
       info.root = root
@@ -1866,22 +1883,107 @@ export class Bridge {
     return this.setChat(root, false)
   }
 
-  /** Wakes a session; says so, or says it must be done at the computer. */
-  async resume(root: string): Promise<Outcome> {
+  /**
+   * Wakes a session and answers at once; whether it started is watched and
+   * reported afterwards, on the alert when there is one.
+   */
+  async resume(
+    root: string,
+    source: "button" | "command" | "sidebar" = "command",
+  ): Promise<Outcome> {
     const where = "Open it at the Mac to resume it."
     if (!this.host.resume)
       return no("This OpenCode cannot resume a session from here. " + where)
+    const alert = this.alerts.get(root)
+    if (source === "button" && alert?.used)
+      return no("That alert was already used. Send /resume to try again.")
+    const before = this.waitingSource?.(root)
+    if (before === 0 && !this.host.busy(root))
+      return no(
+        "Nothing is waiting on this session, so there is nothing to wake.",
+      )
+    const at = Date.now()
+    if (alert) alert.used = true
     try {
       await this.actions.wake(root)
-      log("resume", { ok: true })
-      return {
-        ok: true,
-        text: "▶ Resuming: the session is picking up its waiting messages.",
-      }
     } catch (err) {
+      if (alert) alert.used = false
+      log("resume", { session: root, source, outcome: "refused", at })
       log("resume_error", { message: (err as Error).message })
       return no("Could not resume it. " + where)
     }
+    void this.watchResume(root, source, before, at)
+    return {
+      ok: true,
+      text: "▶ Waking it. I will say whether it started.",
+    }
+  }
+
+  /** Watches a woken session and reports what happened: working, drained or no_effect. */
+  private async watchResume(
+    root: string,
+    source: string,
+    before: number | undefined,
+    at: number,
+  ): Promise<void> {
+    const ac = new AbortController()
+    this.watchers.add(ac)
+    let outcome: "working" | "drained" | "no_effect" = "no_effect"
+    try {
+      while (!ac.signal.aborted && Date.now() - at < this.resumeWatchMs) {
+        if (this.host.busy(root)) {
+          outcome = "working"
+          break
+        }
+        if (before && this.waitingSource?.(root) === 0) {
+          outcome = "drained"
+          break
+        }
+        await sleep(this.resumePollMs, ac.signal)
+      }
+      if (ac.signal.aborted) return
+    } finally {
+      this.watchers.delete(ac)
+    }
+    log("resume", { session: root, source, outcome, at })
+    const text = {
+      working: "▶ Resumed: the session is working again.",
+      drained: "▶ Resumed: the session took its waiting messages.",
+      no_effect:
+        "▶ The wake was accepted but nothing changed in " +
+        Math.round(this.resumeWatchMs / 1000) +
+        " seconds. Open the session at the Mac.",
+    }[outcome]
+    await this.tellAlert(root, text)
+  }
+
+  /** Rewrites the session's alert without its button; a notice when there is no alert. */
+  private async tellAlert(root: string, text: string): Promise<void> {
+    const r = await this.routed(root)
+    if (!r) return
+    const alert = this.alerts.get(root)
+    const f = this.fmt("notice", { text })
+    await this.dispatch(
+      "notice",
+      r.to,
+      (ch) => ({
+        ...f,
+        ...this.shape(ch, r.session),
+        ...this.card(ch, "notice", r.facts, () => ({ kind: "notice", text })),
+      }),
+      { root, refs: alert?.refs, session: r.session },
+    )
+  }
+
+  /** The session woke by some other route: its alert says so and loses its button. */
+  async alertGone(root: string): Promise<void> {
+    const alert = this.alerts.get(root)
+    if (!alert || alert.used) return
+    alert.used = true
+    await this.tellAlert(
+      root,
+      "▶ This session resumed on its own. Nothing to do.",
+    )
   }
 
   /**
@@ -1904,7 +2006,7 @@ export class Bridge {
       (o.pending === 1 ? "it" : "them") +
       ". Resume wakes it, or open it at the Mac."
     const f = this.fmt("notice", { text })
-    const { ok } = await this.dispatch(
+    const { ok, refs } = await this.dispatch(
       "notice",
       r.to,
       (ch) => ({
@@ -1918,6 +2020,11 @@ export class Bridge {
       }),
       { root },
     )
+    const old = this.alerts.get(root)
+    if (old && !old.used)
+      for (const ch of this.active())
+        if (old.refs[ch.id]) await ch.unbutton?.(old.refs[ch.id])
+    this.alerts.set(root, { refs, used: false })
     return Object.values(ok).some(Boolean)
   }
 
