@@ -26,6 +26,7 @@ import type {
 import { filterSecrets } from "../filter.ts"
 import { parseReply, type Question } from "../inbound.ts"
 import { log } from "../logger.ts"
+import type { FileJob } from "../sendfile.ts"
 import type { Telemetry } from "../otel.ts"
 import { traces, type Class, type Rec } from "../trace.ts"
 import {
@@ -2437,6 +2438,7 @@ export class TelegramConnector implements Connector {
     method: string,
     fields: Record<string, string | number | undefined>,
     file: UploadFile | UploadFile[],
+    timeoutMs = 30_000,
   ): Promise<void> {
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
@@ -2457,14 +2459,17 @@ export class TelegramConnector implements Connector {
       method: "POST",
       body: form,
       keepalive: false,
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     })
     const json = (await res.json().catch(() => undefined)) as
       | { ok?: boolean; description?: string }
       | undefined
     if (!json?.ok)
-      throw new Error(
-        `telegram ${method} failed: HTTP ${res.status} ${json?.description ?? ""}`.trim(),
+      throw Object.assign(
+        new Error(
+          `telegram ${method} failed: HTTP ${res.status} ${json?.description ?? ""}`.trim(),
+        ),
+        { status: res.status },
       )
   }
 
@@ -2850,6 +2855,57 @@ export class TelegramConnector implements Connector {
     } catch (err) {
       this.fail(err)
       return false
+    }
+  }
+
+  async file(
+    session: NonNullable<Push["session"]>,
+    f: FileJob,
+    caption: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.chatId)
+      return { ok: false, error: "Telegram is not paired to a chat" }
+    try {
+      this.topics ??= await this.loadTopics()
+      const known = this.topics.get(this.topicKey(session.id))
+      if (!known || known.thread === 1)
+        return {
+          ok: false,
+          error:
+            "this session has no Telegram topic: turn chat on for it first",
+        }
+      const method = f.kind === "photo" ? "sendPhoto" : "sendDocument"
+      const data = await f.read()
+      for (let attempt = 0; ; attempt++)
+        try {
+          await this.upload(
+            method,
+            {
+              chat_id: this.chatId,
+              message_thread_id: known.thread,
+              caption: caption || undefined,
+            },
+            { field: f.kind, name: f.name, data, type: f.type },
+            120_000,
+          )
+          return { ok: true }
+        } catch (err) {
+          const status = (err as { status?: number }).status
+          if (attempt === 0 && status !== undefined && status >= 500) {
+            log("telegram_call_retry", {
+              method,
+              message: (err as Error).message,
+            })
+            continue
+          }
+          throw err
+        }
+    } catch (err) {
+      this.fail(err)
+      return {
+        ok: false,
+        error: truncate(filterSecrets((err as Error).message), 200),
+      }
     }
   }
 

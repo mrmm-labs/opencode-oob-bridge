@@ -12,6 +12,7 @@ import type {
   Settled,
 } from "../approvals/types.ts"
 import type { Question } from "../inbound.ts"
+import type { FileJob } from "../sendfile.ts"
 import type { Telemetry } from "../otel.ts"
 
 export type Capabilities = {
@@ -292,6 +293,15 @@ export interface Connector {
     data: string,
     caption: string,
   ): Promise<boolean>
+  /**
+   * Sends a file the agent asked for to the thread this session already has, never creating one and never
+   * falling back to the main chat. Never throws; `error` is short and safe to show the agent.
+   */
+  file?(
+    session: NonNullable<Push["session"]>,
+    file: FileJob,
+    caption: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }>
   /** Sends images as one album (one image alone as a photo) with a caption; true when it did. Never throws. */
   photos?(
     session: NonNullable<Push["session"]>,

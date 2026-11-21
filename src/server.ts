@@ -31,6 +31,8 @@ import { resolveToken } from "./token.ts"
 import { acquire, read as readLock, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
 import { resolveOtel, Telemetry } from "./otel.ts"
+import { serviceClient, type ServiceClient } from "./serviceclient.ts"
+import { fileTool, type FileOutcome } from "./sendfile.ts"
 import { traces } from "./trace.ts"
 import { PendingStore } from "./pending.ts"
 import { definition, type FormRelay } from "./rpc.ts"
@@ -39,7 +41,6 @@ import { OvernightStore } from "./overnight.ts"
 import { SettingsStore } from "./settings.ts"
 import { isObject, sleep, TimedOut, withTimeout } from "./util.ts"
 import { startWatchdog } from "./watchdog.ts"
-import { serviceClient, type ServiceClient } from "./serviceclient.ts"
 import { RUNNING } from "./version.ts"
 
 type Context = Plugin.Context
@@ -380,7 +381,11 @@ export function serverHost(
   }
 }
 
-type Running = { control: Control; stop(): Promise<void> }
+type Running = {
+  control: Control
+  sendFile: Bridge["sendFile"]
+  stop(): Promise<void>
+}
 
 /** The answer the TUI's status call gives: JSON values only. */
 const statusSnapshot = (control: Control, roots: string[]) =>
@@ -677,6 +682,7 @@ async function boot(
   })
   return {
     control,
+    sendFile: (sessionID, input) => bridge.sendFile(sessionID, input),
     async stop() {
       unwatch()
       await deadman?.stop()
@@ -717,7 +723,11 @@ type Registration = {
 }
 
 /** One plugin instance: OpenCode sets the plugin up once per location of the server, all in one process. */
-type Member = { ctx: Context; reg?: Registration }
+type Member = {
+  ctx: Context
+  reg?: Registration
+  tool?: { dispose(): Promise<void> }
+}
 
 type Held = Extract<Lock, { held: true }>
 
@@ -764,6 +774,21 @@ class Hub {
       )?.("form", plain(r)).catch((err: Error) =>
         log("form_relay_error", { message: err.message }),
       )
+  }
+
+  /** The `oob_send_file` tool's work: the owner's bridge, or why there is none. */
+  private async sendFile(
+    sessionID: string,
+    input: Record<string, unknown>,
+  ): Promise<FileOutcome> {
+    if (this.running) return this.running.sendFile(sessionID, input)
+    return {
+      ok: false,
+      error:
+        this.foreign && this.foreign > 0
+          ? "the bridge runs in another OpenCode process"
+          : "the bridge is starting",
+    }
   }
 
   /** The controller, or why there is none. */
@@ -821,6 +846,23 @@ class Hub {
         } as never
       }),
     } as never)) as unknown as Registration
+    // Every instance offers the tool; the owner's bridge answers it.
+    member.tool = await (
+      ctx as unknown as {
+        tool?: {
+          transform(
+            fn: (e: { add(t: never): void }) => void,
+          ): Promise<{ dispose(): Promise<void> }>
+        }
+      }
+    ).tool
+      ?.transform((editor) =>
+        editor.add(fileTool((id, input) => this.sendFile(id, input)) as never),
+      )
+      .catch((err: Error) => {
+        log("tool_register_error", { message: err.message })
+        return undefined
+      })
     await this.serial(() => this.elect())
     return () => this.leave(member)
   }
@@ -874,6 +916,7 @@ class Hub {
     return this.serial(async () => {
       if (!this.members.delete(member)) return
       await member.reg?.dispose().catch(() => {})
+      await member.tool?.dispose().catch(() => {})
       if (this.owner === member) {
         await this.running?.stop()
         this.running = undefined

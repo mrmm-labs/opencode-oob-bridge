@@ -426,6 +426,21 @@ How it behaves:
   sensitive projects, and put them in `chat.deny`. Use `redact: "title"` if replies must not
   leave the machine.
 
+### Sending a file from the agent
+
+The plugin gives every agent one tool, `oob_send_file`, that posts a file to the Telegram topic of the session it runs in.
+
+| Parameter         | Meaning                                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `path` (required) | The file. `~/` is expanded.                                                                                 |
+| `caption`         | Optional text, redacted like replies and cut at 1024 characters.                                            |
+| `as`              | `photo`, `document` or `auto` (default): an image under 10 MB goes as a photo, anything else as a document. |
+
+- The topic is the one bound to the root session (a subagent sends to its parent's topic). With no topic the tool fails and says so; it never falls back to General, and it never creates a topic.
+- Up to 50 MB. A directory, a file that is not a regular file, and a symlink that points outside the home directory are refused.
+- A failed send returns a short error to the agent. A 5xx answer from Telegram is retried once.
+- The log gets `file_sent` (or `file_failed`) with the size, the kind, the session and the `trace_id`. Neither the name nor the contents are logged.
+
 ### Permissions from a channel
 
 With `permissions.remote` at `once` or `all`, the permission message carries buttons: **Allow once** and **Deny**, and with `all` also **Always** (which writes a saved rule, so it needs `all`). The reply is made through OpenCode's permission reply; the message then shows who answered, from which channel and when, and the log records the session, the action, the choice, the channel and the time. Leave it `off` unless you accept that whoever controls the paired chat can allow what the session asks for; the first answer wins, from the phone or the TUI.
