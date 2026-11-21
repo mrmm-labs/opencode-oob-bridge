@@ -8,6 +8,7 @@ import type { Host, ModelOption } from "../bridge.ts"
 import type { Delivery } from "../config.ts"
 import type { Answer } from "../inbound.ts"
 import type { InboundFile } from "../connectors/types.ts"
+import type { DiffFile } from "../diffimage.ts"
 import { log } from "../logger.ts"
 
 const MAX_NEW_PER_HOUR = 5
@@ -131,13 +132,18 @@ export class Actions {
     await this.d.host.prompt(root, text, delivery, files)
   }
 
-  /** The session's working-tree changes as one patch; undefined when the host cannot read them. */
-  async patch(root: string): Promise<string | undefined> {
+  /** The session's working-tree changes by file; undefined when the host cannot read them. */
+  async diffFiles(root: string): Promise<DiffFile[] | undefined> {
     await this.gate(root)
     const dir = (await this.d.host.session(root))?.directory
     if (!dir || !this.d.host.diff) return undefined
-    return (await this.d.host.diff(dir))
-      .map((f) => f.patch)
+    return this.d.host.diff(dir)
+  }
+
+  /** The same changes as one patch. */
+  async patch(root: string): Promise<string | undefined> {
+    return (await this.diffFiles(root))
+      ?.map((f) => f.patch)
       .filter(Boolean)
       .join("\n")
   }

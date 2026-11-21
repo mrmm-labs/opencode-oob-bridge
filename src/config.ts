@@ -10,6 +10,7 @@ import {
   validZone,
   type QuietHours,
 } from "./quiet.ts"
+import { DEFAULT_EXCLUDE, type DiffTheme } from "./diffimage.ts"
 import { DEFAULT_MIN_SECONDS } from "./turncard.ts"
 import { parseJsonc } from "./jsonc.ts"
 import { parseTokenSource, TOKEN_ERROR, type TokenSource } from "./token.ts"
@@ -86,6 +87,7 @@ export type Config = {
   turnCard: { enabled: boolean; minSeconds: number }
   /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
   permissions: { remote: "off" | "once" | "all" }
+  diff: { exclude: string[]; theme: DiffTheme }
   /** Silent delivery between two clock times: off unless set. */
   quiet?: QuietHours
   /** One summary message a day: off unless set. `at` is minutes after local midnight. */
@@ -155,6 +157,20 @@ function parsePermissions(
   if (remote !== "off" && remote !== "once" && remote !== "all")
     return { error: "permissions.remote must be off, once or all" }
   return { remote }
+}
+
+function parseDiff(raw: unknown): Config["diff"] | { error: string } {
+  if (raw === undefined) return { exclude: DEFAULT_EXCLUDE, theme: "dark" }
+  if (!isObject(raw)) return { error: "diff must be an object" }
+  const { exclude = DEFAULT_EXCLUDE, theme = "dark" } = raw
+  if (
+    !Array.isArray(exclude) ||
+    exclude.some((g) => typeof g !== "string" || !g || g.length > 200)
+  )
+    return { error: "diff.exclude must be a list of globs" }
+  if (theme !== "dark" && theme !== "light")
+    return { error: "diff.theme must be dark or light" }
+  return { exclude: exclude as string[], theme }
 }
 
 function parseTurnCard(raw: unknown): Config["turnCard"] | { error: string } {
@@ -465,6 +481,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
 
   const permissions = parsePermissions(raw.permissions)
   if ("error" in permissions) return permissions
+  const diff = parseDiff(raw.diff)
+  if ("error" in diff) return diff
   const turnCard = parseTurnCard(raw.turnCard)
   if ("error" in turnCard) return turnCard
 
@@ -496,6 +514,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     deadman,
     turnCard,
     permissions,
+    diff,
     quiet,
     digest,
     rules,

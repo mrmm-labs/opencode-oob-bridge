@@ -40,6 +40,7 @@ async function rig(
     chat?: Record<string, unknown>
     diff?: () => Promise<F[]>
     stopped?: boolean
+    diffCfg?: unknown
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -58,6 +59,7 @@ async function rig(
     channels: { telegram: { token: { env: "X" } } },
     chat: o.chat,
     turnCard: o.turnCard,
+    diff: o.diffCfg,
   }) as Config
   const state = { files: [] as F[], prompts: [] as string[], stops: 0 }
   const host: Host = {
@@ -417,5 +419,116 @@ describe("turn card: rendering and the pure parts", () => {
     assert.equal(shouldCard({ minSeconds: 20, seconds: 5 }), false)
     assert.equal(shouldCard({ minSeconds: 20, seconds: 25 }), true)
     assert.equal(shouldCard({ minSeconds: 20, seconds: 1, changed: 1 }), true)
+  })
+})
+
+describe("turn card: the Diff button draws images", () => {
+  const tap = (r: Awaited<ReturnType<typeof rig>>, data: string) =>
+    r.tg.callback(CHAT, 1, data, 9001)
+  const hunk = (n: number, name = "a.ts"): F => ({
+    file: name,
+    status: "modified",
+    additions: n,
+    deletions: 0,
+    patch: [
+      "diff --git a/" + name + " b/" + name,
+      `@@ -1,${n} +1,${n} @@`,
+      ...Array.from({ length: n }, (_, i) => "+line " + i),
+    ].join("\n"),
+  })
+  const diffed = async (files: F[], o: Parameters<typeof rig>[0] = {}) => {
+    const r = await rig(o)
+    await r.turn(files)
+    await r.tg.waitFor(() => r.cards()[0])
+    tap(r, "ctl:diff")
+    return r
+  }
+
+  it("a small diff is one photo and the patch document", async () => {
+    const r = await diffed([hunk(5)])
+    const p = await r.tg.waitFor(() => r.tg.of("sendPhoto")[0])
+    assert.match(p.body.fields.caption, /1 file \+5 -0/)
+    const d = await r.tg.waitFor(() => r.tg.of("sendDocument")[0])
+    assert.match(d.body.fields.document, /\+line 4/)
+    assert.equal(d.body.fields.caption, "📄 Patch")
+    assert.equal(r.tg.of("sendMediaGroup").length, 0)
+    await r.done()
+  })
+
+  it("a large diff is an album of three, and the caption says the rest is in the patch", async () => {
+    const r = await diffed([hunk(500)])
+    const g = await r.tg.waitFor(() => r.tg.of("sendMediaGroup")[0])
+    const media = JSON.parse(g.body.fields.media)
+    assert.equal(media.length, 3)
+    assert.deepEqual(
+      media.map((m: { media: string }) => m.media),
+      ["attach://p0", "attach://p1", "attach://p2"],
+    )
+    assert.match(media[0].caption, /more lines are only in the patch/)
+    const d = await r.tg.waitFor(() => r.tg.of("sendDocument")[0])
+    assert.match(d.body.fields.document, /\+line 499/)
+    await r.done()
+  })
+
+  it("a hidden file is named, not drawn, and not in the patch", async () => {
+    const r = await diffed([hunk(2, ".env.local"), hunk(2, "b.ts")])
+    const d = await r.tg.waitFor(() => r.tg.of("sendDocument")[0])
+    assert.doesNotMatch(d.body.fields.document, /env\.local/)
+    assert.match(d.body.fields.document, /b\.ts/)
+    await r.done()
+  })
+
+  it("diff.exclude replaces the default globs", async () => {
+    const r = await diffed([hunk(2, ".env.local"), hunk(2, "b.ts")], {
+      diffCfg: { exclude: ["**/b.ts"] },
+    })
+    const d = await r.tg.waitFor(() => r.tg.of("sendDocument")[0])
+    assert.match(d.body.fields.document, /env\.local/)
+    assert.doesNotMatch(d.body.fields.document, /\+\+\+ b|a\/b\.ts/)
+    await r.done()
+  })
+
+  it("when drawing fails the patch and the file list are sent", async () => {
+    const r = await rig()
+    ;(r.bridge as unknown as { drawer: () => Promise<never> }).drawer =
+      async () => {
+        throw new Error("encoder broke")
+      }
+    await r.turn([hunk(3, "a.ts"), hunk(3, "b.ts")])
+    await r.tg.waitFor(() => r.cards()[0])
+    tap(r, "ctl:diff")
+    const d = await r.tg.waitFor(() => r.tg.of("sendDocument")[0])
+    assert.match(d.body.fields.caption, /images unavailable: a\.ts, b\.ts/)
+    assert.match(d.body.fields.document, /\+line 2/)
+    assert.equal(
+      r.tg.of("sendPhoto").length + r.tg.of("sendMediaGroup").length,
+      0,
+    )
+    await r.done()
+  })
+
+  it("a denied session gets no diff and is told why", async () => {
+    const r = await rig({ chat: { deny: [{ directory: "**/shop" }] } })
+    await r.turn([hunk(2)])
+    await r.tg.waitFor(() => r.cards()[0])
+    tap(r, "ctl:diff")
+    const t = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
+    assert.match(t.body.text, /chat\.deny/)
+    assert.equal(r.tg.of("sendDocument").length, 0)
+    await r.done()
+  })
+
+  it("diff.theme must be dark or light", () => {
+    const c = (diff: unknown) =>
+      parseConfig({ channels: { telegram: { token: { env: "X" } } }, diff })
+    assert.equal((c({ theme: "light" }) as Config).diff.theme, "light")
+    assert.ok("error" in (c({ theme: "blue" }) as object))
+    assert.ok("error" in (c({ exclude: [1] }) as object))
+    assert.deepEqual((c(undefined) as Config).diff.exclude, [
+      "**/.env*",
+      "**/*.pem",
+      "**/*secret*",
+      "**/id_*",
+    ])
   })
 })

@@ -26,6 +26,7 @@ import { DigestLog, digestText } from "./digest.ts"
 import { digestDue, isQuiet } from "./quiet.ts"
 import { Actions, Refused, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
+import { buildPatch, drawDiff, fileList } from "./diffimage.ts"
 import { filterSecrets, redact } from "./filter.ts"
 import {
   resolveAnswer,
@@ -1541,6 +1542,9 @@ export class Bridge {
     )
   }
 
+  /** Draws the diff; a test replaces it to force a failure. */
+  private drawer: typeof drawDiff = drawDiff
+
   /** A turn card's button: Diff, Continue or Stop. */
   private async cardButton(
     ch: Connector,
@@ -1557,21 +1561,59 @@ export class Bridge {
         await this.actions.prompt(root, "continue", this.delivery(root))
         return yes("Sent: continue.")
       }
-      const patch = await this.actions.patch(root)
-      if (patch === undefined)
+      const files = await this.actions.diffFiles(root)
+      if (files === undefined)
         return no("This OpenCode cannot read the changes from here.")
-      if (!patch.trim()) return no("No changes to show.")
+      if (!files.some((f) => f.patch.trim() || f.additions || f.deletions))
+        return no("No changes to show.")
       const r = await this.routed(root)
-      const sent =
-        r &&
-        (await this.safely(ch, async () =>
-          ch.document?.(
+      if (!r) return no("Could not send the diff.")
+      const mode = this.cfg.chat.redact
+      const o = {
+        exclude: this.cfg.diff.exclude,
+        theme: this.cfg.diff.theme,
+        name: (f: string) => redact(f, mode),
+      }
+      let drawn: Awaited<ReturnType<typeof drawDiff>> | undefined
+      if (ch.photos && mode.mode !== "title")
+        try {
+          drawn = await this.drawer(files, o)
+        } catch (err) {
+          log("diff_draw_failed", {
+            message: filterSecrets((err as Error).message),
+          })
+        }
+      const total = files.reduce(
+        (n, f) => ({ a: n.a + f.additions, d: n.d + f.deletions }),
+        { a: 0, d: 0 },
+      )
+      const head = `📄 Diff · ${files.length} file${files.length === 1 ? "" : "s"} +${total.a} -${total.d}`
+      if (drawn?.images.length)
+        await this.safely(ch, async () =>
+          ch.photos?.(
             r.session,
-            "changes.patch",
-            redact(patch, this.cfg.chat.redact),
-            "📄 Diff",
+            drawn.images,
+            drawn.omitted
+              ? `${head}\n${drawn.omitted} more lines are only in the patch.`
+              : head,
           ),
-        ))
+        )
+      const patch =
+        mode.mode === "title"
+          ? redact(files.map((f) => f.patch).join("\n"), mode)
+          : buildPatch(files, o)
+      const caption =
+        ch.photos && !drawn && mode.mode !== "title"
+          ? truncate(
+              `${head}, images unavailable: ${fileList(files, o).join(", ")}`,
+              900,
+            )
+          : drawn
+            ? "📄 Patch"
+            : head
+      const sent = await this.safely(ch, async () =>
+        ch.document?.(r.session, "changes.patch", patch, caption),
+      )
       return sent ? yes("Diff sent.") : no("Could not send the diff.")
     } catch (err) {
       if (err instanceof Refused) return no(err.message)
