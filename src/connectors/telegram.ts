@@ -9,7 +9,7 @@
  * chat is heard; everything else is dropped unread.
  */
 import { AsyncLocalStorage } from "node:async_hooks"
-import { randomInt } from "node:crypto"
+import { createHash, randomInt } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
@@ -206,6 +206,15 @@ type Update = {
 
 /** What became of one update: set by the code that handled it, logged once it ends. */
 type InboundTrace = { outcome: string; reason?: string; kind: string }
+
+/**
+ * The receive loops running in this process, by bot. A loop that replaces one
+ * (a restart, a reload of the plugin) waits for the old one to end first, so
+ * two never poll one bot at once.
+ */
+const POLLERS = new Map<string, Promise<void>>()
+/** A replaced loop gets this long to end before the new one goes on. */
+const HANDOVER_MS = 5_000
 
 /** The handler asks for the update to be tried again. */
 class RetryLater extends Error {}
@@ -1167,7 +1176,36 @@ export class TelegramConnector implements Connector {
     })
   }
 
+  /** One receive loop per bot in this process: wait for the one this replaces. */
   private async loop(signal: AbortSignal): Promise<void> {
+    const key = await this.opts.token().then(
+      (t) =>
+        createHash("sha256")
+          .update(t ?? "")
+          .digest("hex")
+          .slice(0, 16),
+      () => "name:" + this.id,
+    )
+    const prev = POLLERS.get(key)
+    let release!: () => void
+    const mine = new Promise<void>((r) => (release = r))
+    POLLERS.set(key, mine)
+    try {
+      if (prev) {
+        const waited = this.now()
+        await Promise.race([prev, sleep(HANDOVER_MS, signal)])
+        log("telegram_poll_handover", { waited_ms: this.now() - waited })
+      }
+      await this.receive(signal)
+    } finally {
+      release()
+      if (POLLERS.get(key) === mine) POLLERS.delete(key)
+    }
+  }
+
+  private conflicted = false
+
+  private async receive(signal: AbortSignal): Promise<void> {
     const { min, max } = this.opts.backoff ?? { min: 1000, max: 60_000 }
     const seconds = this.opts.pollSeconds ?? POLL_SECONDS
     let delay = min
@@ -1189,6 +1227,7 @@ export class TelegramConnector implements Connector {
         delay = min
         this.connected = true
         this.lastError = undefined
+        this.conflicted = false
         this.pollOkAt = this.now()
         if (updates.length) {
           // Written down before Telegram is told they arrived: the offset moves only once they are safe.
@@ -1205,7 +1244,13 @@ export class TelegramConnector implements Connector {
           await sleep(Math.max(0, err.retryAt - Date.now()), signal)
           continue
         }
-        this.fail(err)
+        if (/HTTP 409/.test((err as Error).message)) {
+          // Another getUpdates for this bot is live: say so once, and let the backoff wait it out.
+          this.lastError = "another process is polling this bot (HTTP 409)"
+          if (!this.conflicted)
+            log("telegram_poll_conflict", { message: this.lastError })
+          this.conflicted = true
+        } else this.fail(err)
         this.opts.tel?.count("oob.reconnects", { "connector.type": "telegram" })
         this.opts.tel
           ?.begin("oob.reconnect", {
