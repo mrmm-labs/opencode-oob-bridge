@@ -467,3 +467,33 @@ describe("telegram reactions and media settings", () => {
       assert.ok("error" in (tg(bad) as object), JSON.stringify(bad))
   })
 })
+
+describe("core", () => {
+  it("is off unless bind is set", () => {
+    const c = parseConfig(base) as Config
+    assert.equal(c.core.bind, undefined)
+    assert.equal(c.core.port, 7842)
+  })
+
+  it("reads bind and port", () => {
+    const c = parseConfig({
+      ...base,
+      core: { bind: "tailscale", port: 9000 },
+    }) as Config
+    assert.deepEqual(c.core, { bind: "tailscale", port: 9000 })
+  })
+
+  it("rejects a bad bind or port", () => {
+    for (const core of [
+      "x",
+      { bind: "" },
+      { bind: 1 },
+      { port: "80" },
+      { port: 70000 },
+    ])
+      assert.ok(
+        "error" in (parseConfig({ ...base, core }) as object),
+        JSON.stringify(core),
+      )
+  })
+})

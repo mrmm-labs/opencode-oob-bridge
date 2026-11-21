@@ -5,6 +5,7 @@
  */
 import type { Pairing } from "./connectors/types.ts"
 import type { Delivery, SidebarMode } from "./config.ts"
+import type { OpResult, Snapshot } from "./rpc.ts"
 import type { Afk } from "./settings.ts"
 
 export type ChannelView = {
@@ -78,6 +79,8 @@ export interface Pilot {
   setAfk(mode: Afk): Promise<Outcome>
   resume(root: string): Promise<Outcome>
   restart(): Promise<Outcome>
+  /** The core API: its state, or a new token. */
+  core(action: "status" | "rotate"): Promise<OpResult | undefined>
 }
 
 export type InstanceView = {
@@ -90,6 +93,7 @@ export type InstanceView = {
     tuis: number
     lastInputAt: number
   }
+  core?: Snapshot["core"]
   eventsSeen?: number
   lastEventAt?: number
   sessions: Array<{

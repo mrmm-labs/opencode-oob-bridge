@@ -204,6 +204,10 @@ export class Remote implements Pilot {
   restart() {
     return this.act("restart")
   }
+  /** The core API: its state, or a new token. */
+  core(action: "status" | "rotate") {
+    return this.op("core", { action })
+  }
 
   async test(): Promise<Array<{ id: string; ok: boolean }>> {
     const r = await this.op("test")
@@ -235,6 +239,7 @@ export class Remote implements Pilot {
       online: this.online,
       owner: s.owner,
       afk: s.afk,
+      core: s.core,
       eventsSeen: s.events.seen,
       lastEventAt: s.events.lastAt,
       sessions: s.sessions.map((x) => ({

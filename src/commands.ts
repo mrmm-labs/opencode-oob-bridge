@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto"
 import { basename } from "node:path"
 
 import type { Host, ModelOption } from "./bridge.ts"
+import type { Actions } from "./core/actions.ts"
 import type { Config } from "./config.ts"
 import type { Connector, Inbound, Outcome } from "./connectors/types.ts"
 import { log } from "./logger.ts"
@@ -37,9 +38,6 @@ const KNOWN = new Set<string>([
   "reply",
 ])
 
-const MAX_MODELS = 12
-const MAX_NEW_PER_HOUR = 5
-const HOUR_MS = 60 * 60_000
 const FLOW_TTL_MS = 10 * 60_000
 const MAX_FLOWS = 100
 const MAX_TITLE = 100
@@ -49,6 +47,7 @@ const DEFAULT = "default"
 export type CommandDeps = {
   cfg: Config
   host: Host
+  actions: Actions
   tel: Telemetry
   now: () => number
   chatEnabled(root: string): boolean
@@ -97,7 +96,6 @@ export function parseRef(ref: string): { providerID: string; id: string } {
 export class Commands {
   private readonly d: CommandDeps
   private readonly flows = new Map<string, Flow>()
-  private readonly created: number[] = []
 
   constructor(deps: CommandDeps) {
     this.d = deps
@@ -241,14 +239,8 @@ export class Commands {
     return id
   }
 
-  private async models(): Promise<ModelOption[]> {
-    const all = await this.d.host.models().catch(() => [] as ModelOption[])
-    const wanted = this.d.cfg.chat.models
-    if (wanted.length)
-      return wanted
-        .map((ref) => all.find((x) => x.ref === ref))
-        .filter((x): x is ModelOption => x !== undefined)
-    return all.slice(0, MAX_MODELS)
+  private models(): Promise<ModelOption[]> {
+    return this.d.actions.models()
   }
 
   /** A menu, or a refusal that still shows the menu when something was typed that is not in it. */
@@ -298,7 +290,7 @@ export class Commands {
     const facts = await this.d.host.session(root)
 
     if (name === "stop") {
-      const stopped = await this.d.host.interrupt(root)
+      const stopped = await this.d.actions.stop(root)
       return this.done(
         info,
         "applied",
@@ -308,7 +300,7 @@ export class Commands {
     if (name === "steer") {
       if (!args) return this.done(info, "invalid", no("Usage: /steer <text>"))
       const busy = this.d.host.busy(root)
-      await this.d.host.prompt(root, args, "steer")
+      await this.d.actions.prompt(root, args, "steer")
       this.d.remote(root)
       return this.done(
         info,
@@ -317,7 +309,7 @@ export class Commands {
       )
     }
     if (name === "compact") {
-      await this.d.host.compact(root)
+      await this.d.actions.compact(root)
       return this.done(info, "applied", yes("Compacting the session…"))
     }
     if (name === "rename") {
@@ -327,7 +319,7 @@ export class Commands {
           "invalid",
           no(`Usage: /rename <title> (up to ${MAX_TITLE} characters)`),
         )
-      await this.d.host.rename(root, args)
+      await this.d.actions.rename(root, args)
       return this.done(info, "applied", yes("Renamed."))
     }
     if (name === "agent") {
@@ -427,7 +419,7 @@ export class Commands {
     agent: string,
     info: Info,
   ): Promise<Outcome> {
-    await this.d.host.switchAgent(root, agent)
+    await this.d.actions.switchAgent(root, agent)
     return this.done(
       info,
       "applied",
@@ -441,7 +433,7 @@ export class Commands {
     variant: string | undefined,
     info: Info,
   ): Promise<Outcome> {
-    await this.d.host.switchModel(root, { ...parseRef(model.ref), variant })
+    await this.d.actions.switchModel(root, { ...parseRef(model.ref), variant })
     return this.done(
       info,
       "applied",
@@ -654,51 +646,15 @@ export class Commands {
       log("session_create", { outcome, project: o.project })
       return this.done(info, outcome, out)
     }
-    const projects = this.d.cfg.chat.projects
-    if (!Object.hasOwn(projects, o.project))
-      return end("invalid", no("Unknown project."))
-    const p = projects[o.project]
-    const agent = o.agent ?? p.agent
-    const model = o.model ?? p.model
-    if (this.d.denied({ agent, directory: p.directory }))
-      return end(
-        "denied",
-        no("Starting a session there is blocked by chat.deny."),
-      )
-    const now = this.d.now()
-    while (this.created.length && now - this.created[0] > HOUR_MS)
-      this.created.shift()
-    if (this.created.length >= MAX_NEW_PER_HOUR)
-      return end(
-        "limited",
-        no(
-          `At most ${MAX_NEW_PER_HOUR} new sessions an hour: try again later.`,
-        ),
-      )
-    // A model picked in a chat must be on the list; the project's own comes from the config.
-    if (
-      o.model !== undefined &&
-      !(await this.models()).some((x) => x.ref === o.model)
-    )
-      return end("invalid", no("That model is not available."))
-    this.created.push(now)
-    try {
-      const { id } = await this.d.host.createSession({
-        directory: p.directory,
-        agent,
-        model: model ? parseRef(model) : undefined,
-      })
-      this.d.startChat(id, ch)
-      await this.d.host.prompt(id, o.text, "queue")
-      this.d.remote(id)
-      await this.d.show(id, true)
-      return end("applied", {
-        ok: true,
-        text: `🆕 Started ${o.project} · ${agent ?? "default agent"} → {topic:${id}}`,
-      })
-    } catch (err) {
-      log("session_create_error", { message: (err as Error).message })
-      return end("failed", no("Could not start the session: see the log."))
-    }
+    const r = await this.d.actions.create(o, (id) => this.d.startChat(id, ch))
+    if (!r.ok) return end(r.outcome, no(r.text))
+    const id = r.id!
+    this.d.remote(id)
+    await this.d.show(id, true)
+    const agent = o.agent ?? this.d.cfg.chat.projects[o.project].agent
+    return end("applied", {
+      ok: true,
+      text: `🆕 Started ${o.project} · ${agent ?? "default agent"} → {topic:${id}}`,
+    })
   }
 }

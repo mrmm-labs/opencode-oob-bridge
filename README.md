@@ -92,19 +92,21 @@ nothing and opens no connection.**
 }
 ```
 
-| Key                 | Default  | Meaning                                                                       |
-| ------------------- | -------- | ----------------------------------------------------------------------------- |
-| `channels.ntfy`     | none     | The ntfy channel. See [Channels](#channels).                                  |
-| `channels.telegram` | none     | The Telegram channel. See [Channels](#channels).                              |
-| `defaultChannel`    | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name. |
-| `sidebar`           | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).     |
-| `away.minutes`      | `10`     | Minutes without input in the TUI before matching sessions are mirrored.       |
-| `rules`             | `[]`     | Which sessions are mirrored while you are away. Empty: all.                   |
-| `redact`            | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).          |
-| `permissions`       | tier 3   | Only tier 3 (push only) exists.                                               |
-| `messages`          | built in | Push formats per kind, overriding the defaults field by field. See below.     |
-| `profiles`          | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.    |
-| `otel`              | off      | OpenTelemetry export. See [Telemetry](#telemetry).                            |
+| Key                 | Default  | Meaning                                                                          |
+| ------------------- | -------- | -------------------------------------------------------------------------------- |
+| `channels.ntfy`     | none     | The ntfy channel. See [Channels](#channels).                                     |
+| `channels.telegram` | none     | The Telegram channel. See [Channels](#channels).                                 |
+| `defaultChannel`    | `all`    | Where pushes go for a session that chose no channel: `all` or a channel name.    |
+| `sidebar`           | `full`   | The sidebar section: `full`, `compact` or `off`. See [Sidebar](#sidebar).        |
+| `away.minutes`      | `10`     | Minutes without input in the TUI before matching sessions are mirrored.          |
+| `rules`             | `[]`     | Which sessions are mirrored while you are away. Empty: all.                      |
+| `redact`            | `full`   | `full`, `head:<n>` (first n characters) or `title` (no body at all).             |
+| `permissions`       | tier 3   | Only tier 3 (push only) exists.                                                  |
+| `messages`          | built in | Push formats per kind, overriding the defaults field by field. See below.        |
+| `profiles`          | `[]`     | Per-use-case formats: the first profile matching `agent`/`directory` wins.       |
+| `otel`              | off      | OpenTelemetry export. See [Telemetry](#telemetry).                               |
+| `core.bind`         | off      | Where the [core API](#core-api) listens: `tailscale`, `localhost` or an address. |
+| `core.port`         | `7842`   | The core API port.                                                               |
 
 **A token command that fails** (a locked secret store, say) is not run again in a loop. It is
 retried after 30 s, 1 min, 2 min, and then every 5 min; each step is logged once, and the channel
@@ -448,6 +450,7 @@ the value. Bare `/oob` (and `/ntfy`) stays the picker.
 | `/oob session <session> <on\|off\|auto\|chat\|chat-off>` | Notify and chat settings of any session of this instance: on, off, auto, chat or chat-off.                                 |
 | `/oob resume <session>`                                  | Wake a session that is suspended with messages waiting in its inbox.                                                       |
 | `/oob restart`                                           | Restart the bridge in the OpenCode server: channels reconnect. The server keeps running.                                   |
+| `/oob core <status\|rotate>`                             | Show the core API (address and token file), or replace its token: the old token is refused at once.                        |
 | `/oob status`                                            | Show the bridge, who counts as away, each channel, the open prompts and this session's settings.                           |
 | `/oob help`                                              | List every sub-command with its usage.                                                                                     |
 
@@ -591,6 +594,46 @@ and is not applied; an unknown or expired id (older than a day) gets a push too.
 Every outgoing body passes a secret filter that masks known token shapes (API keys, GitHub and
 Slack tokens, private keys, JWTs, `password=` style pairs, URL credentials) and the channel tokens
 themselves.
+
+## Core API
+
+The bridge can serve what it knows of your sessions, and the actions you can take on them, over
+HTTP under `/v1`. It is off until `core.bind` is set:
+
+```jsonc
+{ "core": { "bind": "tailscale", "port": 7842 } }
+```
+
+`bind` is `tailscale` (the address of this machine on your tailnet), `localhost`, or an address
+inside `127.0.0.0/8`, `::1`, `100.64.0.0/10` or `fd7a:115c:a1e0::/48`. A wildcard (`0.0.0.0`, `::`)
+or a public address is refused at startup: the bridge logs why and does not listen. `/oob` Status
+shows the address, or why there is none. Only the instance that runs the bridge listens, and the
+listener restarts with `/oob restart`.
+
+Every request needs `Authorization: Bearer <token>`. The token is 256 bits, kept in `core-token`
+in the data directory (mode 0600), and replaced with `/oob core rotate`: the old one is refused
+at once. A request without a valid token gets `401` with no body. Being on the tailnet is a
+network path, not a login.
+
+| Route                                   | Purpose                                                                                      |
+| --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `GET /v1/meta`                          | API version, bridge version, which actions and fields work now                               |
+| `GET /v1/status`                        | Owner, away state, channels, open prompts                                                    |
+| `GET /v1/sessions`                      | Session summaries, newest first (`limit`, `offset`)                                          |
+| `GET /v1/sessions/{id}`                 | Summary, conversation tail, diff summary, questions, permissions                             |
+| `GET /v1/sessions/{id}/messages`        | Conversation tail (`limit`, `before`)                                                        |
+| `GET /v1/sessions/{id}/diff`            | Diff summary; the patch with `Accept: text/x-diff`                                           |
+| `POST /v1/sessions`                     | Start a session in a `chat.projects` folder                                                  |
+| `POST /v1/sessions/{id}/actions/{name}` | `answer`, `resume`, `stop`, `prompt`, `rename`, `compact`, `model`, `agent`, `watch`, `chat` |
+| `GET /v1/events`                        | Server-sent events, with `Last-Event-ID` resume                                              |
+
+A field the bridge cannot fill is returned as `{"unavailable": "<why>"}`, never as an empty value;
+a field that is filled says which `source` it came from. Text passes the secret filter and
+`redact`, and a session that matches `chat.deny` is listed as `blocked` with no conversation. The
+events carry a type and a session id only: read the session for the rest. Replies to permission
+requests are refused for every client; answer them in the OpenCode TUI.
+
+Within `/v1` changes only add fields, routes and event types, so ignore what you do not know.
 
 ## Security
 

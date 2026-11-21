@@ -92,6 +92,12 @@ export type Snapshot = {
   sessions: SessionRow[]
   stuck: StuckRow[]
   events: { seen: number; lastAt?: number }
+  /** The core API listener, when the controller knows of one. */
+  core?: {
+    state: "off" | "listening" | "refused"
+    address?: string
+    reason?: string
+  }
   defaultSidebar: "full" | "compact" | "off"
   defaultChannel: string
   defaultDelivery: "queue" | "steer"

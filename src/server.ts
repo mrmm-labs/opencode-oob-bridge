@@ -20,6 +20,7 @@ import { connectorTypes } from "./connectors/index.ts"
 import type { Connector } from "./connectors/types.ts"
 import { dataDir, loadConfig, type Config } from "./config.ts"
 import { Control, sqliteProbe } from "./control.ts"
+import { Core } from "./core/index.ts"
 import { acquire, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
 import { resolveOtel, Telemetry } from "./otel.ts"
@@ -271,6 +272,38 @@ export function serverHost(
         resume: true,
       })
     },
+    messages: async (sessionID, limit) => {
+      type Part = { type?: string; text?: string }
+      type Msg = {
+        type?: string
+        text?: string
+        content?: Part[]
+        time?: { created?: number }
+      }
+      return list<Msg>(await ctx.session.context({ sessionID }))
+        .flatMap((m) => {
+          const at = m.time?.created ?? 0
+          if (m.type === "user" || m.type === "synthetic")
+            return typeof m.text === "string"
+              ? [{ role: m.type, text: m.text, at }]
+              : []
+          if (m.type !== "assistant") return []
+          const text = (m.content ?? [])
+            .filter((c) => c.type === "text" && typeof c.text === "string")
+            .map((c) => c.text)
+            .join("\n")
+          return text ? [{ role: "assistant", text, at }] : []
+        })
+        .slice(-limit)
+    },
+    diff: async (directory) =>
+      list<{
+        file: string
+        status: string
+        additions: number
+        deletions: number
+        patch: string
+      }>(await ctx.vcs.diff({ location: { directory }, mode: "working" })),
     agents: async () =>
       list<{ name: string; mode: string; hidden?: boolean }>(
         await ctx.agent.list(),
@@ -379,6 +412,30 @@ async function boot(
     restart,
     probe,
   })
+  const core = new Core({
+    cfg,
+    dir,
+    bridge,
+    host,
+    control,
+    version: await version(),
+    sources: {
+      tail: [
+        ["server", host.messages && ((id, n) => host.messages!(id, n))],
+        ["events", undefined],
+      ],
+      diff: [
+        [
+          "server",
+          async (_id, d) => (d && host.diff ? host.diff(d) : undefined),
+        ],
+        ["tui", undefined],
+      ],
+      todos: [["server", undefined]],
+    },
+  })
+  control.core = core
+  await core.start()
   for (const [id, v] of Object.entries(settings.sessions())) {
     if (v.chat) bridge.restoreChat(id)
     if (v.delivery === "queue" || v.delivery === "steer")
@@ -406,6 +463,7 @@ async function boot(
             undefined
           await sessions.ensure(id || undefined)
           sessions.apply(ev)
+          core.event(ev.type, id ? sessions.root(id) : undefined)
           if ((EVENTS as string[]).includes(ev.type))
             void bridge.onEvent(ev as unknown as BridgeEvent)
         }
@@ -431,6 +489,7 @@ async function boot(
     control,
     async stop() {
       ac.abort()
+      await core.stop()
       control.stop()
       forms.clear()
       await bridge.stop()

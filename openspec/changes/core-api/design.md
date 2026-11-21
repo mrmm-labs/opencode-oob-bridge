@@ -39,7 +39,7 @@ The path carries the major version. Within `/v1` only additive changes are made:
 
 ### D5. Listening
 
-Off unless `core.bind` names an address. The address must be loopback, or inside the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), or a name that resolves only to such addresses. `0.0.0.0`, `::` and public addresses are refused at startup with a log line. No tailnet address available: no listener, and `/oob status` says why. The bridge never dials out for this API.
+Off unless `core.bind` names an address. The address must be loopback, or inside the Tailscale ranges (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), or a name that resolves only to such addresses. `0.0.0.0`, `::` and public addresses are refused at startup with a log line. `core.bind: "tailscale"` is the default transport: it resolves to the first address of a local interface inside the Tailscale ranges, read with `os.networkInterfaces()` (no command, no dependency), and the listener binds to that address only. No tailnet address available: no listener, and `/oob status` says why. The bridge never dials out for this API. A caller on the same tailnet (for example the hosting side's relay) reaches it at that address with the bearer token; the tailnet is a network path, not an identity, so D6 still applies to every request.
 
 ### D6. Authentication
 
