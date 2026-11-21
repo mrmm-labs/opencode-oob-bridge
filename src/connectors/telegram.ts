@@ -12,6 +12,12 @@ import { randomInt } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
+import {
+  buildMenu,
+  menuHash,
+  validMenu,
+  type MenuCommand,
+} from "../commandmenu.ts"
 import { filterSecrets } from "../filter.ts"
 import { parseReply, type Question } from "../inbound.ts"
 import { log } from "../logger.ts"
@@ -90,22 +96,6 @@ const COLORS = [7322096, 16766590, 13338331, 9367192, 16749490, 16478047]
 const FAMILY = 4
 const MENU_PAGE = 6
 const MAX_MENUS = 50
-// What Telegram shows after "/": lowercase names, short descriptions.
-const COMMANDS = [
-  { command: "new", description: "Start a session in a listed project" },
-  { command: "sessions", description: "Sessions mirrored here, with links" },
-  { command: "projects", description: "Projects a new session can use" },
-  { command: "model", description: "Pick the model of this session" },
-  { command: "agent", description: "Pick the agent of this session" },
-  { command: "variant", description: "Pick the model's effort variant" },
-  { command: "status", description: "Refresh and pin the status card" },
-  { command: "stop", description: "Stop the running turn" },
-  { command: "steer", description: "Inject a message into the running turn" },
-  { command: "compact", description: "Compact this session" },
-  { command: "rename", description: "Rename this session" },
-  { command: "chat", description: "/chat off stops chatting with it" },
-  { command: "help", description: "What the commands do here" },
-]
 const COMMAND_RE = /^\/([A-Za-z_]+)(?:@(\w+))?(?:\s+([\s\S]*))?$/
 const RIGHTS = /not enough rights|admin/i
 const RIGHTS_NOTICE =
@@ -125,6 +115,8 @@ export type TelegramOptions = {
   topicsFile?: string
   /** Called with the chat id once pairing succeeds, to store it. */
   onPaired?: (chatId: string) => void
+  /** Keeps the key of the command list last registered, across restarts. */
+  menuStore?: { get(): string | undefined; set(key: string): void }
   fetch?: typeof fetch
   /** Delays in ms after a failed poll: first and cap. */
   backoff?: { min: number; max: number }
@@ -285,7 +277,13 @@ export class TelegramConnector implements Connector {
   /** Force-reply questions of a command: message id to the question's id. */
   private readonly asks = new Map<string, string>()
   private botName: string | undefined
+  /** Key of the command list registered in this run. */
   private commandsFor: string | undefined
+  private menuList: MenuCommand[] = buildMenu({
+    undo: false,
+    resume: false,
+    digest: false,
+  })
   /** Force-reply prompts: message id to the pending prompt it collects a typed answer for. */
   private readonly typing = new Map<string, string>()
   private pairing:
@@ -336,15 +334,33 @@ export class TelegramConnector implements Connector {
   }
 
   /** Makes Telegram offer the commands after "/" in the paired chat. */
-  private async register(): Promise<void> {
+  menu(commands: MenuCommand[]): void {
+    this.menuList = commands
+    if (this.onInbound) void this.register()
+  }
+
+  /**
+   * One list for the paired chat: Telegram has no per-topic scope. It is sent
+   * only when it differs from the last one, or when the chat is paired again.
+   */
+  private async register(again = false): Promise<void> {
     const chat = this.chatId
-    if (!chat || this.commandsFor === chat) return
-    this.commandsFor = chat
+    if (!chat) return
+    const { ok, problems } = validMenu(this.menuList)
+    for (const p of problems) log("telegram_menu_invalid", { problem: p })
+    const scope = chat.startsWith("-")
+      ? { type: "chat", chat_id: chat }
+      : { type: "all_private_chats" }
+    const key = menuHash(JSON.stringify(scope), ok)
+    if (this.commandsFor === key) return
+    if (!again && this.opts.menuStore?.get() === key) {
+      this.commandsFor = key
+      return
+    }
+    this.commandsFor = key
     try {
-      await this.call("setMyCommands", {
-        commands: COMMANDS,
-        scope: { type: "chat", chat_id: chat },
-      })
+      await this.call("setMyCommands", { commands: ok, scope })
+      this.opts.menuStore?.set(key)
     } catch (err) {
       this.commandsFor = undefined
       this.fail(err)
@@ -1278,7 +1294,7 @@ export class TelegramConnector implements Connector {
     this.forum = chat.is_forum === true ? true : undefined
     this.opts.onPaired?.(id)
     pr.finish(id)
-    void this.register()
+    void this.register(true)
     const what = chat.title
       ? `Paired with ${esc(chat.title)}.${chat.is_forum ? " One topic per session." : ""}`
       : "Paired. Questions and notices of your OpenCode sessions arrive here."
@@ -1943,6 +1959,13 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       offsetFile: join(env.dir, `${env.name}-offset.json`),
       topicsFile: join(env.dir, `${env.name}-topics.json`),
       onPaired: (chatId) => env.settings.set({ chatId }),
+      menuStore: {
+        get: () => {
+          const k = env.settings.get().menu
+          return typeof k === "string" ? k : undefined
+        },
+        set: (menu) => env.settings.set({ menu }),
+      },
     })
   },
 }

@@ -1,3 +1,7 @@
+## Purpose
+
+The command menu is the phone's main way to find a command: which commands the bot registers for the paired chat, in what order, and how the operator's everyday commands behave.
+
 ## ADDED Requirements
 
 ### Requirement: The menu lists the operator's commands first

@@ -268,6 +268,7 @@ export function formRelay(o: {
     formID: string
     answer: never
   }) => Promise<void>
+  undo?: (r: { sessionID: string; messageID: string }) => Promise<void>
 }): (event: { data?: unknown }) => void {
   // The server emits through every location of the process; a window acts once.
   const seen = new Set<string>()
@@ -277,12 +278,15 @@ export function formRelay(o: {
     const r = d as unknown as FormRelay
     if (seen.has(r.token)) return
     seen.add(r.token)
-    void o
-      .reply({
-        sessionID: r.sessionID,
-        formID: r.formID,
-        answer: r.answer as never,
-      })
+    const act =
+      r.kind === "undo" && o.undo
+        ? o.undo({ sessionID: r.sessionID, messageID: r.messageID ?? "" })
+        : o.reply({
+            sessionID: r.sessionID,
+            formID: r.formID,
+            answer: r.answer as never,
+          })
+    void act
       .then(
         () => o.call("formDone", { token: r.token, ok: true }),
         (err: Error) =>

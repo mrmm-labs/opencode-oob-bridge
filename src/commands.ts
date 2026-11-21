@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto"
 import { basename } from "node:path"
 
 import type { Host, ModelOption } from "./bridge.ts"
-import type { Actions } from "./core/actions.ts"
+import { Refused, type Actions } from "./core/actions.ts"
 import type { Config } from "./config.ts"
 import type { Connector, Inbound, Outcome } from "./connectors/types.ts"
 import { log } from "./logger.ts"
@@ -27,12 +27,16 @@ const SESSION_COMMANDS = [
   "compact",
   "rename",
   "steer",
+  "undo",
 ] as const
 const GENERAL_COMMANDS = ["new", "sessions", "projects"] as const
+/** Work in a session topic and in General. */
+const ANYWHERE_COMMANDS = ["resume", "afk", "digest"] as const
 const ALIASES: Record<string, string> = { effort: "variant", start: "help" }
 const KNOWN = new Set<string>([
   ...SESSION_COMMANDS,
   ...GENERAL_COMMANDS,
+  ...ANYWHERE_COMMANDS,
   "help",
   "pick",
   "reply",
@@ -59,6 +63,11 @@ export type CommandDeps = {
   show(root: string, working?: boolean): Promise<void>
   /** Mirrored sessions known to the plugin, for /sessions. */
   sessions(): Promise<Array<{ id: string; label: string }>>
+  /** What /afk shows: the state, never a way to change it. */
+  afk(): string
+  /** Sessions with messages they are not working on. */
+  stuck(): Array<{ id: string; label: string; pending: number }>
+  resume(root: string): Promise<Outcome>
   /** A prompt was sent from a chat, so its turn is a remote one. */
   remote(root: string): void
 }
@@ -72,6 +81,8 @@ type Flow = {
     | "new-agent"
     | "new-model"
     | "prompt"
+    | "undo"
+    | "resume"
   exp: number
   /** The session a model, agent or variant pick is for. */
   root?: string
@@ -143,6 +154,8 @@ export class Commands {
     if (name === "pick") return this.pick(ch, m, info)
     if (name === "reply") return this.reply(ch, m, info)
     info.root = m.sessionKey
+    if ((ANYWHERE_COMMANDS as readonly string[]).includes(name))
+      return this.anywhere(m, name, info)
     if (name === "help") return this.done(info, "applied", this.help(m))
     const inSession = m.sessionKey !== undefined
     if ((SESSION_COMMANDS as readonly string[]).includes(name)) {
@@ -171,6 +184,52 @@ export class Commands {
     return this.done(info, "unknown", no("Unknown command. /help lists them."))
   }
 
+  private async anywhere(
+    m: Inbound,
+    name: string,
+    info: Info,
+  ): Promise<Outcome> {
+    if (name === "afk") return this.done(info, "applied", yes(this.d.afk()))
+    if (name === "digest")
+      return this.done(info, "disabled", no("The digest is not enabled."))
+    // resume
+    if (m.sessionKey) {
+      const blocked = await this.gate(m.sessionKey, info)
+      if (blocked) return blocked
+      return this.done(info, "applied", await this.d.resume(m.sessionKey))
+    }
+    const stuck = this.d.stuck()
+    if (stuck.length === 0)
+      return this.done(info, "applied", yes("Nothing is stuck."))
+    return this.done(
+      info,
+      "applied",
+      this.menu(
+        "resume",
+        "Wake which session?",
+        stuck.map((s) => ({
+          label: `${s.label} (${s.pending} waiting)`,
+          value: s.id,
+        })),
+      ),
+    )
+  }
+
+  private async applyUndo(root: string, info: Info): Promise<Outcome> {
+    try {
+      const reverted = await this.d.actions.undo(root)
+      return this.done(
+        info,
+        reverted ? "applied" : "invalid",
+        reverted ? yes("↩ Reverted the last turn.") : no("Nothing to undo."),
+      )
+    } catch (err) {
+      if (err instanceof Refused)
+        return this.done(info, "refused", no(err.message))
+      throw err
+    }
+  }
+
   private help(m: Inbound): Outcome {
     if (m.sessionKey)
       return yes(
@@ -181,6 +240,9 @@ export class Commands {
           "/variant (/effort): pick the model's effort variant",
           "/status: redraw and pin the status card",
           "/stop: stop the running turn",
+          "/undo: revert the last turn (asks first)",
+          "/resume: wake this session if it is stuck",
+          "/afk: who counts as away (read only)",
           "/steer <text>: inject a message into the running turn (or start with !)",
           "/compact: compact the session",
           "/rename <title>: rename the session",
@@ -194,6 +256,8 @@ export class Commands {
         "/new [project] [prompt]: start a session in a listed project",
         "/sessions: sessions that are mirrored here",
         "/projects: the projects /new can use",
+        "/resume: wake a stuck session (lists them)",
+        "/afk: who counts as away (read only)",
         "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /compact, /rename, /chat off.",
       ].join("\n"),
     )
@@ -295,6 +359,27 @@ export class Commands {
         info,
         "applied",
         yes(stopped ? "⏹ Stopped the running turn." : "Nothing is running."),
+      )
+    }
+    if (name === "undo") {
+      if (this.d.host.busy(root))
+        return this.done(
+          info,
+          "invalid",
+          no("Stop the running turn first: /stop."),
+        )
+      return this.done(
+        info,
+        "applied",
+        this.menu(
+          "undo",
+          "Revert the last turn of this session?",
+          [
+            { label: "Undo", value: "undo" },
+            { label: "Cancel", value: "cancel" },
+          ],
+          { root },
+        ),
       )
     }
     if (name === "steer") {
@@ -551,6 +636,10 @@ export class Commands {
       info.root = f.root
       const blocked = await this.gate(f.root, info)
       if (blocked) return blocked
+      if (f.kind === "undo")
+        return value === "undo"
+          ? this.applyUndo(f.root, info)
+          : this.done(info, "cancelled", yes("Cancelled."))
       if (f.kind === "agent") return this.applyAgent(f.root, value, info)
       if (f.kind === "model") {
         const hit = (await this.models()).find((x) => x.ref === value)
@@ -574,6 +663,11 @@ export class Commands {
         : this.done(info, "invalid", no("This model has no variants."))
     }
 
+    if (f.kind === "resume") {
+      const blocked = await this.gate(value, info)
+      if (blocked) return blocked
+      return this.done(info, "applied", await this.d.resume(value))
+    }
     if (f.kind === "project") return this.chooseAgent(value, info)
     if (f.kind === "new-agent") {
       const own = this.d.cfg.chat.projects[f.project!].model ?? "OpenCode's own"

@@ -30,6 +30,9 @@ async function rig(
     chat?: Record<string, unknown>
     posts?: string[]
     chatOn?: boolean
+    host?: Partial<Host>
+    menuStore?: { get(): string | undefined; set(key: string): void }
+    stuck?: Array<{ id: string; label: string; pending: number }>
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -54,6 +57,7 @@ async function rig(
     pollSeconds: 1,
     backoff: { min: 10, max: 40 },
     tel,
+    menuStore: o.menuStore,
   })
   const cfg = parseConfig({
     channels: { telegram: { token: { env: "X" } } },
@@ -128,6 +132,7 @@ async function rig(
     },
     agents: async () => ["build", "plan"],
     models: async () => MODELS,
+    ...o.host,
   }
   const router = new Router(cfg, async () => true)
   const bridge = new Bridge(
@@ -139,6 +144,7 @@ async function rig(
     Date.now,
     tel,
   )
+  if (o.stuck) bridge.onStuck(() => o.stuck!)
   bridge.start()
   router.set("root", true)
   await bridge.onEvent({
@@ -154,6 +160,8 @@ async function rig(
   const texts = () => tg.of("sendMessage").map((c) => c.body.text as string)
   return {
     tg,
+    channel,
+    router,
     bridge,
     log,
     state,
@@ -734,6 +742,189 @@ describe("commands: telemetry records names and outcomes, never arguments", () =
     assert.match(dump, /"stringValue":"unknown"/)
     for (const bad of ["top secret", "payroll", "rotate", "bogus", "/w/docs"])
       assert.ok(!dump.includes(bad), `exported ${bad}`)
+    await r.done()
+  })
+})
+
+describe("commands: the menu and /undo /resume /afk /digest", () => {
+  const names = (c: { body: any }) =>
+    c.body.commands.map((x: { command: string }) => x.command) as string[]
+  const withUndo = {
+    undo: async () => true,
+    resume: async () => {},
+  }
+
+  it("lists the operator's commands first, and leaves out what is off", async () => {
+    const r = await rig({ host: withUndo })
+    const c = await r.tg.waitFor(() => r.tg.of("setMyCommands")[0])
+    assert.deepEqual(names(c).slice(0, 9), [
+      "status",
+      "stop",
+      "model",
+      "agent",
+      "compact",
+      "undo",
+      "resume",
+      "afk",
+      "new",
+    ])
+    assert.ok(!names(c).includes("digest"), "the digest is off")
+    await r.done()
+    const off = await rig()
+    const d = await off.tg.waitFor(() => off.tg.of("setMyCommands")[0])
+    assert.ok(!names(d).includes("undo"))
+    assert.ok(!names(d).includes("resume"))
+    assert.ok(names(d).includes("afk"))
+    await off.done()
+  })
+
+  it("does not register again when the list is the stored one", async () => {
+    const store = new Map<string, string>()
+    const menuStore = {
+      get: () => store.get("k"),
+      set: (v: string) => void store.set("k", v),
+    }
+    const a = await rig({ menuStore })
+    await a.tg.waitFor(() => a.tg.of("setMyCommands")[0])
+    await sleep(50)
+    assert.equal(store.size, 1)
+    await a.done()
+    const b = await rig({ menuStore })
+    await sleep(400)
+    assert.equal(b.tg.of("setMyCommands").length, 0)
+    await b.done()
+  })
+
+  it("drops a command Telegram would refuse and registers the rest", async () => {
+    const r = await rig()
+    await r.tg.waitFor(() => r.tg.of("setMyCommands")[0])
+    r.channel.menu([
+      { command: "fine", description: "ok" },
+      { command: "long", description: "x".repeat(300) },
+      { command: "Bad-Name", description: "no" },
+    ])
+    const c = await r.tg.waitFor(() => r.tg.of("setMyCommands")[1])
+    assert.deepEqual(names(c), ["fine"])
+    await r.done()
+  })
+
+  it("registers all private chats for a private pairing", async () => {
+    const r = await rig()
+    const tg = await fakeTelegram()
+    const dir = await mkdtemp(join(tmpdir(), "oobb-menu-"))
+    const ch = new TelegramConnector({
+      token: async () => tg.token,
+      chatId: "4242",
+      apiBase: tg.url,
+      topicsFile: join(dir, "t.json"),
+      offsetFile: join(dir, "o.json"),
+      pollSeconds: 1,
+      backoff: { min: 10, max: 40 },
+    })
+    const ac = new AbortController()
+    ch.start(async () => undefined, ac.signal)
+    const c = await tg.waitFor(() => tg.of("setMyCommands")[0])
+    assert.deepEqual(c.body.scope, { type: "all_private_chats" })
+    ac.abort()
+    await tg.close()
+    await r.done()
+  })
+
+  it("/undo asks, then reverts on Undo", async () => {
+    const calls: string[] = []
+    const r = await rig({
+      host: { undo: async (id) => (calls.push(id), true) },
+    })
+    r.say("/undo", THREAD)
+    await r.answered(/Revert the last turn/)
+    assert.deepEqual(buttons(lastMenu(r)), ["Undo", "Cancel"])
+    assert.deepEqual(calls, [])
+    tap(r, "Undo", THREAD)
+    await r.answered(/Reverted the last turn/)
+    assert.deepEqual(calls, ["root"])
+    await r.done()
+  })
+
+  it("/undo does nothing on Cancel, and not while a turn runs", async () => {
+    const calls: string[] = []
+    const r = await rig({
+      host: { undo: async (id) => (calls.push(id), true) },
+    })
+    r.say("/undo", THREAD)
+    await r.answered(/Revert the last turn/)
+    tap(r, "Cancel", THREAD)
+    await sleep(150)
+    assert.deepEqual(calls, [])
+    r.state.running = true
+    r.say("/undo", THREAD)
+    await r.answered(/Stop the running turn first/)
+    await r.done()
+  })
+
+  it("/undo says to do it at the Mac when no window can take it", async () => {
+    const r = await rig({
+      host: {
+        undo: async () => {
+          throw new Error("No OpenCode window is open")
+        },
+      },
+    })
+    r.say("/undo", THREAD)
+    await r.answered(/Revert the last turn/)
+    tap(r, "Undo", THREAD)
+    await r.answered(/needs an OpenCode window open at the Mac/)
+    await r.done()
+  })
+
+  it("/undo in General is a scope hint", async () => {
+    const r = await rig({ host: withUndo })
+    r.say("/undo")
+    await r.answered(/acts on a session/)
+    await r.done()
+  })
+
+  it("/resume in a topic wakes that session", async () => {
+    const woken: string[] = []
+    const r = await rig({ host: { resume: async (id) => void woken.push(id) } })
+    r.say("/resume", THREAD)
+    await r.answered(/Resuming/)
+    assert.deepEqual(woken, ["root"])
+    await r.done()
+  })
+
+  it("/resume in General lists stuck sessions, or says none", async () => {
+    const woken: string[] = []
+    const none = await rig({ host: { resume: async () => {} } })
+    none.say("/resume")
+    await none.answered(/Nothing is stuck/)
+    await none.done()
+    const r = await rig({
+      host: { resume: async (id) => void woken.push(id) },
+      stuck: [{ id: "root", label: "shop", pending: 2 }],
+    })
+    r.say("/resume")
+    await r.answered(/Wake which session/)
+    assert.deepEqual(buttons(lastMenu(r)), ["shop (2 waiting)"])
+    tap(r, "shop (2 waiting)")
+    await r.answered(/Resuming/)
+    assert.deepEqual(woken, ["root"])
+    await r.done()
+  })
+
+  it("/afk shows the state and changes nothing", async () => {
+    const r = await rig()
+    const before = r.router.afkMode()
+    r.say("/afk on")
+    const m = await r.answered(/Away mode:/)
+    assert.match(m.body.text, /changed at the Mac/)
+    assert.equal(r.router.afkMode(), before)
+    await r.done()
+  })
+
+  it("/digest says it is not enabled", async () => {
+    const r = await rig()
+    r.say("/digest")
+    await r.answered(/digest is not enabled/)
     await r.done()
   })
 })

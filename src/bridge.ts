@@ -20,6 +20,7 @@ import type {
   SendStats,
   SessionState,
 } from "./connectors/types.ts"
+import { buildMenu } from "./commandmenu.ts"
 import { Actions, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { redact } from "./filter.ts"
@@ -91,6 +92,8 @@ export interface Host {
   interrupt(sessionID: string): Promise<boolean>
   compact(sessionID: string): Promise<void>
   rename(sessionID: string, title: string): Promise<void>
+  /** Stages a revert of the session's last turn through a TUI. False when there is nothing to revert. */
+  undo?(sessionID: string): Promise<boolean>
   /** Wakes a session that holds messages it is not working on. Absent when the host cannot. */
   resume?(sessionID: string): Promise<void>
   /** The tail of a session's conversation, oldest first. Absent when the host cannot read it. */
@@ -341,6 +344,9 @@ export class Bridge {
   /** Every client acts on a session through this. */
   readonly actions: Actions
   private watchListener: ((root: string) => void) | undefined
+  private stuckSource:
+    | (() => Array<{ id: string; label: string; pending: number }>)
+    | undefined
   /** What each connector was last told of a session, to show a change of watch state. */
   private readonly lastStates = new Map<string, SessionState>()
   private readonly states = new Map<
@@ -391,6 +397,9 @@ export class Bridge {
       show: (root, working) =>
         this.onState(root, working ? "working" : undefined),
       sessions: () => this.activeSessions(),
+      afk: () => this.afkStatus(),
+      stuck: () => this.stuckSource?.() ?? [],
+      resume: (root) => this.resume(root),
       remote: (root) => void this.remote.add(root),
     })
   }
@@ -436,7 +445,30 @@ export class Bridge {
   }
 
   /** Starts the reply subscription of every enabled channel; returns at once. */
+  /** Sessions with messages they are not working on, for `/resume`. */
+  onStuck(
+    fn: () => Array<{ id: string; label: string; pending: number }>,
+  ): void {
+    this.stuckSource = fn
+  }
+
+  /** What `/afk` answers in a chat: the state, never a way to change it. */
+  afkStatus(): string {
+    const away = this.router.away()
+    return [
+      `Away mode: ${this.router.afkMode()} (you count as ${away ? "away" : "here"})`,
+      "Overnight: not planned",
+      "The mode is changed at the Mac: /oob afk on, off or auto.",
+    ].join("\n")
+  }
+
   start(): void {
+    const list = buildMenu({
+      undo: this.host.undo !== undefined,
+      resume: this.host.resume !== undefined,
+      digest: false,
+    })
+    for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) if (ch.enabled) this.run(ch)
   }
 

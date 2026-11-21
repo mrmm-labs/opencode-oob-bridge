@@ -920,7 +920,8 @@ describe("chat from Telegram: faster streaming", () => {
       delta: "Hello",
     })
     await r.tg.waitFor(() => r.sends().find((b) => b.text === "Hello"))
-    assert.ok(Date.now() - t0 < 120, `${Date.now() - t0} ms`)
+    // The wait this guards against is streamMs (1 s): well under that is "at once", and a slow machine must not fail it.
+    assert.ok(Date.now() - t0 < 600, `${Date.now() - t0} ms`)
     await r.done()
   })
 

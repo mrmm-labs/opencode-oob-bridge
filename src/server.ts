@@ -274,6 +274,22 @@ export function serverHost(
         resume: true,
       })
     },
+    undo: async (sessionID) => {
+      const last = list<{ id?: string; type?: string }>(
+        await ctx.session.context({ sessionID }),
+      )
+        .filter((m) => m.type === "user")
+        .at(-1)
+      if (!last?.id) return false
+      await forms({
+        sessionID,
+        formID: "",
+        answer: {},
+        kind: "undo",
+        messageID: last.id,
+      })
+      return true
+    },
     messages: async (sessionID, limit) => {
       type Part = { type?: string; text?: string }
       type Msg = {

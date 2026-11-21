@@ -370,8 +370,11 @@ How it behaves:
 
 ### Commands
 
-The bot registers its commands for the paired chat, so Telegram shows them after `/`. A command
-for another bot (`/cmd@other_bot`) is left alone.
+The bot registers one command list for the paired chat (Telegram has no per-topic menu), so it
+shows after `/`. It starts with `/status`, `/stop`, `/model`, `/agent`, `/compact`, `/undo`, `/resume`,
+`/afk` and `/digest`, then the rest; a command whose feature is off (`/undo` without a window to
+do it, `/digest` until the digest exists) is left out. The list is sent only when it changed. A
+command for another bot (`/cmd@other_bot`) is left alone.
 
 In a session's topic (they act on that session, and need chat on):
 
@@ -381,6 +384,9 @@ In a session's topic (they act on that session, and need chat on):
 | `/agent`              | The same for the primary agents OpenCode lists.                                                                                                  |
 | `/variant`, `/effort` | The model's effort variants (and `default`), when it has any.                                                                                    |
 | `/status`             | Redraws the status card and pins it again. The card shows agent, model and variant.                                                              |
+| `/undo`               | Asks, then reverts the last turn through an open OpenCode window (it says so when none is open).                                                 |
+| `/resume`             | Wakes this session when it is stuck with messages waiting.                                                                                       |
+| `/afk`                | Shows the away mode, whether you count as away, and the overnight state. Changes nothing.                                                        |
 | `/stop`               | Stops the running turn.                                                                                                                          |
 | `/compact`            | Compacts the session.                                                                                                                            |
 | `/rename <title>`     | Renames the session.                                                                                                                             |
@@ -394,6 +400,9 @@ In General, or a private chat:
 | `/new <project> <prompt>` | Starts a session in a listed project.                                                                               |
 | `/new [project]`          | Buttons for project, then agent, then model (each with `default`), then asks for the prompt: reply to that message. |
 | `/sessions`               | The mirrored sessions, with a link to each topic.                                                                   |
+| `/resume`                 | Lists the stuck sessions with a button each, or says none is stuck.                                                 |
+| `/afk`                    | The same read-only away status as in a topic.                                                                       |
+| `/digest`                 | Sends the digest on request; answers that it is not enabled until it is.                                            |
 | `/projects`               | The projects `/new` can use.                                                                                        |
 | `/help`                   | Lists these.                                                                                                        |
 
