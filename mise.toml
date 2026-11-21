@@ -1,6 +1,7 @@
 [tools]
 node = "24"
 pnpm = "10.32.1"
+"npm:@fission-ai/openspec" = "1.16.1"
 
 [tasks.install]
 description = "Install dependencies from the lockfile"
