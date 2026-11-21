@@ -270,7 +270,9 @@ describe("chat from Telegram: access", () => {
     r.tg.message(CHAT, "general chatter")
     await sleep(200)
     assert.deepEqual(r.prompts, [])
-    assert.equal(r.sends().length, 1, "only the card")
+    const sent = r.sends().map((b) => b.text)
+    assert.equal(sent.length, 3, "the card and a notice for each unowned topic")
+    assert.equal(sent.filter((t) => /No session here/.test(t)).length, 2)
     await r.done()
   })
 

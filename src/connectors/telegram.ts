@@ -1620,15 +1620,22 @@ export class TelegramConnector implements Connector {
       : sessionKey
         ? { ...base, kind: "prompt", sessionKey, text }
         : undefined
-    if (!inbound) {
-      void this.react(m.message_id, "ignored")
-      return this.note("ignored", "no session is bound to this topic")
-    }
+    if (!inbound) return this.unbound(m)
     if (inbound.kind === "prompt") void this.react(m.message_id, "received")
     const sent0 = this.now()
     const out = await this.onInbound?.(inbound)
     traces.step("deliver", { ms: this.now() - sent0, ok: out?.ok !== false })
     await this.settle(m, out, sessionKey)
+  }
+
+  /** A message in a topic no session owns (such as General): 🙈 and one line saying where to write. */
+  private async unbound(m: Message): Promise<void> {
+    void this.react(m.message_id, "ignored")
+    this.note("ignored", "no session is bound to this topic")
+    await this.deliver(m.message_thread_id, {
+      ok: false,
+      text: "No session here; write in a session topic",
+    })
   }
 
   /** What the core said of a message for a session: acknowledged, refused, or tried again later. */
@@ -1780,10 +1787,7 @@ export class TelegramConnector implements Connector {
         ? String(m.reply_to_message.message_id)
         : undefined
     const sessionKey = await this.sessionAt(m.message_thread_id, to)
-    if (!sessionKey) {
-      void this.react(m.message_id, "ignored")
-      return this.note("ignored", "no session is bound to this topic")
-    }
+    if (!sessionKey) return this.unbound(m)
     const notice = (text: string) =>
       this.deliver(m.message_thread_id, { ok: false, text })
     if (ref.kind === "unsupported")

@@ -185,6 +185,17 @@ describe("TelegramConnector inbound journal", () => {
     await r.done()
   })
 
+  it("says where to write when the topic has no session, in that topic", async () => {
+    const r = await rig({}, async () => undefined)
+    r.tg.message(CHAT, "anyone there", undefined, 9)
+    const sent = await r.tg.waitFor(() =>
+      r.tg.of("sendMessage").find((c) => /No session here/.test(c.body.text)),
+    )
+    assert.equal(sent.body.message_thread_id, 9)
+    assert.equal(r.got.length, 0, "nothing reaches the core")
+    await r.done()
+  })
+
   it("logs every update with its outcome, delivered or not", async () => {
     await withLog(async (file) => {
       const r = await rig({}, async (m) =>
