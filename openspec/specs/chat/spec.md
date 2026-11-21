@@ -115,12 +115,17 @@ Starting a session from Telegram SHALL be off until `chat.projects` lists the fo
 
 ### Requirement: Permissions are never answered from a channel
 
-A permission prompt SHALL NOT be granted or denied from any channel; the message SHALL say to answer in the TUI.
+A permission prompt SHALL NOT be granted or denied from a channel unless `permissions.remote` allows it (default off). With it off the message SHALL say to answer in the TUI and SHALL have no Allow or Deny button.
 
 #### Scenario: Permission pushed
 
-- **WHEN** a session asks for a permission
+- **WHEN** a session asks for a permission and `permissions.remote` is off
 - **THEN** the Telegram message has no Allow or Deny button
+
+#### Scenario: Policy on
+
+- **WHEN** a session asks for a permission and `permissions.remote` is `once`
+- **THEN** the message has Allow once and Deny buttons
 
 ### Requirement: Telegram chat acts through the core actions
 
