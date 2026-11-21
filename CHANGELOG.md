@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.20.0...v0.21.0) (2026-11-21)
+
+
+### Features
+
+* diff images for the turn card ([#65](https://github.com/mrmm-labs/opencode-oob-bridge/issues/65)) ([1a5291c](https://github.com/mrmm-labs/opencode-oob-bridge/commit/1a5291c84dcdbe8c31928bc1c3621f5c39e28a0c))
+
 ## [0.20.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.19.0...v0.20.0) (2026-11-21)
 
 
