@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.21.0...v0.22.0) (2026-11-21)
+
+
+### Features
+
+* observed resume outcome, alert lifecycle, real-session check ([#68](https://github.com/mrmm-labs/opencode-oob-bridge/issues/68)) ([6d67e1e](https://github.com/mrmm-labs/opencode-oob-bridge/commit/6d67e1e1052e3adf5af78e2d94cde5f604eef62d))
+
 ## [0.21.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.20.0...v0.21.0) (2026-11-21)
 
 
