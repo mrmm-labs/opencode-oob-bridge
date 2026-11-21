@@ -236,6 +236,8 @@ export interface Connector {
     text: string,
     /** Shortest time between two edits, in ms. */
     gapMs?: number,
+    /** Most edits a minute. */
+    budget?: number,
   ): void
   /** Posts the final text of a turn to the session's thread. Only with `inboundPrompt`; never throws. */
   reply?(

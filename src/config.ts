@@ -45,6 +45,7 @@ export const SIDEBAR_MODES: readonly SidebarMode[] = ["full", "compact", "off"]
 
 export const MIN_STREAM_MS = 800
 const DEFAULT_STREAM_MS = 1000
+export const DEFAULT_STREAM_BUDGET = 30
 
 /** Chat from a connector into a session. */
 export type ChatConfig = {
@@ -56,6 +57,8 @@ export type ChatConfig = {
   stream: boolean
   /** Shortest time between two edits of a streamed reply, in ms. */
   streamMs: number
+  /** Most edits (and sends) a minute while a reply streams. */
+  streamBudget: number
   /** How a prompt reaches a session that is working: `queue` waits for the turn to end, `steer` is injected into it. */
   delivery: Delivery
   /** Applied to chat replies instead of `redact`: a reply cut at a prompt's preview length is unreadable. Default `full`. */
@@ -311,6 +314,7 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
       mirror: "replies",
       stream: true,
       streamMs: DEFAULT_STREAM_MS,
+      streamBudget: DEFAULT_STREAM_BUDGET,
       delivery: "queue",
       redact: { mode: "full" },
       projects: {},
@@ -332,6 +336,17 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
   )
     return {
       error: `chat.streamMs must be a whole number of ms, ${MIN_STREAM_MS} at least`,
+    }
+  const streamBudget = raw.streamBudget ?? DEFAULT_STREAM_BUDGET
+  if (
+    typeof streamBudget !== "number" ||
+    !Number.isInteger(streamBudget) ||
+    streamBudget < 1 ||
+    streamBudget > 600
+  )
+    return {
+      error:
+        "chat.streamBudget must be a whole number of edits a minute, 1 to 600",
     }
   const delivery = raw.delivery ?? "queue"
   if (delivery !== "queue" && delivery !== "steer")
@@ -364,6 +379,7 @@ function parseChat(raw: unknown): ChatConfig | { error: string } {
     mirror,
     stream,
     streamMs,
+    streamBudget,
     delivery,
     redact,
     projects: projects.projects,
