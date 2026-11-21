@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.29.1...v0.30.0) (2026-11-21)
+
+
+### Features
+
+* a reaction per stage on each message, from received to replied ([#104](https://github.com/mrmm-labs/opencode-oob-bridge/issues/104)) ([50e6dd3](https://github.com/mrmm-labs/opencode-oob-bridge/commit/50e6dd335c5cc04641734e0f6b9a649fc8681c70))
+
 ## [0.29.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.29.0...v0.29.1) (2026-11-21)
 
 
