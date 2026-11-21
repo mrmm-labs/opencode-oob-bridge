@@ -408,6 +408,10 @@ With `permissions.remote` at `once` or `all`, the permission message carries but
 
 Each Telegram update is written to `telegram-inbox.jsonl` in the data directory before Telegram is told it arrived, and marked done once handled. A restart handles the unfinished ones again. Updates run in order per topic and in parallel across topics, so a stuck session does not stop the others, and one update may take at most 90 seconds. If the session cannot take a message, the topic says why and the bridge tries again after 5 s, 30 s and 2 min. Every update gets one `telegram_inbound` line in `bridge.log` (kind, topic, outcome, reason, never the text); the core adds one `inbound` line per message.
 
+### A message for a session that waits on a question
+
+A plain message sent to a topic whose session has an open question is held, not sent behind the question. The topic says so and offers **Answer** (post the question again, at the bottom), **Skip** (do not send the message) and **Send anyway** (steer it into the session). Replying to the question's message still answers it, and `!text` still steers at once.
+
 ### One poller per bot
 
 Telegram allows one `getUpdates` per bot. A receive loop that replaces another (after a restart or a reload of the plugin) waits up to 5 seconds for the old one to end (`telegram_poll_handover`). A `409` from Telegram is logged once as `telegram_poll_conflict`, shown in `/oob status` as "another process is polling this bot", and retried with backoff; if it persists, something else is using the bot's token.

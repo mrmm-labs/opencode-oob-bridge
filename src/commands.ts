@@ -13,7 +13,12 @@ import { basename } from "node:path"
 import type { Host, ModelOption } from "./bridge.ts"
 import { Refused, type Actions } from "./core/actions.ts"
 import type { Config } from "./config.ts"
-import type { Connector, Inbound, Outcome } from "./connectors/types.ts"
+import type {
+  Connector,
+  Inbound,
+  InboundFile,
+  Outcome,
+} from "./connectors/types.ts"
 import { log } from "./logger.ts"
 import type { Telemetry } from "./otel.ts"
 
@@ -84,6 +89,8 @@ export type CommandDeps = {
   resume(root: string): Promise<Outcome>
   /** A prompt was sent from a chat, so its turn is a remote one. */
   remote(root: string): void
+  /** Posts the session's oldest open question again, at the bottom of its topic. */
+  repost(root: string): Promise<Outcome>
 }
 
 type Flow = {
@@ -97,6 +104,7 @@ type Flow = {
     | "prompt"
     | "undo"
     | "resume"
+    | "held"
   exp: number
   /** The session a model, agent or variant pick is for. */
   root?: string
@@ -105,6 +113,8 @@ type Flow = {
   project?: string
   agent?: string
   model?: string
+  /** A message kept while its session waits on a question. */
+  held?: { text: string; files?: InboundFile[] }
 }
 
 type Info = { outcome: string; root?: string }
@@ -151,6 +161,55 @@ export class Commands {
       span.end({ outcome: "failed" }, "error")
       return no("That did not work: see the log.")
     }
+  }
+
+  /**
+   * A message for a session that waits on a question is not sent behind it
+   * and not lost: it is kept, and the person chooses what happens to it.
+   */
+  hold(
+    root: string,
+    held: { text: string; files?: InboundFile[] },
+    open: number,
+  ): Outcome {
+    return this.menu(
+      "held",
+      `⏸ This session is waiting on ${open === 1 ? "a question" : `${open} questions`}. ` +
+        "Answer it first (reply to its message, or use its buttons), or choose:",
+      [
+        { label: "Answer: show the question again", value: "answer" },
+        { label: "Skip: do not send my message", value: "skip" },
+        { label: "Send anyway: steer it in", value: "send" },
+      ],
+      { root, held },
+    )
+  }
+
+  private async applyHeld(
+    f: Flow,
+    value: string,
+    info: Info,
+  ): Promise<Outcome> {
+    const root = f.root!
+    if (value === "answer")
+      return this.done(info, "applied", await this.d.repost(root))
+    if (value === "skip")
+      return this.done(
+        info,
+        "cancelled",
+        yes("Skipped: your message was not sent."),
+      )
+    try {
+      await this.d.actions.prompt(root, f.held!.text, "steer", f.held!.files)
+    } catch (err) {
+      return this.done(
+        info,
+        "failed",
+        no(`Could not send that to the session: ${(err as Error).message}`),
+      )
+    }
+    this.d.remote(root)
+    return this.done(info, "applied", yes("⚡ Sent anyway, steered in."))
   }
 
   private done(info: Info, outcome: string, out: Outcome): Outcome {
@@ -671,6 +730,7 @@ export class Commands {
       info.root = f.root
       const blocked = await this.gate(f.root, info)
       if (blocked) return blocked
+      if (f.kind === "held") return this.applyHeld(f, value, info)
       if (f.kind === "undo")
         return value === "undo"
           ? this.applyUndo(f.root, info)
