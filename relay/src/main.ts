@@ -26,6 +26,7 @@ const deadman = new Deadman({
 
 const link = new Link({
   secret: cfg.linkSecret,
+  key: cfg.linkKey,
   maxSkewMs: cfg.linkMaxSkewSeconds * 1000,
   keepAliveMs: cfg.sseKeepaliveSeconds * 1000,
   requestTimeoutMs: cfg.requestTimeoutSeconds * 1000,

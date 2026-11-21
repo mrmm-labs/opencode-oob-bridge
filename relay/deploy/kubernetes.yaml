@@ -2,6 +2,7 @@
 #   kubectl create secret generic oob-relay \
 #     --from-literal=LINK_SECRET=... --from-literal=HEARTBEAT_TOKEN=... \
 #     --from-literal=TELEGRAM_BOT_TOKEN=... --from-literal=TELEGRAM_BOT_TOKEN_VERIFY=...
+#   Optional second lock for the link (at least 32 characters): add --from-literal=LINK_KEY=...
 apiVersion: apps/v1
 kind: Deployment
 metadata:

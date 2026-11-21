@@ -13,6 +13,8 @@ export const SKEW_MS = 60_000
 export const MAX_FRAME_BYTES = 1024 * 1024
 export const MAX_CHUNK_BYTES = 48 * 1024
 export const LINK_PATH = "/link"
+/** The pre-shared key a relay may ask for on the upgrade, before the HMAC is looked at. */
+export const LINK_KEY_HEADER = "X-OOB-Link-Key"
 
 /** The headers that carry the same proof on the HTTP upgrade. */
 export const H_TS = "x-link-ts"

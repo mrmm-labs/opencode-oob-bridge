@@ -842,7 +842,7 @@ To reach the Mini App from outside your tailnet, or to get a dead-man alert that
 ```jsonc
 {
   "link": {
-    "url": "ws://<relay-link-address>:8081/link", // loopback, a tailnet address or a *.ts.net name
+    "url": "ws://<relay-link-address>:8081/link", // loopback, a tailnet address, a *.ts.net name or a host in allowHosts (wss only)
     "secret": {
       "command": [
         "security",
@@ -855,6 +855,11 @@ To reach the Mini App from outside your tailnet, or to get a dead-man alert that
   },
 }
 ```
+
+Two optional settings widen or tighten the link:
+
+- `link.allowHosts`: exact hostnames (no wildcard, scheme, port or address) the link may dial besides loopback and the tailnet, for example a LAN-only ingress. Such a host is accepted over `wss://` only; `ws://` stays loopback and tailnet. Default: empty.
+- `link.key`: a secret source like `link.secret`, sent as the `X-OOB-Link-Key` header on every dial and never logged. The relay checks it before the upgrade when its `LINK_KEY` is set. Trailing whitespace and newlines are trimmed. The HMAC `link.secret` stays mandatory either way.
 
 `/oob status` shows the link state. With a link, each heartbeat also travels over it and the relay's acknowledgement counts as an answer.
 

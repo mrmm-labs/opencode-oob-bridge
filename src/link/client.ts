@@ -6,7 +6,14 @@
  */
 import { registerSecret } from "../filter.ts"
 import { log } from "../logger.ts"
-import { seal, sealUpgrade, Verifier, describe, type Down } from "./frame.ts"
+import {
+  describe,
+  LINK_KEY_HEADER,
+  seal,
+  sealUpgrade,
+  Verifier,
+  type Down,
+} from "./frame.ts"
 import { linkUrlProblem } from "./hosts.ts"
 import { LinkServer, type Handler } from "./serve.ts"
 
@@ -31,6 +38,10 @@ export type LinkOptions = {
   url: string
   /** The shared secret, read when a connection is made. */
   secret: () => Promise<string | undefined>
+  /** The pre-shared key for the upgrade header, when the relay asks for one. */
+  key?: () => Promise<string | undefined>
+  /** Hostnames besides loopback and the tailnet that the URL may use (wss only). */
+  allowHosts?: readonly string[]
   handler: Handler
   backoff?: { minMs: number; maxMs: number }
   now?: () => number
@@ -69,7 +80,7 @@ export class LinkClient {
   }
 
   start(): void {
-    const why = linkUrlProblem(this.o.url)
+    const why = linkUrlProblem(this.o.url, this.o.allowHosts)
     if (why) {
       this.state = { state: "refused", reason: why }
       log("link_refused", { reason: why })
@@ -161,13 +172,30 @@ export class LinkClient {
       return this.later()
     }
     registerSecret(secret)
+    const headers = sealUpgrade(secret, this.now())
+    if (this.o.key) {
+      let key: string | undefined
+      try {
+        key = await this.o.key()
+      } catch (err) {
+        log("link_key_error", { message: (err as Error).message })
+      }
+      if (this.stopped) return
+      if (!key) {
+        this.set("down", "no key")
+        log("link_waiting", { reason: "no key" })
+        return this.later()
+      }
+      registerSecret(key)
+      headers[LINK_KEY_HEADER] = key
+    }
     const verify = new Verifier(secret, "down", this.now)
     const Ctor =
       this.o.socket ??
       (globalThis as unknown as { WebSocket: SocketCtor }).WebSocket
     let ws: Socket
     try {
-      ws = new Ctor(this.o.url, { headers: sealUpgrade(secret, this.now()) })
+      ws = new Ctor(this.o.url, { headers })
     } catch (err) {
       this.set("down", "cannot connect")
       log("link_connect_failed", { message: (err as Error).message })

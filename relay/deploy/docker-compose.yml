@@ -12,6 +12,8 @@ services:
       MAX_AGE_SECONDS: "3600"
       CLIENT_IP_HEADER: "X-Forwarded-For"
       LINK_SECRET_FILE: /run/secrets/link_secret
+      # Optional second lock for the link (at least 32 characters). Add `link_key` to secrets below.
+      # LINK_KEY_FILE: /run/secrets/link_key
       HEARTBEAT_TOKEN_FILE: /run/secrets/heartbeat_token
       TELEGRAM_BOT_TOKEN_FILE: /run/secrets/alert_bot_token
       TELEGRAM_BOT_TOKEN_VERIFY_FILE: /run/secrets/app_bot_token
@@ -27,6 +29,8 @@ services:
 secrets:
   link_secret:
     file: ./link_secret.txt
+  # link_key:
+  #   file: ./link_key.txt
   heartbeat_token:
     file: ./heartbeat_token.txt
   alert_bot_token:

@@ -7,6 +7,8 @@ export type Config = {
   linkPort: number
   metricsPort: number
   linkSecret: string
+  /** Optional pre-shared key the link upgrade must carry in X-OOB-Link-Key. */
+  linkKey?: string
   linkMaxSkewSeconds: number
   operatorUserId?: number
   verifyToken?: string
@@ -72,6 +74,10 @@ export function loadConfig(
   else if (linkSecret.length < MIN_SECRET)
     problems.push(`LINK_SECRET must be at least ${MIN_SECRET} characters`)
 
+  const linkKey = text("LINK_KEY")
+  if (linkKey !== undefined && linkKey.length < MIN_SECRET)
+    problems.push(`LINK_KEY must be at least ${MIN_SECRET} characters`)
+
   const op = text("OPERATOR_USER_ID")
   let operatorUserId: number | undefined
   if (op !== undefined && /^[1-9][0-9]{0,15}$/.test(op))
@@ -118,6 +124,7 @@ export function loadConfig(
     linkPort: int("LINK_PORT", 8081, 1, 65535),
     metricsPort: int("METRICS_PORT", 9090, 1, 65535),
     linkSecret: linkSecret ?? "",
+    linkKey,
     linkMaxSkewSeconds: int("LINK_MAX_SKEW_SECONDS", 60, 1, 60),
     operatorUserId,
     verifyToken,
