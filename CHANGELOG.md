@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.13.2...v0.14.0) (2026-11-21)
+
+
+### Features
+
+* core API with one action set, view-models and /v1 HTTP+SSE ([#45](https://github.com/mrmm-labs/opencode-oob-bridge/issues/45)) ([0ec928c](https://github.com/mrmm-labs/opencode-oob-bridge/commit/0ec928c96c135d18d0a2abb6cb629506356e2d05))
+
 ## [0.13.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.13.1...v0.13.2) (2026-11-21)
 
 
