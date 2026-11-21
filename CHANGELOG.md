@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.17.0...v0.18.0) (2026-11-21)
+
+
+### Features
+
+* quiet hours and a daily digest ([#57](https://github.com/mrmm-labs/opencode-oob-bridge/issues/57)) ([54ffe03](https://github.com/mrmm-labs/opencode-oob-bridge/commit/54ffe036faa9ef0e92c84c7574e853c772e3d931))
+
 ## [0.17.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.16.0...v0.17.0) (2026-11-21)
 
 
