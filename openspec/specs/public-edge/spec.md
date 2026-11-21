@@ -1,7 +1,7 @@
 # public-edge Specification
 
 ## Purpose
-TBD - created by archiving change mini-app. Update Purpose after archive.
+Say what the public hostname in front of the Mini App must serve and refuse: init data only, no bearer token, client address from the relay link, a failed-auth rate limit, and no secrets in the app.
 
 ## Requirements
 

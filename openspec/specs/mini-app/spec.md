@@ -1,7 +1,7 @@
 # mini-app Specification
 
 ## Purpose
-TBD - created by archiving change mini-app. Update Purpose after archive.
+Let the operator watch and steer sessions from a Telegram Mini App served by the core API: sessions, diffs, tasks, question forms, permission prompts, the overnight plan and the digest, with auth by Telegram init data.
 
 ## Requirements
 
