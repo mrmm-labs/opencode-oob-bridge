@@ -1275,7 +1275,12 @@ export class Bridge {
       const clean = redact(text, this.cfg.chat.redact)
       for (const c of r.to)
         if (c.capabilities.inboundPrompt && c.stream)
-          c.stream(r.session, clean, this.cfg.chat.streamMs)
+          c.stream(
+            r.session,
+            clean,
+            this.cfg.chat.streamMs,
+            this.cfg.chat.streamBudget,
+          )
     } catch (err) {
       log("stream_error", { message: (err as Error).message })
     }

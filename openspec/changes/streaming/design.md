@@ -6,6 +6,8 @@ A connector declares `draft` (native partial streaming) next to `edit`. The core
 
 ### D2. Draft path
 
+The draft path is opt-in (`draft: true` on the Telegram channel) until the call has been checked against a live bot; the default is the edit path.
+
 One `draft_id` per reply. Each update sends the whole text so far; the draft is refreshed at least every 20 seconds while the model is silent (the preview lives 30 seconds). When the turn ends the bridge sends the final message with `sendMessage` and the draft disappears. A rejected draft call switches that chat to the edit path for ten minutes and logs why.
 
 ### D3. Edit path

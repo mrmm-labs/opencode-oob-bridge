@@ -1,3 +1,7 @@
+## Purpose
+
+Streaming shows the reply as it is written, by the best transport the chat allows (a native draft where Telegram offers it, rate-limited edits elsewhere), with one text for both.
+
 ## ADDED Requirements
 
 ### Requirement: The transport follows what the channel offers

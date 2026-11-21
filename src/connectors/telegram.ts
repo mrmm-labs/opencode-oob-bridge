@@ -94,6 +94,14 @@ const TOAST_MAX = 190
 const TOPIC_RETRY_MS = 5 * 60_000
 const TOPIC_NOTICE_MS = 60 * 60_000
 const STREAM_GAP_MS = 1000
+const STREAM_BUDGET = 30
+/** A rate limit doubles the gap up to this, and it halves after a quiet half minute. */
+const MAX_GAP_MS = 8000
+const QUIET_MS = 30_000
+/** A draft is a 30 second preview: it is sent again before it runs out. */
+const DRAFT_REFRESH_MS = 20_000
+/** After a refused draft, edits are used for this long. */
+const DRAFT_BACKOFF_MS = 10 * 60_000
 // Streamed text moves to a new message past this many characters of HTML.
 const STREAM_CHARS = 3800
 const MAX_REPLY_MESSAGES = 3
@@ -136,6 +144,8 @@ export type TelegramOptions = {
   toastAfterMs?: number
   /** One status card per session topic; on unless false. */
   statusCard?: boolean
+  /** Stream a reply as a native draft in a private chat. Off until it has been checked against a live bot. */
+  draft?: boolean
   /** Session-end pushes wanted; finished defaults to off while the card shows it. */
   notify?: { finished?: boolean; failed?: boolean }
   /** `agent regex or project glob` to the emoji it picks for a topic icon. */
@@ -148,6 +158,8 @@ export type TelegramOptions = {
   typingMs?: number
   /** Clock, for the topic, card and streaming limits. */
   now?: () => number
+  /** How often a draft is sent again while the model is silent; tests shorten it. */
+  draftRefreshMs?: number
 }
 
 type Message = MediaMessage & {
@@ -192,6 +204,13 @@ type Stream = {
   /** No edit before this time. */
   nextAt: number
   gapMs: number
+  /** Most edits a minute. */
+  budget: number
+  /** The draft of a private chat, and the timer that keeps it alive. */
+  draftId?: number
+  /** What the draft last showed. */
+  draftText?: string
+  refresh?: ReturnType<typeof setTimeout>
   timer?: ReturnType<typeof setTimeout>
   chain: Promise<void>
   running: boolean
@@ -280,6 +299,13 @@ export class TelegramConnector implements Connector {
   private readonly pulses = new Map<string, ReturnType<typeof setInterval>>()
   /** Replies being streamed, by session. */
   private readonly streams = new Map<string, Stream>()
+  /** When edits and sends were made, for the per-minute budget. */
+  private readonly editTimes: number[] = []
+  /** The gap a rate limit has widened to, and when it last did. */
+  private boost = 0
+  private boostAt = 0
+  /** Edits are used instead of drafts until this time. */
+  private draftOffUntil = 0
   /** Menus on screen: the choices and the page shown. */
   private readonly menus = new Map<
     string,
@@ -1840,6 +1866,7 @@ export class TelegramConnector implements Connector {
     session: NonNullable<Push["session"]>,
     text: string,
     gapMs = STREAM_GAP_MS,
+    budget = STREAM_BUDGET,
   ): void {
     if (!this.chatId || !text.trim()) return
     let st = this.streams.get(session.id)
@@ -1850,6 +1877,7 @@ export class TelegramConnector implements Connector {
         shown: [],
         nextAt: 0,
         gapMs,
+        budget,
         chain: Promise.resolve(),
         running: false,
       }
@@ -1857,12 +1885,13 @@ export class TelegramConnector implements Connector {
     }
     st.text = text
     st.gapMs = gapMs
+    st.budget = budget
     this.pump(st)
   }
 
-  private pump(st: Stream): void {
+  private pump(st: Stream, refresh = false): void {
     if (st.running) return
-    const wait = st.nextAt - this.now()
+    const wait = refresh ? 0 : st.nextAt - this.now()
     // The gap has passed (the timer has not fired yet): go now.
     if (st.timer && wait <= 0) {
       clearTimeout(st.timer)
@@ -1899,11 +1928,94 @@ export class TelegramConnector implements Connector {
 
   private dirty(st: Stream): boolean {
     const now = this.shownText(st)
+    if (this.draftable()) return now.at(-1) !== st.draftText
     return now.some((h, i) => st.shown[i]?.html !== h)
+  }
+
+  /** Native partial streaming exists only in a private chat; a refusal turns it off for a while. */
+  private draftable(): boolean {
+    return (
+      this.opts.draft === true &&
+      this.chatId !== undefined &&
+      !this.chatId.startsWith("-") &&
+      this.now() >= this.draftOffUntil
+    )
+  }
+
+  /** The preview of the reply: the whole text so far, sent again every 20 s while the model is silent. */
+  private async paintDraft(st: Stream): Promise<boolean> {
+    const thread = await this.thread(st.session)
+    const text = this.shownText(st).at(-1)
+    if (!text?.trim()) return true
+    try {
+      await this.call(
+        "sendMessageDraft",
+        {
+          chat_id: this.chatId,
+          message_thread_id: thread,
+          draft_id: (st.draftId ??=
+            1 + Math.floor(Math.random() * 2_000_000_000)),
+          text,
+          parse_mode: "HTML",
+        },
+        undefined,
+        undefined,
+        undefined,
+        false,
+      )
+    } catch (err) {
+      if (err instanceof RateLimited) {
+        st.nextAt = this.now() + Math.min(err.retryAfter, 60) * 1000
+        return true
+      }
+      this.draftOffUntil = this.now() + DRAFT_BACKOFF_MS
+      log("telegram_draft_off", {
+        message: filterSecrets((err as Error).message),
+      })
+      return false
+    }
+    st.draftText = text
+    this.opts.tel?.count("oob.stream.drafts", { "connector.type": "telegram" })
+    st.nextAt = this.now() + st.gapMs
+    clearTimeout(st.refresh)
+    st.refresh = setTimeout(() => {
+      if (this.streams.get(st.session.id) === st) this.pump(st, true)
+    }, this.opts.draftRefreshMs ?? DRAFT_REFRESH_MS)
+    st.refresh.unref?.()
+    return true
+  }
+
+  /** Whether another edit fits in the minute's budget; otherwise when the oldest one leaves it. */
+  private budgetWait(st: Stream): number {
+    const now = this.now()
+    while (this.editTimes.length && now - this.editTimes[0] >= 60_000)
+      this.editTimes.shift()
+    return this.editTimes.length >= st.budget
+      ? this.editTimes[0] + 60_000 - now
+      : 0
+  }
+
+  /** The gap between edits: the configured one, doubled by a rate limit and halved after a quiet half minute. */
+  private gap(st: Stream): number {
+    const now = this.now()
+    if (this.boost && now - this.boostAt >= QUIET_MS) {
+      this.boost = this.boost / 2 < st.gapMs ? 0 : this.boost / 2
+      this.boostAt = now
+    }
+    return Math.max(st.gapMs, this.boost)
   }
 
   /** Sends or edits the messages of a stream so they show its text. */
   private async paint(st: Stream): Promise<void> {
+    if (this.draftable() && (await this.paintDraft(st))) return
+    const wait = this.budgetWait(st)
+    if (wait > 0) {
+      st.nextAt = this.now() + wait
+      this.opts.tel?.count("oob.stream.throttled", {
+        "connector.type": "telegram",
+      })
+      return
+    }
     const thread = await this.thread(st.session)
     const html = this.shownText(st)
     for (const [i, h] of html.entries()) {
@@ -1929,6 +2041,7 @@ export class TelegramConnector implements Connector {
           this.opts.tel?.count("oob.stream.edits", {
             "connector.type": "telegram",
           })
+          this.editTimes.push(this.now())
           had.html = h
         } else {
           const m = await this.call<{ message_id: number }>("sendMessage", {
@@ -1939,6 +2052,7 @@ export class TelegramConnector implements Connector {
             link_preview_options: { is_disabled: true },
             disable_notification: true,
           })
+          this.editTimes.push(this.now())
           st.shown[i] = { id: m.message_id, html: h }
           this.remember(m.message_id, st.session.id)
           this.opts.tel?.count("oob.stream.edits", {
@@ -1948,6 +2062,8 @@ export class TelegramConnector implements Connector {
       } catch (err) {
         if (err instanceof RateLimited) {
           // Back off for as long as Telegram asks, then carry on from the same text.
+          this.boost = Math.min(MAX_GAP_MS, Math.max(st.gapMs, this.boost) * 2)
+          this.boostAt = this.now()
           st.nextAt = this.now() + Math.min(err.retryAfter, 60) * 1000
           this.opts.tel?.count("oob.stream.throttled", {
             "connector.type": "telegram",
@@ -1958,7 +2074,7 @@ export class TelegramConnector implements Connector {
         else this.fail(err)
       }
     }
-    st.nextAt = this.now() + st.gapMs
+    st.nextAt = this.now() + this.gap(st)
   }
 
   /**
@@ -1975,6 +2091,7 @@ export class TelegramConnector implements Connector {
     this.streams.delete(session.id)
     if (st) {
       clearTimeout(st.timer)
+      clearTimeout(st.refresh)
       await st.chain.catch(() => {})
     }
     try {
@@ -2119,6 +2236,7 @@ export type TelegramConfig = {
   /** Bot API base URL; the public API unless a local Bot API server is used. */
   apiBase: string
   statusCard: boolean
+  draft: boolean
   notify: { finished?: boolean; failed?: boolean }
   icons: Record<string, string>
   reactions: ReactionsConfig
@@ -2147,6 +2265,10 @@ export const telegramType: ConnectorType<TelegramConfig> = {
     const statusCard = raw.statusCard ?? true
     if (typeof statusCard !== "boolean")
       return { error: `${at}statusCard must be true or false` }
+
+    const draft = raw.draft ?? false
+    if (typeof draft !== "boolean")
+      return { error: `${at}draft must be true or false` }
 
     const notify: TelegramConfig["notify"] = {}
     if (raw.notify !== undefined) {
@@ -2181,6 +2303,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       chatId,
       apiBase: apiBase.replace(/\/+$/, ""),
       statusCard,
+      draft,
       notify,
       icons,
       reactions: reactions.reactions,
@@ -2198,6 +2321,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       chatId: typeof stored === "string" ? stored : o.chatId,
       apiBase: o.apiBase,
       statusCard: o.statusCard,
+      draft: o.draft,
       notify: o.notify,
       icons: o.icons,
       reactions: o.reactions,

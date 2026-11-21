@@ -349,11 +349,13 @@ How it behaves:
   longer is also attached as `reply.md` ("📄 Full reply"). Only the assistant's text is posted,
   never tool calls or reasoning. Markdown becomes Telegram HTML (code blocks, inline code, bold,
   italic, links, lists), with everything else escaped.
+- **How the text streams** depends on the chat. In a group (and any topic of it) it is the edited message above, kept inside Telegram's limits: a 429 pauses edits for as long as it asks and doubles the gap up to 8 seconds (halved again after 30 quiet seconds), updates during a pause are merged so only the newest text is sent, and at most `chat.streamBudget` edits go out a minute (default 30). In a **private chat**, with `draft: true` on the Telegram channel (off by default until it has been checked against a live bot), the bot uses Telegram's native draft preview (`sendMessageDraft`): one draft per reply with the whole text so far, sent again every 20 seconds while the model is silent, and replaced by the final message. A refused draft switches that chat to edits for ten minutes and is logged. Both paths show the same text: redaction, secret masking, Markdown to HTML and splitting happen first.
 - **`redact` applies** to what is posted, and known secret shapes are masked.
 
 ```jsonc
 "chat": {
   "stream": true,         // edit one message while the reply is written
+  "streamBudget": 30,     // most edits a minute
   "redact": "full",       // replies only; default full, "title" in the top-level redact carries over
   "mirror": "replies",    // "replies": post every final reply; "remote-only": only turns you started from Telegram
   "deny": [ { "directory": "**/payroll" }, { "agent": "^ops$" } ]
