@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.29.0...v0.29.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* keep action names on one line in the Mini App info tab, and space the View patch button ([#101](https://github.com/mrmm-labs/opencode-oob-bridge/issues/101)) ([5cfc13a](https://github.com/mrmm-labs/opencode-oob-bridge/commit/5cfc13ae5d0c47e2234c01603d43a74c892f9bf9))
+* steer a queued chat message in after 30 s, and retry a hung Telegram call ([#103](https://github.com/mrmm-labs/opencode-oob-bridge/issues/103)) ([7d04e86](https://github.com/mrmm-labs/opencode-oob-bridge/commit/7d04e8653bab52250a336ec1b39fb531668d0cda))
+
 ## [0.29.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.28.0...v0.29.0) (2026-11-21)
 
 
