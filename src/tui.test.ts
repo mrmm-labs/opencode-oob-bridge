@@ -15,7 +15,7 @@ import plugin, { setup } from "./tui.ts"
 type Handler = (e: unknown) => void
 
 // One entry per sub-command, besides /oob itself.
-const SUBS = 18
+const SUBS = 19
 
 function fakeCtx(
   size?: { width: number; height: number },
@@ -364,6 +364,7 @@ describe("/oob menu and channels", () => {
         "oob-resume",
         "oob-restart",
         "oob-core",
+        "oob-approvals",
         "oob-status",
         "oob-version",
         "oob-help",
@@ -437,6 +438,7 @@ describe("/oob menu and channels", () => {
         "resume",
         "restart",
         "core",
+        "approvals",
         "status",
         "version",
         "help",

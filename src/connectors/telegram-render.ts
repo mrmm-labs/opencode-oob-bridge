@@ -3,6 +3,7 @@
  * truncated first and escaped second, then wrapped in tags, so a tag is never
  * cut and no text is ever read as markup. A message is at most 4096 characters.
  */
+import type { ApprovalView, Settled } from "../approvals/types.ts"
 import { filterSecrets } from "../filter.ts"
 import { clock, truncate } from "../util.ts"
 import { PAGE, reviewing, type Stepper } from "../stepper.ts"
@@ -281,3 +282,48 @@ export function renderStepper(s: Stepper): { text: string; rows: Key[][] } {
   ].join("\n")
   return { text, rows }
 }
+
+const ENDED: Record<string, string> = {
+  timeout: "⌛ Expired",
+  bridge_restart: "⌛ Expired: the bridge restarted",
+  withdrawn: "↩ Withdrawn by the caller",
+  present: "↩ Withdrawn: you are at the Mac",
+  cooldown: "🚫 Denied: asked again too soon",
+  bad_code: "🚫 Denied: three wrong codes",
+}
+
+/** The approval message: who asks, for what, and then either the time left or how it ended. */
+export function renderApproval(
+  v: ApprovalView,
+  s?: Settled,
+  now = Date.now(),
+): string {
+  const who = [
+    v.requester.agent,
+    v.requester.session_id,
+    v.requester.tool && `via ${v.requester.tool}`,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  const end = s
+    ? s.decision === "approve"
+      ? `✅ Approved · L${s.level}`
+      : s.decision === "deny"
+        ? (ENDED[s.reason ?? ""] ?? `❌ Denied · L${s.level}`)
+        : (ENDED[s.reason ?? ""] ?? "⌛ Expired")
+    : `Answer within ${Math.max(1, Math.round((v.expiresAt - now) / 60_000))} min`
+  const lines: Array<string | undefined> = [
+    `🔐 <b>Approval #${esc(v.short)}</b> · L${v.level}`,
+    `<b>${esc(v.caller)}</b> asks for <code>${esc(v.action_class)}</code>`,
+    who ? `Session: ${fit(who, 300)}` : undefined,
+    `What: ${fit(v.scope, 600)}`,
+    v.reason ? `Why: ${fit(v.reason, 400)}` : undefined,
+    "",
+    v.level >= 2 && !s ? "Tap Approve, then type the 6-digit code." : undefined,
+    end,
+  ]
+  return lines.filter((l) => l !== undefined).join("\n")
+}
+
+export const renderApprovalCode = (v: ApprovalView): string =>
+  `🔑 Type the 6-digit code for #${esc(v.short)}${v.scope ? ` (${fit(v.scope, 120)})` : ""}`

@@ -7,6 +7,7 @@
  */
 import { execFile } from "node:child_process"
 
+import type { ApprovalService } from "./approvals/service.ts"
 import type { Bridge, Host } from "./bridge.ts"
 import type { CoreHandle } from "./core/index.ts"
 import type { Config } from "./config.ts"
@@ -151,6 +152,8 @@ export class Control {
 
   /** The core API, once the server has started it. */
   core: CoreHandle | undefined
+  /** The approvals service, once the server has started it. */
+  approvals: ApprovalService | undefined
 
   constructor(o: ControlOptions) {
     this.o = o
@@ -614,6 +617,80 @@ export class Control {
   /** Sessions a TUI worked on lately: they stay described in full in the snapshots it gets. */
   private roots: string[] = []
 
+  /**
+   * Approvals commands. Creating, replacing or deleting a key or a caller is
+   * done here, from the TUI at the Mac: never from the socket or a chat.
+   */
+  private async approvalsOp(args: Record<string, unknown>): Promise<OpResult> {
+    const svc = this.approvals
+    const fail = (text: string) => this.done({ ok: false, text })
+    if (!svc) return fail("Approvals are not running here")
+    const action = str(args.action) ?? "status"
+    if (action === "status")
+      return this.done({ ok: true, data: await svc.status() })
+    if (!this.o.cfg.approvals.enabled)
+      return fail(
+        "Set approvals.enabled to true in the config file, then restart the bridge",
+      )
+    const name = str(args.name)
+    switch (action) {
+      case "pair-caller": {
+        if (!name) return fail("Name the caller")
+        const r = await svc.pairCaller(name)
+        return this.done({
+          ok: true,
+          text:
+            `Caller ${name} paired: ${r.file}` +
+            (r.listed
+              ? ""
+              : `. It is not under approvals.callers yet, so every request is refused`),
+          data: r,
+        })
+      }
+      case "revoke-caller": {
+        if (!name) return fail("Name the caller")
+        return (await svc.revokeCaller(name))
+          ? this.done({ ok: true, text: `Caller ${name} revoked` })
+          : fail(`No caller named ${name}`)
+      }
+      case "totp": {
+        const r = await svc.enrollTotp(args.replace === true)
+        return r === "exists"
+          ? fail(
+              "A code seed is enrolled already: choose replace to make a new one",
+            )
+          : this.done({
+              ok: true,
+              text: "Seed made: scan it now, it is not shown again",
+              data: r,
+            })
+      }
+      case "rotate-key": {
+        const hours = Number(args.hours ?? 24)
+        if (!Number.isFinite(hours) || hours < 0 || hours > 24 * 30)
+          return fail("hours is 0 to 720")
+        const r = await svc.rotateKey(hours * 3_600_000)
+        return this.done({
+          ok: true,
+          text: `New signing key ${r.kid}; the old one verifies for ${hours} h`,
+          data: r,
+        })
+      }
+      case "unlock": {
+        const r = await svc.unlock()
+        return this.done({
+          ok: r.signing || r.totp,
+          text:
+            r.signing || r.totp
+              ? "Keychain items read"
+              : "No keys yet: pair a caller first",
+          data: r,
+        })
+      }
+    }
+    return fail("Unknown approvals command: " + action)
+  }
+
   private cap(id: string, k: "pairing" | "inboundPrompt"): boolean {
     return (
       this.o.bridge.connectors().find((c) => c.id === id)?.capabilities[k] ===
@@ -786,6 +863,8 @@ export class Control {
             })
           return this.done({ ok: true, data: this.core.status() })
         }
+        case "approvals":
+          return await this.approvalsOp(args)
         case "version":
           return this.done({ ok: true, data: await this.versionReport() })
         case "test":

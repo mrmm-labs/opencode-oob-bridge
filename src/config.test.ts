@@ -11,6 +11,7 @@ import {
   parseConfig,
   type Config,
 } from "./config.ts"
+import { parseApprovals } from "./approvals/config.ts"
 import { DEFAULT_MEDIA_MIMES } from "./connectors/telegram-media.ts"
 
 /** The options a connector type parsed for one channel. */
@@ -667,5 +668,77 @@ describe("overnight config", () => {
       { defaults: { scope: 5 } },
     ])
       assert.ok("error" in (c(o) as object), JSON.stringify(o))
+  })
+})
+
+describe("approvals config", () => {
+  const ok = (raw?: unknown) => {
+    const r = parseApprovals(raw)
+    if ("error" in r) assert.fail(r.error)
+    return r
+  }
+  const err = (raw: unknown) => {
+    const r = parseApprovals(raw)
+    assert.ok("error" in r, "an error")
+    return (r as { error: string }).error
+  }
+
+  it("is off and empty by default, and parseConfig carries it", () => {
+    const off = ok()
+    assert.equal(off.enabled, false)
+    assert.deepEqual(off.classes, {})
+    assert.deepEqual(off.callers, {})
+    const c = parseConfig({ ...base, approvals: { enabled: true } }) as Config
+    assert.equal(c.approvals.enabled, true)
+    assert.equal(c.approvals.defaultTtl, 120)
+    assert.equal(c.approvals.cooldown, 120)
+  })
+
+  it("reads classes and callers and fills the channel and the ttl", () => {
+    const a = ok({
+      enabled: true,
+      classes: {
+        "secrets.read": { level: 1 },
+        "x.y": { level: 2, channels: ["telegram", "ntfy"], maxTtl: 60 },
+      },
+      callers: { tool: { classes: ["secrets.read"] } },
+    })
+    assert.deepEqual(a.classes["secrets.read"], {
+      level: 1,
+      channels: ["telegram"],
+      maxTtl: 600,
+    })
+    assert.deepEqual(a.classes["x.y"], {
+      level: 2,
+      channels: ["telegram", "ntfy"],
+      maxTtl: 60,
+    })
+    assert.deepEqual(a.callers.tool, { classes: ["secrets.read"] })
+  })
+
+  it("refuses what would open a hole", () => {
+    assert.match(err("on"), /must be an object/)
+    assert.match(err({ enabled: "yes" }), /enabled/)
+    assert.match(err({ defaultTtl: 5 }), /defaultTtl/)
+    assert.match(err({ cooldown: -1 }), /cooldown/)
+    assert.match(
+      err({ classes: { a: { level: 4 } } }),
+      /level must be 1, 2 or 3/,
+    )
+    assert.match(err({ classes: { A: { level: 1 } } }), /class name/)
+    assert.match(
+      err({ classes: { a: { level: 1, channels: [] } } }),
+      /channels/,
+    )
+    assert.match(err({ classes: { a: { level: 1, maxTtl: 5 } } }), /maxTtl/)
+    assert.match(
+      err({ callers: { t: { classes: ["nope"] } } }),
+      /no such class nope/,
+    )
+    assert.match(
+      err({ callers: { "Bad Name": { classes: [] } } }),
+      /caller name/,
+    )
+    assert.match(err({ limits: { pending: 0 } }), /limits.pending/)
   })
 })

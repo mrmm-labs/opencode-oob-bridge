@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 
+import { parseApprovals, type ApprovalsConfig } from "./approvals/config.ts"
 import { legacyConfigPath, configPath, legacy } from "./paths.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import { parseRedact, type Redact } from "./filter.ts"
@@ -84,6 +85,8 @@ export type Config = {
   core: { bind?: string; port: number }
   /** The dead-man heartbeat: off unless `url` is set. */
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
+  /** Approvals for local tools over a unix socket: off unless `enabled`. */
+  approvals: ApprovalsConfig
   /** The card posted when a turn ends with changes or after a long turn. */
   turnCard: { enabled: boolean; minSeconds: number }
   /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
@@ -537,6 +540,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   if ("error" in core) return core
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
+  const approvals = parseApprovals(raw.approvals)
+  if ("error" in approvals) return approvals
 
   const permissions = parsePermissions(raw.permissions)
   if ("error" in permissions) return permissions
@@ -573,6 +578,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     away: { minutes },
     core,
     deadman,
+    approvals,
     turnCard,
     permissions,
     diff,

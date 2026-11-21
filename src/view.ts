@@ -85,6 +85,12 @@ export interface Pilot {
   restart(): Promise<Outcome>
   /** The core API: its state, or a new token. */
   core(action: "status" | "rotate"): Promise<OpResult | undefined>
+  approvals(args: {
+    action: string
+    name?: string
+    replace?: boolean
+    hours?: number
+  }): Promise<OpResult | undefined>
   /** One line for each place two versions differ; empty when all match. */
   versionWarnings(): string[]
   /** The `/oob version` lines; undefined when the bridge does not answer. */

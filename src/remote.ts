@@ -269,6 +269,15 @@ export class Remote implements Pilot {
   core(action: "status" | "rotate") {
     return this.op("core", { action })
   }
+  /** Approvals: status, callers, the code seed, the signing key. */
+  approvals(args: {
+    action: string
+    name?: string
+    replace?: boolean
+    hours?: number
+  }) {
+    return this.op("approvals", args)
+  }
 
   async test(): Promise<Array<{ id: string; ok: boolean }>> {
     const r = await this.op("test")

@@ -51,6 +51,7 @@ import {
   type Stats,
 } from "./turncard.ts"
 import { clock, formatDuration, sleep, truncate } from "./util.ts"
+import type { Gate } from "./approvals/service.ts"
 
 export type SessionInfo = {
   id: string
@@ -361,6 +362,15 @@ export class Bridge {
   >()
   /** Sessions whose running turn began with a prompt from a connector. */
   private readonly remote = new Set<string>()
+  /** The level a phone answer to a permission needs, once approvals are on. */
+  private permissionGate:
+    | ((o: {
+        action: string | undefined
+        decision: "once" | "always" | "reject"
+        channel?: Connector
+        userId?: string
+      }) => Gate)
+    | undefined
   /** Where a running turn is shown, and the pending stream update. */
   private readonly feeds = new Map<
     string,
@@ -2189,6 +2199,7 @@ export class Bridge {
           m.decision,
           { id: ch.id, replyID: m.id },
           ch,
+          m.userId,
         )
         info.outcome = done.outcome
         return done.out
@@ -2263,12 +2274,19 @@ export class Bridge {
         : ["once", "always", "reject"]
   }
 
+  /** Sets the rule that decides what a phone answer to a permission needs (approvals levels). */
+  setPermissionGate(g: Bridge["permissionGate"]): void {
+    this.permissionGate = g
+  }
+
   /** Answers a permission from a channel when the policy allows it; the first answer wins. */
   private async decide(
     p: Pending,
     decision: "once" | "always" | "reject",
     via: { id: string; replyID?: string },
     ch?: Connector,
+    userId?: string,
+    gated = false,
   ): Promise<{ out: Outcome; outcome: "applied" | "failed" | "refused" }> {
     if (!this.permissionChoices().includes(decision))
       return {
@@ -2277,6 +2295,33 @@ export class Bridge {
           `#${p.id}: ${decision === "always" ? "Always needs permissions.remote: all" : "permissions can only be answered in the OpenCode TUI"}.`,
         ),
       }
+    const gate =
+      gated || !this.permissionGate
+        ? ({ kind: "allow" } as const)
+        : this.permissionGate({
+            action: p.action,
+            decision,
+            channel: ch,
+            userId,
+          })
+    if (gate.kind === "refuse")
+      return { outcome: "refused", out: no(`#${p.id}: ${gate.text}`) }
+    if (gate.kind === "code") {
+      // The poll loop waits for this call: the code is typed in a later update, so the wait runs on its own.
+      void gate.wait.then(async (r) => {
+        if (r === "approved" && this.store.get(p.id)?.state === "pending")
+          await this.decide(p, decision, via, ch, userId, true)
+        else if (ch)
+          await ch.send({
+            message: `#${p.id}: ${r === "approved" ? "already answered" : "no valid code, not applied. Tap the button again to retry"}.`,
+            silent: true,
+          })
+      })
+      return {
+        outcome: "applied",
+        out: { ok: true, text: "Type the 6-digit code in the chat." },
+      }
+    }
     this.store.update(p.id, {
       state: "answered",
       answeredBy: "phone",

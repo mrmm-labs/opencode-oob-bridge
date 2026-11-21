@@ -16,6 +16,8 @@ import {
   type Host,
   type SessionInfo,
 } from "./bridge.ts"
+import { ApprovalService } from "./approvals/service.ts"
+import { KeychainStore } from "./approvals/keystore.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import type { Connector } from "./connectors/types.ts"
 import { dataDir, loadConfig, type Config } from "./config.ts"
@@ -529,6 +531,16 @@ async function boot(
   })
   control.core = core
   await core.start()
+  const approvals = new ApprovalService({
+    cfg: () => cfg.approvals,
+    dir,
+    keys: new KeychainStore(),
+    connectors: () => bridge.connectors(),
+    away: () => router.away(),
+  })
+  bridge.setPermissionGate((o) => approvals.gate(o))
+  control.approvals = approvals
+  await approvals.start()
   const deadman = await startDeadman({
     cfg,
     dir,
@@ -592,6 +604,7 @@ async function boot(
     async stop() {
       await deadman?.stop()
       ac.abort()
+      await approvals.stop()
       await core.stop()
       control.stop()
       forms.clear()

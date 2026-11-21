@@ -5,6 +5,12 @@
  * degrades: no buttons, numbered text; no edit, a follow-up message; no
  * pairing, no pairing menu item.
  */
+import type {
+  ApprovalHandler,
+  ApprovalView,
+  ChannelCaps,
+  Settled,
+} from "../approvals/types.ts"
 import type { Question } from "../inbound.ts"
 import type { Telemetry } from "../otel.ts"
 
@@ -25,6 +31,8 @@ export type Capabilities = {
   inboundPrompt: boolean
   /** Can show part of a message collapsed (`turnCard`). Without it a turn card is a header and a short summary. */
   foldable?: boolean
+  /** What the connector can prove for an approval: buttons, who answered, typed text. Absent: it carries none. */
+  approvals?: ChannelCaps
 }
 
 export type CardQuestion = {
@@ -162,6 +170,8 @@ export type Inbound = {
   choice?: number
   /** `chat` identifies the sender's conversation; the connector has checked it is allowed. */
   from: { connector: string; chat: string }
+  /** The sender's own id on the connector (a Telegram user id), when it is known. Set on permission buttons. */
+  userId?: string
   /** The connector shows the outcome itself (a button toast): no notice message. */
   inline?: boolean
   /** `text` is a free-text answer: a number is not an option selector. */
@@ -279,6 +289,18 @@ export interface Connector {
   silence?(isQuiet: () => boolean): void
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
   menu?(commands: MenuCommand[]): void
+  /** The user id stored at pairing: the only person whose tap or code answers an approval. Undefined until known. */
+  operator?(): string | undefined
+  /** Where the taps and typed codes of approvals go. Only with `capabilities.approvals`. */
+  onApproval?(h: ApprovalHandler): void
+  /** Posts an approval request with Approve and Deny; the reference of the message. Never throws. */
+  approvalRequest?(v: ApprovalView): Promise<string | undefined>
+  /** Asks, in the same chat, for the one-time code; the reference of the prompt. Never throws. */
+  approvalCode?(v: ApprovalView): Promise<string | undefined>
+  /** Rewrites an approval message to its final state and removes the buttons. Never throws. */
+  approvalSettle?(ref: string, v: ApprovalView, s: Settled): Promise<void>
+  /** Deletes one message, best effort. Never throws. */
+  deleteMessage?(ref: string): Promise<void>
   /** Required when `capabilities.pairing`. */
   pair?(): Promise<Pairing>
   status(): ConnectorStatus
