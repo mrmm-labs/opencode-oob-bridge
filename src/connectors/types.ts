@@ -302,6 +302,8 @@ export interface Connector {
   operator?(): string | undefined
   /** Tells the connector where the Mini App is, so it can offer it. Called once at start. */
   launch?(app: { url: string; link?: string }): void
+  /** Whether the Mini App can be opened from this chat, so a second factor can be asked there. */
+  appOpen?(): boolean
   /** Where the taps and typed codes of approvals go. Only with `capabilities.approvals`. */
   onApproval?(h: ApprovalHandler): void
   /** Posts an approval request with Approve and Deny; the reference of the message. Never throws. */

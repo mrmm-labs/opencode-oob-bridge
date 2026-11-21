@@ -1,6 +1,7 @@
 /** The `approvals` section of the config file (docs/approvals.md section 6). Off unless `enabled` is true. */
 import { isObject } from "../util.ts"
 import { CALLER_NAME } from "./callers.ts"
+import { DEFAULT_FACTORS, isFactor, type Factor } from "./factors.ts"
 
 export type ClassConfig = {
   level: 1 | 2 | 3
@@ -15,6 +16,8 @@ export type ApprovalsConfig = {
   defaultTtl: number
   /** Seconds a repeated request is answered with deny after a deny. */
   cooldown: number
+  /** What proves level 2, in the order it is offered. */
+  l2: { factors: Factor[] }
   classes: Record<string, ClassConfig>
   callers: Record<string, { classes: string[] }>
   limits: { pending: number; perHour: number; global: number }
@@ -27,6 +30,7 @@ export const OFF: ApprovalsConfig = {
   enabled: false,
   defaultTtl: 120,
   cooldown: 120,
+  l2: { factors: DEFAULT_FACTORS },
   classes: {},
   callers: {},
   limits: DEFAULT_LIMITS,
@@ -47,6 +51,28 @@ export function parseApprovals(
     return { error: "approvals.defaultTtl must be 10 to 600 seconds" }
   if (!int(cooldown, 0, 3600))
     return { error: "approvals.cooldown must be 0 to 3600 seconds" }
+
+  let factors = DEFAULT_FACTORS
+  if (raw.l2 !== undefined) {
+    if (!isObject(raw.l2)) return { error: "approvals.l2 must be an object" }
+    const f = raw.l2.factors
+    if (f !== undefined) {
+      const at = "approvals.l2.factors"
+      if (!Array.isArray(f) || f.length === 0)
+        return { error: `${at} must list at least one factor` }
+      for (const x of f) {
+        if (x === "push")
+          return { error: `${at}: push is level 1 only and cannot prove L2` }
+        if (!isFactor(x))
+          return {
+            error: `${at}: unknown factor ${String(x)} (biometric, passkey, totp)`,
+          }
+      }
+      if (new Set(f).size !== f.length)
+        return { error: `${at} lists a factor twice` }
+      factors = f as Factor[]
+    }
+  }
 
   const classes: ApprovalsConfig["classes"] = {}
   if (raw.classes !== undefined && !isObject(raw.classes))
@@ -111,6 +137,7 @@ export function parseApprovals(
     enabled,
     defaultTtl: defaultTtl as number,
     cooldown: cooldown as number,
+    l2: { factors },
     classes,
     callers,
     limits,

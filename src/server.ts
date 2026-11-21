@@ -559,7 +559,9 @@ async function boot(
     keys: new KeychainStore(),
     connectors: () => bridge.connectors(),
     away: () => router.away(),
+    app: () => cfg.miniApp.url,
   })
+  core.approvals = approvals
   bridge.setPermissionGate((o) => approvals.gate(o))
   control.approvals = approvals
   await approvals.start()

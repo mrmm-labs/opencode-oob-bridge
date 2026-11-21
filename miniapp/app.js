@@ -1,5 +1,6 @@
 import { Api, Stream } from "./api.js"
 import { createController } from "./controller.js"
+import { createDevice } from "./factors.js"
 import { applyTheme, followTheme, launch, ready } from "./tg.js"
 import { render } from "./views.js"
 
@@ -12,6 +13,7 @@ const api = new Api({ initData: params.initData })
 const ctl = createController({
   api,
   start: params.start,
+  device: createDevice(),
   makeStream: (h) => new Stream({ api, ...h }),
 })
 

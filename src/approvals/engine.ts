@@ -4,13 +4,25 @@
  * injected, so every rule is tested alone. The socket and the Telegram wiring
  * are thin layers over `create`, `tap` and `typed`.
  */
-import { randomBytes, timingSafeEqual } from "node:crypto"
+import { randomBytes } from "node:crypto"
 
 import type { ApprovalsConfig } from "./config.ts"
+import {
+  biometricProof,
+  emptyEnrolled,
+  has,
+  isFactor,
+  newNonce,
+  passkeyChallenge,
+  same,
+  verifyAssertion,
+  type Enrolled,
+} from "./factors.ts"
 import {
   requestHash,
   type Answer,
   type Decision,
+  type Factor,
   type Mode,
   type RequestRecord,
 } from "./sign.ts"
@@ -35,6 +47,8 @@ export interface ChannelPort {
   settle(ref: string, v: ApprovalView, s: Settled): Promise<void>
   /** Deletes a message, best effort. Never throws. */
   remove(ref: string): Promise<void>
+  /** Whether the Mini App can be opened from this chat. */
+  app?(): boolean
 }
 
 export type Deps = {
@@ -46,6 +60,10 @@ export type Deps = {
   sign: (a: Omit<Answer, "sig" | "kid">) => Promise<Answer>
   signingReady: () => Promise<boolean>
   seed: () => Promise<Uint8Array | undefined>
+  /** The enrolled biometric devices and passkeys. */
+  enrolled?: () => Promise<Enrolled>
+  /** The relying party of passkeys: the host and origin of the Mini App. */
+  rp?: () => { id: string; origin: string } | undefined
   store: RecordStore
   mask: (text: string) => string
   log?: (event: string, fields: Record<string, unknown>) => void
@@ -94,6 +112,8 @@ type Live = {
   wrong: number
   deciding: boolean
   codeRef?: string
+  /** Issued to the Mini App for one proof; spent by the first one. */
+  challenge?: string
   events: Ev[]
   subs: Set<(e: Ev) => void>
 }
@@ -296,20 +316,24 @@ export class Approvals {
     )
       return fail(429, "rate_limited", true)
 
-    const seed = level >= 2 ? await this.d.seed() : undefined
     const wanted = this.d
       .channels()
       .filter(
         (ch) => c.channels.includes(ch.id) || c.channels.includes(ch.type),
       )
-    const ch = wanted.find(
-      (x) =>
-        x.up() &&
-        x.operator() !== undefined &&
-        x.caps.buttons &&
-        x.caps.approver === "verified" &&
-        (level < 2 || (x.caps.replyText && seed)),
-    )
+    let ch: ChannelPort | undefined
+    for (const x of wanted) {
+      if (
+        !x.up() ||
+        x.operator() === undefined ||
+        !x.caps.buttons ||
+        x.caps.approver !== "verified"
+      )
+        continue
+      if (level >= 2 && (await this.offered(x)).length === 0) continue
+      ch = x
+      break
+    }
     if (!ch) {
       const unpaired = wanted.some((x) => x.up() && x.operator() === undefined)
       return unpaired
@@ -458,18 +482,24 @@ export class Approvals {
     const cfg = this.d.cfg()
     const signing = await this.d.signingReady().catch(() => false)
     const seed = (await this.d.seed().catch(() => undefined)) !== undefined
+    const en = await this.enrolled()
     return {
       enabled: cfg.enabled,
       mode: this.d.mode(),
       signing,
       totp: seed,
-      channels: this.d.channels().map((ch) => ({
-        id: ch.id,
-        type: ch.type,
-        up: ch.up(),
-        paired: ch.operator() !== undefined,
-        levels: levels(ch, signing, seed),
-      })),
+      factors: cfg.l2.factors,
+      biometric: Object.keys(en.biometric).length,
+      passkeys: Object.keys(en.passkeys).length,
+      channels: await Promise.all(
+        this.d.channels().map(async (ch) => ({
+          id: ch.id,
+          type: ch.type,
+          up: ch.up(),
+          paired: ch.operator() !== undefined,
+          levels: levels(ch, signing, (await this.offered(ch)).length > 0),
+        })),
+      ),
     }
   }
 
@@ -524,10 +554,48 @@ export class Approvals {
     }
     if (rec.state === "awaiting_code")
       return { ok: true, text: "Type the code in the chat.", next: "code" }
+    const factors = await this.offered(ch)
+    if (factors.length === 0)
+      return {
+        ok: false,
+        text: "No second factor is ready: answer at the Mac.",
+      }
     rec.state = "awaiting_code"
     this.d.store.put(rec)
-    l.codeRef = await ch.askCode({ ...l.view, code: true })
+    l.codeRef = await ch.askCode({ ...l.view, code: true, factors })
     return { ok: true, text: "Type the code in the chat.", next: "code" }
+  }
+
+  /** The factors configured for level 2 that are ready on this channel, in the configured order. */
+  private async offered(ch: ChannelPort): Promise<Factor[]> {
+    const [seed, en] = await Promise.all([
+      this.d.seed().catch(() => undefined),
+      this.enrolled(),
+    ])
+    const app = ch.app?.() === true
+    const ready: Record<Factor, boolean> = {
+      totp: seed !== undefined && ch.caps.replyText,
+      biometric: app && Object.keys(en.biometric).length > 0,
+      passkey:
+        app &&
+        this.d.rp?.() !== undefined &&
+        Object.keys(en.passkeys).length > 0,
+    }
+    return this.d.cfg().l2.factors.filter((f) => ready[f])
+  }
+
+  private async enrolled(): Promise<Enrolled> {
+    return (await this.d.enrolled?.().catch(() => undefined)) ?? emptyEnrolled()
+  }
+
+  /** A time step of a typed code is used once. */
+  private async totpOk(typed: string): Promise<boolean> {
+    const seed = await this.d.seed().catch(() => undefined)
+    const step = seed ? match(seed, typed, this.d.now()) : undefined
+    if (step === undefined || this.usedSteps.has(step)) return false
+    this.usedSteps.add(step)
+    for (const s of this.usedSteps) if (s < step - 4) this.usedSteps.delete(s)
+    return true
   }
 
   /**
@@ -545,6 +613,7 @@ export class Approvals {
     if (!ch || ch.operator() === undefined || ch.operator() !== t.userId)
       return "ignored"
     if (!/^\d{6}$/.test(t.text.trim())) return "ignored"
+    if (!this.d.cfg().l2.factors.includes("totp")) return "ignored"
     const waiting = [
       ...[...this.live.values()]
         .filter(
@@ -564,13 +633,7 @@ export class Approvals {
     if (!pick) return "ignored"
     if (t.messageRef) void ch.remove(t.messageRef)
 
-    const seed = await this.d.seed().catch(() => undefined)
-    const step = seed ? match(seed, t.text.trim(), this.d.now()) : undefined
-    const ok = step !== undefined && !this.usedSteps.has(step)
-    if (ok) {
-      this.usedSteps.add(step)
-      for (const s of this.usedSteps) if (s < step - 4) this.usedSteps.delete(s)
-    }
+    const ok = await this.totpOk(t.text.trim())
     const gate = this.gates.get(pick.id)
     if (gate) {
       if (this.d.now() >= gate.view.expiresAt) this.endGate(pick.id, "expired")
@@ -582,7 +645,7 @@ export class Approvals {
     if (!l || terminal(l.rec.state) || l.deciding) return "consumed"
     if (this.d.now() >= l.rec.expiresAt)
       await this.finish(l, "expired", 0, "bridge", "timeout")
-    else if (ok) await this.finish(l, "approve", 2, t.userId)
+    else if (ok) await this.finish(l, "approve", 2, t.userId, undefined, "totp")
     else if (++l.wrong >= MAX_WRONG)
       await this.finish(l, "deny", 1, t.userId, "bad_code")
     return "consumed"
@@ -598,7 +661,8 @@ export class Approvals {
     ttl?: number
   }): Promise<"approved" | "denied" | "expired" | "unavailable"> {
     const ch = this.d.channels().find((c) => c.id === o.channel)
-    if (!ch || !ch.caps.replyText) return Promise.resolve("unavailable")
+    if (!ch || !ch.caps.replyText || !this.d.cfg().l2.factors.includes("totp"))
+      return Promise.resolve("unavailable")
     return this.d.seed().then(
       async (seed) => {
         if (!seed) return "unavailable"
@@ -645,6 +709,137 @@ export class Approvals {
     g.done(r)
   }
 
+  private waiting(id: string): Live | undefined {
+    const l = this.live.get(id)
+    return l && l.rec.state === "awaiting_code" && !l.deciding ? l : undefined
+  }
+
+  private channelOf(l: Live): ChannelPort | undefined {
+    return this.d.channels().find((c) => c.id === l.rec.channel?.id)
+  }
+
+  /**
+   * What the Mini App shows for a request that waits for its second factor,
+   * with a fresh single-use challenge. Only the init-data door calls it.
+   */
+  async appView(id: string): Promise<Res> {
+    const l = this.waiting(id)
+    const ch = l && this.channelOf(l)
+    if (!l || !ch) return fail(404, "not_waiting")
+    const factors = await this.offered(ch)
+    const en = await this.enrolled()
+    const rp = this.d.rp?.()
+    const nonce = newNonce()
+    l.challenge = nonce
+    const r = l.rec
+    return {
+      status: 200,
+      body: {
+        id,
+        short: l.view.short,
+        caller: l.view.caller,
+        action_class: l.view.action_class,
+        scope: l.view.scope,
+        reason: l.view.reason,
+        expires_at: iso(r.expiresAt),
+        request_hash: r.requestHash,
+        factors,
+        challenge: nonce,
+        ...(factors.includes("passkey") && rp
+          ? {
+              passkey: {
+                challenge: passkeyChallenge(r.requestHash, nonce),
+                rp: rp.id,
+                credentials: Object.keys(en.passkeys),
+              },
+            }
+          : {}),
+      },
+    }
+  }
+
+  /** One proof of one factor from the Mini App. Three wrong ones deny the request. */
+  async appProof(id: string, b: Record<string, unknown>): Promise<Res> {
+    const l = this.waiting(id)
+    const ch = l && this.channelOf(l)
+    const op = ch?.operator()
+    if (!l || !ch || op === undefined)
+      return no(404, "Not waiting for a factor.")
+    if (this.d.now() >= l.rec.expiresAt) {
+      await this.finish(l, "expired", 0, "bridge", "timeout")
+      return no(409, "Expired.", "expired")
+    }
+    if (this.d.mode() === "present") {
+      await this.finish(l, "expired", 0, "bridge", "present")
+      return no(409, "Withdrawn: you are at the Mac.", "withdrawn")
+    }
+    const factor = b.factor
+    if (!isFactor(factor) || !(await this.offered(ch)).includes(factor))
+      return no(409, "That factor is not available.")
+
+    let ok = false
+    if (factor === "totp") {
+      ok =
+        typeof b.code === "string" && /^\d{6}$/.test(b.code)
+          ? await this.totpOk(b.code)
+          : false
+    } else {
+      const nonce = l.challenge
+      l.challenge = undefined
+      const en = await this.enrolled()
+      if (
+        nonce &&
+        typeof b.challenge === "string" &&
+        same(b.challenge, nonce)
+      ) {
+        if (factor === "biometric") {
+          ok =
+            has(en.biometric, b.device) &&
+            typeof b.proof === "string" &&
+            same(
+              b.proof,
+              biometricProof(
+                Buffer.from(en.biometric[b.device], "base64url"),
+                l.rec.requestHash,
+                nonce,
+              ),
+            )
+        } else {
+          const cred = b.credential as { id?: unknown } | null | undefined
+          const rp = this.d.rp?.()
+          ok =
+            rp !== undefined &&
+            has(en.passkeys, cred?.id) &&
+            verifyAssertion({
+              publicKey: en.passkeys[cred.id],
+              rpId: rp.id,
+              origin: rp.origin,
+              challenge: passkeyChallenge(l.rec.requestHash, nonce),
+              assertion: b.credential,
+            })
+        }
+      }
+    }
+    if (ok) {
+      await this.finish(l, "approve", 2, op, undefined, factor)
+      return {
+        status: 200,
+        body: { ok: true, text: "Approved.", state: "approved" },
+      }
+    }
+    if (++l.wrong >= MAX_WRONG) {
+      await this.finish(
+        l,
+        "deny",
+        1,
+        op,
+        factor === "totp" ? "bad_code" : "bad_proof",
+      )
+      return no(422, "Denied: three wrong proofs.", "denied")
+    }
+    return no(422, "Wrong: " + (MAX_WRONG - l.wrong) + " left.")
+  }
+
   /** Expires what ran out and withdraws everything when the operator is present. Called every second. */
   async sweep(): Promise<void> {
     const now = this.d.now()
@@ -675,6 +870,7 @@ export class Approvals {
     level: number,
     approver: string,
     reasonCode?: string,
+    factor?: Factor,
   ): Promise<void> {
     const rec = l.rec
     if (l.deciding || terminal(rec.state)) return
@@ -699,6 +895,7 @@ export class Approvals {
         mode: rec.request.mode,
         approver,
         decided_at: decidedAt,
+        ...(factor ? { factor } : {}),
         channel: rec.channel && {
           type: rec.channel.type,
           message_ref: rec.channel.ref,
@@ -745,18 +942,17 @@ export class Approvals {
 
 export const iso = (ms: number) => new Date(ms).toISOString()
 
-function same(a: string, b: string): boolean {
-  const x = Buffer.from(a)
-  const y = Buffer.from(b)
-  return x.length === y.length && timingSafeEqual(x, y)
-}
+const no = (status: number, text: string, state?: State): Res => ({
+  status,
+  body: { ok: false, text, ...(state ? { state } : {}) },
+})
 
 export function levels(
   ch: ChannelPort,
   signing: boolean,
-  seed: boolean,
+  l2: boolean,
 ): number[] {
   if (!signing || !ch.up() || ch.operator() === undefined) return []
   if (!ch.caps.buttons || ch.caps.approver !== "verified") return []
-  return ch.caps.replyText && seed ? [1, 2] : [1]
+  return l2 ? [1, 2] : [1]
 }

@@ -1,5 +1,6 @@
 // The app's state and what the person can do. No DOM here: views.js draws it, the tests drive it.
 import { ApiError } from "./api.js"
+import { orderFactors } from "./factors.js"
 import * as F from "./form.js"
 
 export const CONFIRM = {
@@ -32,6 +33,8 @@ const initial = () => ({
   toast: undefined,
   digest: undefined,
   busy: false,
+  approval: undefined,
+  enrol: undefined,
 })
 
 export function createController({
@@ -39,6 +42,7 @@ export function createController({
   makeStream,
   now = Date.now,
   start = "",
+  device,
 }) {
   let s = initial()
   const subs = new Set()
@@ -130,7 +134,8 @@ export function createController({
         quiet(loadStatus()),
         quiet(guard(() => api.options()).then((options) => set({ options }))),
       ])
-      if (start) await self.open(start)
+      if (start.startsWith("a_")) await self.openApproval(start.slice(2))
+      else if (start) await self.open(start)
       stream = makeStream({
         onState: (state, why) => {
           if (why === "expired") return set({ phase: "expired", conn: "down" })
@@ -165,6 +170,7 @@ export function createController({
         await quiet(loadStatus())
         await self.loadDigest()
       }
+      if (name === "enroll") set({ enrol: undefined })
       if (name === "info")
         await Promise.all([
           quiet(loadStatus()),
@@ -188,6 +194,132 @@ export function createController({
           toast("That session is not there any more.", false)
           set({ route: { name: "list" } })
         }
+      }
+    },
+
+    /** The second factor of an L2 request: the first one this phone can use, then the others on demand. */
+    async openApproval(id) {
+      set({
+        route: { name: "approval", id },
+        approval: undefined,
+        confirm: undefined,
+      })
+      try {
+        const view = await guard(() => api.approval(id))
+        const support = (await device?.support(view)) ?? {}
+        set({
+          approval: {
+            id,
+            view,
+            factors: orderFactors(view.factors, support),
+            index: 0,
+            support,
+          },
+        })
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404)
+          set({ approval: { id, gone: true } })
+      }
+    },
+
+    useAnother() {
+      const a = s.approval
+      if (a?.factors?.length > 1)
+        set({
+          approval: {
+            ...a,
+            index: (a.index + 1) % a.factors.length,
+            text: undefined,
+          },
+        })
+    },
+
+    /** Proves the factor on screen. `code` is the typed code for the code factor. */
+    async verify(code) {
+      const a = s.approval
+      const factor = a?.factors?.[a.index]
+      if (!a || !factor || a.busy) return
+      set({ approval: { ...a, busy: true, text: undefined } })
+      const fail = (text) =>
+        set({ approval: { ...s.approval, busy: false, text } })
+      let body
+      if (factor === "totp") {
+        if (!/^\d{6}$/.test(code ?? "")) return fail("Type the 6 digits.")
+        body = { factor, code }
+      } else {
+        const p = await device[
+          factor === "biometric" ? "biometricProof" : "passkeyProof"
+        ](a.view)
+        if (p.error) return fail(p.error)
+        body = { factor, challenge: a.view.challenge, ...p }
+      }
+      let r
+      try {
+        r = await guard(() => api.approvalProof(a.id, body))
+      } catch (err) {
+        return fail(err instanceof ApiError ? say(err) : "The request failed.")
+      }
+      if (r?.ok)
+        return set({
+          approval: {
+            ...s.approval,
+            busy: false,
+            done: true,
+            ok: true,
+            text: r.text,
+          },
+        })
+      if (r?.state)
+        return set({
+          approval: {
+            ...s.approval,
+            busy: false,
+            done: true,
+            ok: false,
+            text: r.text,
+          },
+        })
+      // A failed proof spends the challenge: ask for a new one.
+      try {
+        const view = await guard(() => api.approval(a.id))
+        set({ approval: { ...s.approval, view, busy: false, text: r?.text } })
+      } catch {
+        fail(r?.text ?? "The request failed.")
+      }
+    },
+
+    /** Enrols this phone with the code shown at the Mac. */
+    async enroll(kind, code) {
+      if (s.enrol?.busy) return
+      const say2 = (text, ok = false) =>
+        set({ enrol: { busy: false, text, ok } })
+      set({ enrol: { busy: true } })
+      try {
+        if (kind === "biometric") {
+          const ready = await device.prepareBiometric()
+          if (ready.error) return say2(ready.error)
+          const r = await guard(() => api.enrol({ kind, code }))
+          if (!r?.ok) return say2(r?.text ?? "Not enrolled.")
+          if (!(await device.saveToken(r.token)))
+            return say2(
+              "Telegram did not keep the secret. Revoke " +
+                r.device +
+                " at the Mac and start again.",
+            )
+          return say2("Face ID is set up on this phone.", true)
+        }
+        const begun = await guard(() => api.enrol({ kind, code }))
+        if (!begun?.ok) return say2(begun?.text ?? "Not enrolled.")
+        const made = await device.createPasskey(begun)
+        if (made.error) return say2(made.error)
+        const done = await guard(() =>
+          api.enrol({ kind, code, credential: made.credential }),
+        )
+        return done?.ok
+          ? say2("The passkey is set up.", true)
+          : say2(done?.text ?? "Not enrolled.")
+      } catch (err) {
+        say2(err instanceof ApiError ? say(err) : "The request failed.")
       }
     },
 

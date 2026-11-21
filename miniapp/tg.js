@@ -26,6 +26,14 @@ export function ready(win = globalThis) {
   post(win, "web_app_expand")
 }
 
+const listeners = new Set()
+
+/** Calls `fn(type, data)` for every event Telegram sends; returns the way to stop. */
+export function onEvent(fn) {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
 function post(win, eventType, eventData = {}) {
   if (win.TelegramWebviewProxy?.postEvent)
     win.TelegramWebviewProxy.postEvent(eventType, JSON.stringify(eventData))
@@ -100,6 +108,7 @@ export function followTheme(win = globalThis) {
   const on = (type, data) => {
     if (type === "theme_changed" && data?.theme_params)
       applyTheme(data.theme_params, win.document.documentElement)
+    for (const f of listeners) f(type, data)
   }
   win.addEventListener("message", (e) => {
     try {
@@ -108,4 +117,76 @@ export function followTheme(win = globalThis) {
     } catch {}
   })
   win.Telegram = { ...win.Telegram, WebView: { receiveEvent: on } }
+}
+
+const biometryInfo = (d) => ({
+  available: d?.available === true,
+  type: d?.type,
+  accessGranted: d?.access_granted === true,
+  tokenSaved: d?.token_saved === true,
+})
+
+/**
+ * Telegram's biometric manager, over the events its documentation names
+ * (web_app_biometry_*). The app does not load Telegram's script, so it sends and
+ * reads them itself. A client that never answers (an old one) gives `undefined`
+ * after the timeout, and every method then reports "not available".
+ */
+export function biometric(
+  win = globalThis,
+  { timeoutMs = 3000, authMs = 60_000 } = {},
+) {
+  const ask = (event, data, reply, ms = timeoutMs) =>
+    new Promise((resolve) => {
+      const off = onEvent((type, d) => {
+        if (type !== reply) return
+        clearTimeout(timer)
+        off()
+        resolve(d ?? {})
+      })
+      const timer = setTimeout(() => {
+        off()
+        resolve(undefined)
+      }, ms)
+      post(win, event, data)
+    })
+  return {
+    async info() {
+      return biometryInfo(
+        await ask("web_app_biometry_get_info", {}, "biometry_info_received"),
+      )
+    },
+    async requestAccess(reason) {
+      return biometryInfo(
+        await ask(
+          "web_app_biometry_request_access",
+          { reason },
+          "biometry_info_received",
+          authMs,
+        ),
+      )
+    },
+    /** The token Face ID releases, or undefined when it was refused. */
+    async authenticate(reason) {
+      const d = await ask(
+        "web_app_biometry_request_auth",
+        { reason },
+        "biometry_auth_requested",
+        authMs,
+      )
+      return d?.status === "authorized" &&
+        typeof d.token === "string" &&
+        d.token
+        ? d.token
+        : undefined
+    },
+    async saveToken(token) {
+      const d = await ask(
+        "web_app_biometry_update_token",
+        { token },
+        "biometry_token_updated",
+      )
+      return d?.status === "updated"
+    },
+  }
 }

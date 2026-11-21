@@ -1,6 +1,7 @@
 /** Starts and stops the core API next to the bridge, and answers the TUI about it. */
 import { join } from "node:path"
 
+import type { AppApprovals } from "../approvals/types.ts"
 import type { Bridge, Host } from "../bridge.ts"
 import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
@@ -37,6 +38,8 @@ export class Core implements CoreHandle {
     /** What a request through the relay is checked against. */
     edge?: ApiDeps["edge"]
   }
+  /** Set once the approvals service exists. */
+  approvals: AppApprovals | undefined
   private api: Api | undefined
   private state: Omit<CoreStatus, "tokenFile"> = {
     state: "off",
@@ -69,6 +72,7 @@ export class Core implements CoreHandle {
       version: this.o.version,
       edge: this.o.edge,
       digest: () => this.o.bridge.digestPreview(),
+      approvals: () => this.approvals,
     }
   }
 

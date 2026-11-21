@@ -325,5 +325,11 @@ export function renderApproval(
   return lines.filter((l) => l !== undefined).join("\n")
 }
 
-export const renderApprovalCode = (v: ApprovalView): string =>
-  `🔑 Type the 6-digit code for #${esc(v.short)}${v.scope ? ` (${fit(v.scope, 120)})` : ""}`
+export const renderApprovalCode = (v: ApprovalView): string => {
+  const what = `#${esc(v.short)}${v.scope ? ` (${fit(v.scope, 120)})` : ""}`
+  const app = v.factors?.some((f) => f !== "totp")
+  if (!app) return `🔑 Type the 6-digit code for ${what}`
+  return v.factors?.includes("totp")
+    ? `🔐 Verify ${what}: open the app, or type the 6-digit code`
+    : `🔐 Verify ${what}: open the app`
+}

@@ -13,7 +13,10 @@ import {
 } from "node:crypto"
 
 export const SIGN_VERSION = "oob-approval-v1"
+/** The tag of an answer that names its factor. An old verifier refuses it instead of ignoring the field. */
+export const SIGN_VERSION_FACTOR = "oob-approval-v2"
 
+export type Factor = "biometric" | "passkey" | "totp"
 export type Decision = "approve" | "deny" | "expired"
 export type Mode = "afk" | "present"
 
@@ -39,6 +42,8 @@ export type Answer = {
   level: number
   decided_at: string
   mode: Mode
+  /** The second factor of an approval at level 2. */
+  factor?: Factor
   channel?: { type: string; message_ref?: string }
   reason_code?: string
   kid: string
@@ -71,10 +76,11 @@ export const signedString = (
     | "mode"
     | "approver"
     | "decided_at"
+    | "factor"
   >,
 ): string =>
   [
-    SIGN_VERSION,
+    a.factor ? SIGN_VERSION_FACTOR : SIGN_VERSION,
     a.id,
     a.request_hash,
     a.decision,
@@ -82,6 +88,7 @@ export const signedString = (
     a.mode,
     a.approver,
     a.decided_at,
+    ...(a.factor ? [a.factor] : []),
   ].join("\n")
 
 export type SigningKey = { kid: string; privateKey: string; publicKey: string }

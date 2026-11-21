@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { contrast, launch, readable, themeVars } from "./tg.js"
+import {
+  biometric,
+  contrast,
+  followTheme,
+  launch,
+  readable,
+  themeVars,
+} from "./tg.js"
 
 const loc = (hash, search = "") => ({ hash, search })
 
@@ -75,5 +82,89 @@ describe("theme", () => {
   it("sets nothing for a theme it cannot read, so the stylesheet defaults stay", () => {
     assert.deepEqual(themeVars({}), {})
     assert.deepEqual(themeVars({ bg_color: "red", text_color: "blue" }), {})
+  })
+})
+
+describe("biometric manager", () => {
+  const fake = (replies) => {
+    const win = {
+      document: { documentElement: { style: { setProperty() {} } } },
+      addEventListener() {},
+      sent: [],
+    }
+    followTheme(win)
+    win.TelegramWebviewProxy = {
+      postEvent(type, data) {
+        win.sent.push([type, JSON.parse(data)])
+        const r = replies[type]
+        if (r)
+          queueMicrotask(() => win.Telegram.WebView.receiveEvent(r[0], r[1]))
+      },
+    }
+    return win
+  }
+
+  it("reads what Telegram reports and sends the documented events", async () => {
+    const win = fake({
+      web_app_biometry_get_info: [
+        "biometry_info_received",
+        {
+          available: true,
+          type: "face",
+          access_granted: true,
+          token_saved: true,
+        },
+      ],
+    })
+    const info = await biometric(win).info()
+    assert.deepEqual(info, {
+      available: true,
+      type: "face",
+      accessGranted: true,
+      tokenSaved: true,
+    })
+    assert.deepEqual(win.sent[0], ["web_app_biometry_get_info", {}])
+  })
+
+  it("returns the token only when Face ID authorised", async () => {
+    const ok = fake({
+      web_app_biometry_request_auth: [
+        "biometry_auth_requested",
+        { status: "authorized", token: "d.s" },
+      ],
+    })
+    assert.equal(await biometric(ok).authenticate("why"), "d.s")
+    assert.deepEqual(ok.sent[0], [
+      "web_app_biometry_request_auth",
+      { reason: "why" },
+    ])
+    const no = fake({
+      web_app_biometry_request_auth: [
+        "biometry_auth_requested",
+        { status: "failed" },
+      ],
+    })
+    assert.equal(await biometric(no).authenticate("why"), undefined)
+  })
+
+  it("saves a token and reports whether Telegram applied it", async () => {
+    const win = fake({
+      web_app_biometry_update_token: [
+        "biometry_token_updated",
+        { status: "updated" },
+      ],
+    })
+    assert.equal(await biometric(win).saveToken("d.s"), true)
+    assert.deepEqual(win.sent[0], [
+      "web_app_biometry_update_token",
+      { token: "d.s" },
+    ])
+  })
+
+  it("reports not available when the client never answers", async () => {
+    const win = fake({})
+    const info = await biometric(win, { timeoutMs: 5 }).info()
+    assert.equal(info.available, false)
+    assert.equal(await biometric(win, { timeoutMs: 5 }).saveToken("x"), false)
   })
 })

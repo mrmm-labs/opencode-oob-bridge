@@ -4,6 +4,7 @@
  * Everything that creates, replaces or deletes a key is a method here that only
  * the TUI reaches; neither the socket nor a chat can call them.
  */
+import { randomBytes } from "node:crypto"
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
@@ -12,7 +13,17 @@ import { log } from "../logger.ts"
 import type { Connector } from "../connectors/types.ts"
 import { CallerStore } from "./callers.ts"
 import type { ApprovalsConfig } from "./config.ts"
-import { Approvals, type ChannelPort } from "./engine.ts"
+import { Approvals, type ChannelPort, type Res } from "./engine.ts"
+import {
+  checkRegistration,
+  emptyEnrolled,
+  newDevice,
+  newNonce,
+  parseEnrolled,
+  same,
+  type Enrolled,
+  type Factor,
+} from "./factors.ts"
 import { KeyStoreUnavailable, type KeyStore } from "./keystore.ts"
 import {
   kidOf,
@@ -24,9 +35,13 @@ import {
 import { startEndpoint, type Endpoint } from "./socket.ts"
 import { RecordStore } from "./store.ts"
 import { base32, newSeed, otpauth } from "./totp.ts"
+import type { AppApprovals } from "./types.ts"
 
 const SIGNING = "signing-key"
 const SEED = "totp-seed"
+const DEVICES = "l2-devices"
+const ENROL_MS = 5 * 60_000
+const ENROL_TRIES = 5
 
 /** Actions that only read: a tap is enough by default. Everything else asks for a code. */
 export const READ_LIKE = new Set([
@@ -59,6 +74,8 @@ export type ServiceOptions = {
   now?: () => number
   /** Every second; tests turn it off. */
   sweepMs?: number
+  /** The public address of the Mini App (`miniApp.url`): the relying party of passkeys. */
+  app?: () => string | undefined
 }
 
 type PublicKeys = Array<{ kid: string; public_key: string; not_after?: string }>
@@ -69,6 +86,10 @@ export type ServiceStatus = {
   socket: string
   signing: boolean
   totp: boolean
+  factors: Factor[]
+  /** Enrolled Face ID devices and passkeys. */
+  biometric: number
+  passkeys: number
   callers: string[]
   pending: number
   mode: Mode
@@ -89,10 +110,24 @@ const adapt = (c: Connector): ChannelPort | undefined => {
     askCode: (v) => c.approvalCode!(v),
     settle: (ref, v, s) => c.approvalSettle!(ref, v, s),
     remove: async (ref) => void (await c.deleteMessage?.(ref)),
+    app: () => c.appOpen?.() === true,
   }
 }
 
-export class ApprovalService {
+const fail = (status: number, text: string): Res => ({
+  status,
+  body: { ok: false, text },
+})
+
+type Enrolment = {
+  kind: "biometric" | "passkey"
+  code: string
+  expiresAt: number
+  tries: number
+  challenge?: string
+}
+
+export class ApprovalService implements AppApprovals {
   readonly engine: Approvals
   readonly callers: CallerStore
   readonly socket: string
@@ -105,6 +140,7 @@ export class ApprovalService {
     reason: "approvals.enabled is not true",
   }
   private keychain: string | undefined
+  private enrolment: Enrolment | undefined
 
   constructor(o: ServiceOptions) {
     this.o = o
@@ -123,6 +159,8 @@ export class ApprovalService {
       sign: async (a) => signAnswer(await this.signingKey(), a),
       signingReady: () => this.signingReady(),
       seed: () => this.seed(),
+      enrolled: () => this.enrolled(),
+      rp: () => this.rp(),
       store: this.store,
       mask: filterSecrets,
       log,
@@ -198,6 +236,135 @@ export class ApprovalService {
     } catch {
       return undefined
     }
+  }
+
+  private async enrolled(): Promise<Enrolled> {
+    try {
+      return parseEnrolled(await this.o.keys.get(DEVICES))
+    } catch {
+      return emptyEnrolled()
+    }
+  }
+
+  private rp(): { id: string; origin: string } | undefined {
+    try {
+      const u = new URL(this.o.app?.() ?? "")
+      return u.protocol === "https:"
+        ? { id: u.hostname, origin: u.origin }
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Opens an enrolment of a phone: a code for 5 minutes, shown at the Mac. Only the TUI reaches it. */
+  openEnrolment(kind: Enrolment["kind"]): { code: string; expiresAt: number } {
+    const code = base32(randomBytes(5))
+    const expiresAt = (this.o.now?.() ?? Date.now()) + ENROL_MS
+    this.enrolment = { kind, code, expiresAt, tries: 0 }
+    return { code, expiresAt }
+  }
+
+  /** What the Mini App sends to enrol: the code from the Mac, and for a passkey the credential in a second call. */
+  async enrol(b: Record<string, unknown>): Promise<Res> {
+    const e = this.enrolment
+    const now = this.o.now?.() ?? Date.now()
+    if (!e || now >= e.expiresAt) {
+      this.enrolment = undefined
+      return fail(409, "Nothing to enrol: open it at the Mac first.")
+    }
+    const typed =
+      typeof b.code === "string"
+        ? b.code.toUpperCase().replace(/[^A-Z2-7]/g, "")
+        : ""
+    if (b.kind !== e.kind || !same(typed, e.code)) {
+      if (++e.tries >= ENROL_TRIES) this.enrolment = undefined
+      return fail(403, "That code is not right.")
+    }
+    const en = await this.enrolled()
+    if (e.kind === "biometric") {
+      const d = newDevice()
+      en.biometric[d.id] = d.secret
+      try {
+        await this.saveEnrolled(en)
+      } catch {
+        return fail(
+          503,
+          "The Keychain refused: answer its prompt at the Mac and try again.",
+        )
+      }
+      this.enrolment = undefined
+      return {
+        status: 200,
+        body: { ok: true, device: d.id, token: d.id + "." + d.secret },
+      }
+    }
+    const rp = this.rp()
+    if (!rp)
+      return fail(409, "miniApp.url is not set: a passkey needs its address.")
+    if (b.credential === undefined) {
+      e.challenge ??= newNonce()
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          challenge: e.challenge,
+          rp: { id: rp.id, name: "OpenCode approvals" },
+          user: { id: newNonce(), name: "operator" },
+        },
+      }
+    }
+    const c = e.challenge
+      ? checkRegistration({
+          challenge: e.challenge,
+          origin: rp.origin,
+          credential: b.credential,
+        })
+      : undefined
+    if (!c) return fail(422, "The passkey was not accepted.")
+    en.passkeys[c.id] = c.publicKey
+    try {
+      await this.saveEnrolled(en)
+    } catch {
+      return fail(
+        503,
+        "The Keychain refused: answer its prompt at the Mac and try again.",
+      )
+    }
+    this.enrolment = undefined
+    return { status: 200, body: { ok: true } }
+  }
+
+  private async saveEnrolled(en: Enrolled): Promise<void> {
+    await this.o.keys.set(DEVICES, JSON.stringify(en))
+  }
+
+  async devices(): Promise<{ biometric: string[]; passkeys: string[] }> {
+    const en = await this.enrolled()
+    return {
+      biometric: Object.keys(en.biometric),
+      passkeys: Object.keys(en.passkeys),
+    }
+  }
+
+  /** Removes a Face ID device or a passkey: its proofs fail from then on. */
+  async revokeDevice(id: string): Promise<boolean> {
+    const en = await this.enrolled()
+    const had =
+      Object.hasOwn(en.biometric, id) || Object.hasOwn(en.passkeys, id)
+    if (!had) return false
+    delete en.biometric[id]
+    delete en.passkeys[id]
+    await this.saveEnrolled(en)
+    return true
+  }
+
+  appView(id: string): Promise<Res> {
+    return this.engine.appView(id)
+  }
+
+  appProof(id: string, body: Record<string, unknown>): Promise<Res> {
+    return this.engine.appProof(id, body)
   }
 
   private publicFile(): string {
@@ -306,11 +473,15 @@ export class ApprovalService {
 
   async status(): Promise<ServiceStatus> {
     const ready = await this.signingReady()
+    const en = await this.enrolled()
     return {
       ...this.state,
       socket: this.socket,
       signing: ready,
       totp: (await this.seed()) !== undefined,
+      factors: this.o.cfg().l2.factors,
+      biometric: Object.keys(en.biometric).length,
+      passkeys: Object.keys(en.passkeys).length,
       callers: this.callers.names(),
       pending: this.engine.pending(),
       mode: this.o.away() ? "afk" : "present",

@@ -621,7 +621,7 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
           kind: "enum",
           title: "Approvals",
           placeholder:
-            "status|pair-caller|revoke-caller|totp|replace-totp|rotate-key|unlock",
+            "status|pair-caller|revoke-caller|totp|replace-totp|enroll-biometric|enroll-passkey|devices|revoke-device|rotate-key|unlock",
           options: () => [
             {
               value: "status",
@@ -645,6 +645,18 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
               description: "the old codes stop working",
             },
             {
+              value: "enroll-biometric",
+              title: "Enrol Face ID",
+              description: "a code to enter in the app",
+            },
+            {
+              value: "enroll-passkey",
+              title: "Enrol a passkey",
+              description: "a code to enter in the app",
+            },
+            { value: "devices", title: "List Face ID devices and passkeys" },
+            { value: "revoke-device", title: "Revoke a device or passkey" },
+            {
               value: "rotate-key",
               title: "Rotate the signing key",
               description: "callers are re-paired by file",
@@ -660,7 +672,7 @@ export function buildCommands(ctx: Context, app: App): SubCommand[] {
           name: "name",
           kind: "text",
           title: "Caller name",
-          placeholder: "caller name or hours",
+          placeholder: "caller name, device id or hours",
           optional: true,
         },
       ],
@@ -929,6 +941,28 @@ async function approvalsCommand(
       message: lines.join("\n"),
     }))
   }
+  if (action === "enroll-biometric" || action === "enroll-passkey") {
+    return void (await ctx.ui.dialog.alert({
+      title: `${TITLE}: enrol ${action === "enroll-biometric" ? "Face ID" : "a passkey"}`,
+      message: [
+        "Open the Mini App on the phone, choose Set up, and enter this code.",
+        "",
+        String(d.code).replace(/^(.{4})/, "$1-"),
+        "",
+        "It works once and expires in 5 minutes.",
+      ].join("\n"),
+    }))
+  }
+  if (action === "devices") {
+    const v = d as { biometric?: string[]; passkeys?: string[] }
+    return void (await ctx.ui.dialog.alert({
+      title: `${TITLE}: Face ID devices and passkeys`,
+      message: [
+        `Face ID: ${v.biometric?.length ? v.biometric.join(", ") : "none"}`,
+        `Passkeys: ${v.passkeys?.length ? v.passkeys.join(", ") : "none"}`,
+      ].join("\n"),
+    }))
+  }
   if (action === "status") {
     const s = d as {
       state?: string
@@ -936,6 +970,9 @@ async function approvalsCommand(
       socket?: string
       signing?: boolean
       totp?: boolean
+      factors?: string[]
+      biometric?: number
+      passkeys?: number
       callers?: string[]
       pending?: number
       mode?: string
@@ -950,6 +987,8 @@ async function approvalsCommand(
         `Mode: ${s.mode} (${s.mode === "afk" ? "the phone is asked first" : "the machine is asked first"})`,
         `Signing key: ${s.signing ? "ready" : "none or unreadable"}${s.keychain ? ` (${s.keychain})` : ""}`,
         `Code seed: ${s.totp ? "enrolled" : "not enrolled"}`,
+        `Face ID devices: ${s.biometric ?? 0}, passkeys: ${s.passkeys ?? 0}`,
+        `L2 factors, in order: ${s.factors?.join(", ") ?? "unknown"}`,
         `Callers: ${s.callers?.length ? s.callers.join(", ") : "none"}`,
         `Pending: ${s.pending ?? 0}`,
       ].join("\n"),

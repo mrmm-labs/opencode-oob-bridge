@@ -721,6 +721,31 @@ describe("approvals config", () => {
     return (r as { error: string }).error
   }
 
+  it("lists the L2 factors, Face ID first by default", () => {
+    assert.deepEqual(ok().l2.factors, ["biometric", "passkey", "totp"])
+    assert.deepEqual(ok({ enabled: true }).l2.factors, [
+      "biometric",
+      "passkey",
+      "totp",
+    ])
+    assert.deepEqual(
+      ok({ l2: { factors: ["totp", "biometric"] } }).l2.factors,
+      ["totp", "biometric"],
+    )
+  })
+
+  it("refuses push, unknown, repeated and empty L2 factors", () => {
+    assert.match(
+      err({ l2: { factors: ["biometric", "push"] } }),
+      /push is level 1 only/,
+    )
+    assert.match(err({ l2: { factors: ["face"] } }), /unknown factor face/)
+    assert.match(err({ l2: { factors: ["totp", "totp"] } }), /twice/)
+    assert.match(err({ l2: { factors: [] } }), /at least one/)
+    assert.match(err({ l2: { factors: "totp" } }), /at least one/)
+    assert.match(err({ l2: 5 }), /must be an object/)
+  })
+
   it("is off and empty by default, and parseConfig carries it", () => {
     const off = ok()
     assert.equal(off.enabled, false)

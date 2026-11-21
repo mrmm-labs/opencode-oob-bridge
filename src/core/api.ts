@@ -9,6 +9,7 @@ import {
   type ServerResponse,
 } from "node:http"
 
+import type { AppApprovals } from "../approvals/types.ts"
 import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { redact } from "../filter.ts"
@@ -71,6 +72,8 @@ export type ApiDeps = {
   /** What a request that came through the relay is checked against. */
   /** The digest as text, without marking its period as covered. */
   digest?: () => { enabled: boolean; text: string }
+  /** The second factor of approvals: reachable only through the relay, with init data. */
+  approvals?: () => AppApprovals | undefined
   edge?: {
     operator(): number | undefined
     botToken(): string | undefined
@@ -154,7 +157,41 @@ export function handler(d: ApiDeps) {
     })
   }
 
-  const route = async (req: IncomingMessage, res: ServerResponse) => {
+  const approvalsRoute = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    p: string[],
+    edge: boolean,
+  ) => {
+    if (!edge) return send(res, 403, { error: "init data only" })
+    const ap = d.approvals?.()
+    if (!ap) return send(res, 503, { error: "approvals are off" })
+    const [, , id, b] = p
+    const reply = (r: { status: number; body: unknown }) =>
+      send(res, r.status, r.body)
+    if (req.method === "POST" && id === "enroll" && !b) {
+      const body = await readBody(req)
+      return body
+        ? reply(await ap.enrol(body))
+        : send(res, 400, { error: "invalid body" })
+    }
+    if (!id || !/^[0-9A-Z]{26}$/.test(id))
+      return send(res, 404, { error: "not found" })
+    if (req.method === "GET" && !b) return reply(await ap.appView(id))
+    if (req.method === "POST" && b === "proof" && p.length === 4) {
+      const body = await readBody(req)
+      return body
+        ? reply(await ap.appProof(id, body))
+        : send(res, 400, { error: "invalid body" })
+    }
+    return send(res, 404, { error: "not found" })
+  }
+
+  const route = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    edge = false,
+  ) => {
     const url = new URL(req.url ?? "/", "http://core")
     const p = url.pathname.split("/").filter(Boolean)
     const get = req.method === "GET"
@@ -170,6 +207,7 @@ export function handler(d: ApiDeps) {
         version: d.version,
         actions: d.actions.available(),
         permissions: d.cfg.permissions.remote,
+        approvals: d.approvals?.() !== undefined && d.cfg.approvals.enabled,
         fields: d.views.fields(),
       })
     if (get && a === "status" && p.length === 2) {
@@ -210,6 +248,7 @@ export function handler(d: ApiDeps) {
           : "There is no overnight plan running.",
       })
     }
+    if (a === "approvals") return approvalsRoute(req, res, p, edge)
     if (a !== "sessions") return send(res, 404, { error: "not found" })
 
     if (get && !id)
@@ -294,8 +333,8 @@ export function handler(d: ApiDeps) {
   }
 
   const fails = new FailLimiter(d.edge?.now)
-  const done = (req: IncomingMessage, res: ServerResponse) =>
-    route(req, res).catch(() => {
+  const done = (req: IncomingMessage, res: ServerResponse, edge = false) =>
+    route(req, res, edge).catch(() => {
       if (!res.headersSent) send(res, 500, { error: "internal error" })
       else res.end()
     })
@@ -327,7 +366,7 @@ export function handler(d: ApiDeps) {
       fails.fail(client)
       return send(res, v && !v.ok ? v.status : 401)
     }
-    return done(req, res)
+    return done(req, res, true)
   }
 
   return (req: IncomingMessage, res: ServerResponse, edge?: Edge) => {

@@ -452,18 +452,22 @@ export class TelegramConnector implements Connector {
   }
 
   /** A private chat opens the app in place; a group takes the direct link, because web_app buttons work only in private chats. */
-  private openButton(sessionID: string): Button | undefined {
+  private openButton(sessionID: string, text = "📱 Open"): Button | undefined {
     const app = this.app
     if (!app) return undefined
     const id = /^[A-Za-z0-9_-]{1,64}$/.test(sessionID) ? sessionID : undefined
     if (this.chatId && Number(this.chatId) > 0)
       return {
-        text: "📱 Open",
+        text,
         web_app: { url: app.url + (id ? "?s=" + id : "") },
       }
     return app.link && id
-      ? { text: "📱 Open", url: app.link + "?startapp=" + id }
+      ? { text, url: app.link + "?startapp=" + id }
       : undefined
+  }
+
+  appOpen(): boolean {
+    return this.openButton("a_0") !== undefined
   }
 
   private withOpen(push: Push, markup: Markup | undefined): Markup | undefined {
@@ -1875,12 +1879,17 @@ export class TelegramConnector implements Connector {
 
   async approvalCode(v: ApprovalView): Promise<string | undefined> {
     if (!this.chatId) return undefined
+    const open = v.factors?.some((f) => f !== "totp")
+      ? this.openButton("a_" + v.id, "🔐 Verify")
+      : undefined
     try {
       const m = await this.call<{ message_id: number }>("sendMessage", {
         chat_id: this.chatId,
         text: renderApprovalCode(v),
         parse_mode: "HTML",
-        reply_markup: { force_reply: true, input_field_placeholder: "123456" },
+        reply_markup: open
+          ? { inline_keyboard: [[open]] }
+          : { force_reply: true, input_field_placeholder: "123456" },
       })
       return String(m.message_id)
     } catch (err) {
