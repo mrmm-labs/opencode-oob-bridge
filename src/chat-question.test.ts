@@ -115,7 +115,13 @@ describe("a message for a session that waits on a question", () => {
     )
     await sleep(100)
     assert.deepEqual(r.prompts, [])
-    assert.equal(r.tg.of("setMessageReaction").length, 0)
+    await r.tg.waitFor(() =>
+      r.tg.of("setMessageReaction").length >= 2 ? true : undefined,
+    )
+    assert.deepEqual(
+      r.tg.of("setMessageReaction").map((c) => c.body.reaction[0].emoji),
+      ["👀", "🤷"],
+    )
     await r.done()
   })
 

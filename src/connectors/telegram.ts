@@ -74,8 +74,10 @@ import {
 } from "./telegram-media.ts"
 import {
   parseReactions,
-  reactionFor,
+  stageEmoji,
+  stageOf,
   type ReactionsConfig,
+  type Stage,
 } from "./telegram-reactions.ts"
 import type {
   Capabilities,
@@ -143,6 +145,8 @@ export type TelegramOptions = {
   /** Delays before each new try of a failed delivery, and how long one update may take; tests shorten them. */
   retryMs?: number[]
   handleMs?: number
+  /** Least time between two reaction calls; tests shorten it. */
+  reactGapMs?: number
   /** Where session topics of a forum chat are remembered across restarts. */
   topicsFile?: string
   /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
@@ -223,6 +227,11 @@ class RetryLater extends Error {}
 const HANDLE_MS = 90_000
 /** Delays before the tries after a failed delivery. */
 const RETRY_MS = [5_000, 30_000, 120_000]
+/** Telegram limits how fast a bot may change reactions: one call at least this far from the last. */
+const REACT_GAP_MS = 400
+/** Messages whose reaction is remembered, and messages per session waiting for a reply. */
+const REACTED_MAX = 500
+const AWAITING_MAX = 20
 
 type Button =
   | { text: string; callback_data: string }
@@ -1425,6 +1434,8 @@ export class TelegramConnector implements Connector {
       retry_in_s: again ? delays[attempt] / 1000 : undefined,
       ms: this.now() - t0,
     })
+    if (rec.outcome === "error" && u.message && rec.kind !== "command")
+      void this.react(u.message.message_id, "failed")
     if (rec.outcome === "error" && u.message)
       await this.deliver(u.message.message_thread_id, {
         ok: false,
@@ -1561,27 +1572,39 @@ export class TelegramConnector implements Connector {
       : sessionKey
         ? { ...base, kind: "prompt", sessionKey, text }
         : undefined
-    if (!inbound)
+    if (!inbound) {
+      void this.react(m.message_id, "ignored")
       return this.note("ignored", "no session is bound to this topic")
+    }
+    if (inbound.kind === "prompt") void this.react(m.message_id, "received")
     const out = await this.onInbound?.(inbound)
-    await this.settle(m, out)
+    await this.settle(m, out, sessionKey)
   }
 
   /** What the core said of a message for a session: acknowledged, refused, or tried again later. */
-  private async settle(m: Message, out: Outcome | undefined): Promise<void> {
+  private async settle(
+    m: Message,
+    out: Outcome | undefined,
+    session?: string,
+  ): Promise<void> {
     if (out?.sent) {
       this.note("delivered", out.delivered?.how)
-      return this.acknowledge(m, out)
+      return this.acknowledge(m, out, session)
     }
     if (out?.retry) {
       this.note("failed", out.text)
+      void this.react(m.message_id, "failed")
       throw new RetryLater(out.text)
     }
     if (out?.menu) {
       this.note("held", "waiting on a question")
+      void this.react(m.message_id, "held")
       return this.deliver(m.message_thread_id, out)
     }
-    if (out) return this.note("refused", out.text)
+    if (out) {
+      void this.react(m.message_id, "ignored")
+      return this.note("refused", out.text)
+    }
     this.note("ignored", "the core had nothing to do with it")
   }
 
@@ -1590,20 +1613,95 @@ export class TelegramConnector implements Connector {
    * got it, or that it waited or was steered in. If the reaction cannot be set,
    * the old line says it instead, so the sender still learns where it went.
    */
-  private async acknowledge(m: Message, out: Outcome): Promise<void> {
-    const emoji = reactionFor(this.opts.reactions, out.delivered, (bad) =>
-      this.warnReaction(bad),
+  private async acknowledge(
+    m: Message,
+    out: Outcome,
+    session?: string,
+  ): Promise<void> {
+    const set = await this.react(
+      m.message_id,
+      stageOf(out.delivered),
+      out.delivered?.agent,
     )
-    try {
-      await this.call("setMessageReaction", {
-        chat_id: this.chatId,
-        message_id: m.message_id,
-        reaction: [{ type: "emoji", emoji }],
-      })
-    } catch (err) {
-      this.fail(err)
-      await this.deliver(m.message_thread_id, { ok: true, text: out.text })
+    if (!set)
+      return void (await this.deliver(m.message_thread_id, {
+        ok: true,
+        text: out.text,
+      }))
+    // The session's reply turns this into 👌.
+    if (session) {
+      const ids = this.awaiting.get(session) ?? []
+      this.awaiting.delete(session)
+      this.awaiting.set(session, [...ids, m.message_id].slice(-AWAITING_MAX))
+      while (this.awaiting.size > AWAITING_MAX)
+        this.awaiting.delete(this.awaiting.keys().next().value!)
     }
+  }
+
+  /** The reaction each message wears now, so one is not set twice. */
+  private readonly reacted = new Map<number, string>()
+  private reactChain: Promise<unknown> = Promise.resolve()
+  private lastReactAt = 0
+  /** Messages whose session has not replied yet, by session. */
+  private readonly awaiting = new Map<string, number[]>()
+
+  /**
+   * Puts the stage's reaction on a message, spaced from the one before. Best
+   * effort: a failure is logged and the answer is false, nothing is thrown.
+   */
+  private react(
+    messageId: number,
+    stage: Stage,
+    agent?: string,
+  ): Promise<boolean> {
+    const emoji = stageEmoji(
+      this.opts.reactions,
+      stage,
+      (bad) => this.warnReaction(bad),
+      agent,
+    )
+    const run = this.reactChain.then(async () => {
+      if (this.reacted.get(messageId) === emoji) return true
+      const gap = this.opts.reactGapMs ?? REACT_GAP_MS
+      const wait = gap - (this.now() - this.lastReactAt)
+      if (wait > 0) await sleep(wait, this.signal)
+      this.lastReactAt = this.now()
+      try {
+        await this.call(
+          "setMessageReaction",
+          {
+            chat_id: this.chatId,
+            message_id: messageId,
+            reaction: [{ type: "emoji", emoji }],
+          },
+          10_000,
+          undefined,
+          undefined,
+          false,
+        )
+        this.reacted.delete(messageId)
+        this.reacted.set(messageId, emoji)
+        while (this.reacted.size > REACTED_MAX)
+          this.reacted.delete(this.reacted.keys().next().value!)
+        return true
+      } catch (err) {
+        log("telegram_reaction_failed", {
+          message_id: messageId,
+          stage,
+          message: filterSecrets((err as Error).message),
+        })
+        return false
+      }
+    })
+    this.reactChain = run
+    return run
+  }
+
+  /** The session replied: every message of it that waits becomes 👌. */
+  private replied(session: string): void {
+    for (const id of this.awaiting.get(session) ?? [])
+      void this.react(id, "done")
+    this.awaiting.delete(session)
   }
 
   private badReactions = new Set<string>()
@@ -1626,8 +1724,10 @@ export class TelegramConnector implements Connector {
         ? String(m.reply_to_message.message_id)
         : undefined
     const sessionKey = await this.sessionAt(m.message_thread_id, to)
-    if (!sessionKey)
+    if (!sessionKey) {
+      void this.react(m.message_id, "ignored")
       return this.note("ignored", "no session is bound to this topic")
+    }
     const notice = (text: string) =>
       this.deliver(m.message_thread_id, { ok: false, text })
     if (ref.kind === "unsupported")
@@ -1643,6 +1743,7 @@ export class TelegramConnector implements Connector {
       this.fail(err)
       return notice("Could not download that file from Telegram.")
     }
+    void this.react(m.message_id, "received")
     const out = await this.onInbound?.({
       kind: "prompt",
       id: String(u.update_id),
@@ -1652,7 +1753,7 @@ export class TelegramConnector implements Connector {
       text: (m.caption ?? "").trim(),
       files: [file],
     })
-    await this.settle(m, out)
+    await this.settle(m, out, sessionKey)
   }
 
   private async fetchMedia(
@@ -2581,6 +2682,7 @@ export class TelegramConnector implements Connector {
           },
           { field: "document", name: "reply.md", data: text },
         )
+      this.replied(session.id)
       return { parts: messages.length, documents: rest ? 1 : 0 }
     } catch (err) {
       this.fail(err)
