@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.18.0...v0.19.0) (2026-11-21)
+
+
+### Features
+
+* form stepper and opt-in remote permissions ([#59](https://github.com/mrmm-labs/opencode-oob-bridge/issues/59)) ([6b34308](https://github.com/mrmm-labs/opencode-oob-bridge/commit/6b34308d968b4ae7d825a37b5792073b8ae81cd8))
+
 ## [0.18.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.17.0...v0.18.0) (2026-11-21)
 
 
