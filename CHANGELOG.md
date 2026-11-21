@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.1...v0.25.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* one session the host never answers for no longer stops every reply ([#86](https://github.com/mrmm-labs/opencode-oob-bridge/issues/86)) ([12b9655](https://github.com/mrmm-labs/opencode-oob-bridge/commit/12b96558d8b598fbad9ee8f8c53785d3334d77ab))
+
 ## [0.25.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.0...v0.25.1) (2026-11-21)
 
 
