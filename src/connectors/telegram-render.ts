@@ -121,13 +121,23 @@ function lines(card: Card, o: RenderOptions, st: Stage): string[] {
         ...(card.duration ? [`⏱ ${fit(card.duration, 40)}`] : []),
       ]
     case "closed": {
+      const where =
+        card.origin === "mac"
+          ? "Answered at the Mac"
+          : card.origin === "telegram"
+            ? "Answered in Telegram"
+            : undefined
       const head =
         card.outcome === "cancelled"
           ? "⚪ <b>Cancelled</b>"
-          : `✅ <b>Answered</b>${card.answer ? ` · ${fit(clean(card.answer), 300)}` : ""}`
+          : where
+            ? `✅ <b>${where}</b>${card.answer ? `: ${fit(clean(card.answer), 300)}` : ""}`
+            : `✅ <b>Answered</b>${card.answer ? ` · ${fit(clean(card.answer), 300)}` : ""}`
       return [
         head,
-        `<i>via ${fit(card.via, 40)} · ${fit(card.time, 10)}</i>`,
+        where
+          ? `<i>${fit(card.time, 10)}</i>`
+          : `<i>via ${fit(card.via, 40)} · ${fit(card.time, 10)}</i>`,
         ...(card.quote
           ? ["", `<blockquote>${fit(clean(card.quote), st.text)}</blockquote>`]
           : []),

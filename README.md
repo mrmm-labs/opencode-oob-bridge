@@ -388,6 +388,12 @@ How it behaves:
   per row: the first column in bold, then `header: value` for the others. A long table is split
   between rows, each message with its header.
 - **How the text streams** depends on the chat. In a group (and any topic of it) it is the edited message above, kept inside Telegram's limits: a 429 pauses edits for as long as it asks and doubles the gap up to 8 seconds (halved again after 30 quiet seconds), updates during a pause are merged so only the newest text is sent, and at most `chat.streamBudget` edits go out a minute (default 30). In a **private chat**, with `draft: true` on the Telegram channel (off by default until it has been checked against a live bot), the bot uses Telegram's native draft preview (`sendMessageDraft`): one draft per reply with the whole text so far, sent again every 20 seconds while the model is silent, and replaced by the final message. A refused draft switches that chat to edits for ten minutes and is logged. Both paths show the same text: redaction, secret masking, Markdown to HTML and splitting happen first.
+- **The topic says where each thing came from.** A prompt typed at the Mac is posted as its own
+  short message, `🖥 You at the Mac: …` (silent, cut at 500 characters, redacted like replies), when
+  the session is mirrored and `chat.mirror` is not `remote-only`. A prompt that came from Telegram
+  is never echoed back. A question or permission answered at the Mac is edited to
+  `✅ Answered at the Mac: <choice>`, one answered in Telegram to `✅ Answered in Telegram: <choice>`,
+  buttons removed. The turn card ends with `🖥 Mac` or `📱 Telegram`, the origin of the turn's prompt.
 - **`redact` applies** to what is posted, and known secret shapes are masked.
 
 ```jsonc

@@ -40,6 +40,7 @@ async function chatRig(
     agent?: string
     failPrompt?: boolean | number
     permissions?: Record<string, unknown>
+    turnCard?: Record<string, unknown>
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -74,6 +75,7 @@ async function chatRig(
     chat: { queueSteerSeconds: 0, ...o.chat },
     redact: o.redact,
     permissions: o.permissions,
+    turnCard: o.turnCard,
   }) as Config
   const prompts: Array<{
     sessionID: string
@@ -1499,6 +1501,165 @@ describe("permission digest", () => {
     )
     assert.ok(p.reply_markup, "buttons")
     assert.equal(digests(r).length, 0)
+    await r.done()
+  })
+})
+
+describe("where a prompt came from", () => {
+  const typed = (r: Rig, text: string, inboxID = "i" + Math.random()) =>
+    r.ev("session.inbox.enqueued", {
+      inboxID,
+      item: { type: "user", payload: { text } },
+    })
+  const macLines = (r: Rig) =>
+    r.tg.of("sendMessage").filter((c) => /You at the Mac/.test(c.body.text))
+  const card = (r: Rig) =>
+    r.sends().find((b) => /Done|Failed/.test(b.text ?? ""))
+
+  it("a prompt typed at the Mac is posted as its own short message, silently", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    await typed(r, "run the tests")
+    const m = await r.tg.waitFor(() => macLines(r)[0])
+    assert.equal(m.body.text, "🖥 You at the Mac: run the tests")
+    assert.equal(m.body.disable_notification, true)
+    assert.equal(m.body.reply_markup, undefined)
+    await r.done()
+  })
+
+  it("redacts it like a reply, and cuts a long one", async () => {
+    const r = await chatRig({ chat: { redact: "head:6" } })
+    await chatOn(r)
+    await typed(r, "my plan is a secret one")
+    const m = await r.tg.waitFor(() => macLines(r)[0])
+    assert.ok(!/secret one/.test(m.body.text), m.body.text)
+    await typed(r, "x".repeat(2000))
+    const long = await r.tg.waitFor(() => macLines(r)[1])
+    assert.ok(long.body.text.length < 600)
+    await r.done()
+  })
+
+  it("a prompt that came from Telegram is not echoed back", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    r.tg.message(CHAT, "from the phone", undefined, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    await typed(r, "from the phone")
+    await new Promise((x) => setTimeout(x, 150))
+    assert.equal(macLines(r).length, 0)
+    await typed(r, "from the phone")
+    const m = await r.tg.waitFor(() => macLines(r)[0])
+    assert.match(m.body.text, /from the phone/)
+    await r.done()
+  })
+
+  it("the same inbox event is posted once", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    await typed(r, "once", "same")
+    await typed(r, "once", "same")
+    await r.tg.waitFor(() => macLines(r)[0])
+    await new Promise((x) => setTimeout(x, 150))
+    assert.equal(macLines(r).length, 1)
+    await r.done()
+  })
+
+  it("is not posted when only prompts from a connector are mirrored", async () => {
+    const r = await chatRig({ chat: { mirror: "remote-only" } })
+    await chatOn(r)
+    await typed(r, "private thought")
+    await new Promise((x) => setTimeout(x, 150))
+    assert.equal(macLines(r).length, 0)
+    await r.done()
+  })
+
+  it("the turn card names the origin of the prompt", async () => {
+    const r = await chatRig({
+      turnCard: { minSeconds: 0 },
+      chat: { stream: false },
+    })
+    await chatOn(r)
+    await typed(r, "at the keyboard")
+    await r.ev("session.execution.started")
+    await r.ev("session.execution.succeeded")
+    const mac = await r.tg.waitFor(() => card(r))
+    assert.match(mac.text, /🖥 Mac/)
+    r.tg.message(CHAT, "from the phone", undefined, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    await typed(r, "from the phone")
+    await r.ev("session.execution.started")
+    await r.ev("session.execution.succeeded")
+    await r.tg.waitFor(
+      () => r.sends().filter((b) => /Done|Failed/.test(b.text ?? ""))[1],
+    )
+    assert.match(
+      r.sends().filter((b) => /Done|Failed/.test(b.text ?? ""))[1].text,
+      /📱 Telegram/,
+    )
+    await r.done()
+  })
+})
+
+describe("answers name where they were given", () => {
+  const ask = async (r: Rig) => {
+    await r.bridge.onEvent({
+      type: "form.created",
+      data: {
+        form: {
+          id: "frm_1",
+          sessionID: "root",
+          metadata: { kind: "question" },
+          fields: [
+            {
+              key: "q0",
+              type: "string",
+              options: [{ label: "Yes" }, { label: "No" }],
+            },
+          ],
+        },
+      },
+    } as unknown as BridgeEvent)
+    await r.tg.waitFor(() => r.store.list()[0]?.refs?.telegram)
+  }
+  const edits = (r: Rig) => r.tg.of("editMessageText").map((c) => c.body)
+
+  it("a question answered at the Mac shows the choice, and loses its buttons", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    await ask(r)
+    await r.bridge.onEvent({
+      type: "form.replied",
+      data: { id: "frm_1", sessionID: "root", answer: { q0: "No" } },
+    } as unknown as BridgeEvent)
+    const e = await r.tg.waitFor(() =>
+      edits(r).find((b) => /Answered at the Mac/.test(b.text)),
+    )
+    assert.match(e.text, /Answered at the Mac<\/b>: No/)
+    assert.ok(!e.reply_markup?.inline_keyboard?.length, "no buttons")
+    await r.done()
+  })
+
+  it("a permission answered at the Mac shows the decision", async () => {
+    const r = await chatRig({ permissions: { notify: "all" } })
+    await chatOn(r)
+    await r.bridge.onEvent({
+      type: "permission.asked",
+      data: {
+        id: "per_1",
+        sessionID: "root",
+        action: "bash",
+        resources: ["ls"],
+      },
+    } as unknown as BridgeEvent)
+    await r.tg.waitFor(() => r.store.list()[0]?.refs?.telegram)
+    await r.bridge.onEvent({
+      type: "permission.replied",
+      data: { requestID: "per_1", sessionID: "root", reply: "reject" },
+    } as unknown as BridgeEvent)
+    const e = await r.tg.waitFor(() =>
+      edits(r).find((b) => /Answered at the Mac/.test(b.text)),
+    )
+    assert.match(e.text, /Answered at the Mac<\/b>: Deny/)
     await r.done()
   })
 })

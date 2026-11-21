@@ -185,7 +185,12 @@ export type BridgeEvent =
     }
   | {
       type: "form.replied" | "form.cancelled"
-      data: { id: string; sessionID: string }
+      data: {
+        id: string
+        sessionID: string
+        /** The values given, on a reply. */
+        answer?: Record<string, unknown>
+      }
     }
   | {
       type: "permission.asked"
@@ -199,11 +204,19 @@ export type BridgeEvent =
     }
   | {
       type: "permission.replied"
-      data: { requestID: string; sessionID: string }
+      data: {
+        requestID: string
+        sessionID: string
+        reply?: "once" | "always" | "reject"
+      }
     }
   | {
       type: "session.inbox.enqueued"
-      data: { sessionID: string; item?: { type?: string } }
+      data: {
+        sessionID: string
+        inboxID?: string
+        item?: { type?: string; payload?: { text?: string } }
+      }
     }
   | {
       type:
@@ -334,6 +347,13 @@ const NO_WINDOW =
 const DIGEST_TICK_MS = 30_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
+const PERMISSION_LABEL = {
+  once: "Allow once",
+  always: "Always",
+  reject: "Deny",
+} as const
+const SENT_TTL_MS = 2 * 60_000
+const MAX_MAC_PROMPT = 500
 /** The shortest time between two edits of a permission digest. */
 export const PERM_DIGEST_GAP_MS = 10_000
 
@@ -379,6 +399,15 @@ export class Bridge {
     string,
     { msg?: string; parts: Map<number, string> }
   >()
+  /** Prompts this bridge sent into a session, so that their inbox events are not taken for typing at the Mac. */
+  private readonly sentPrompts = new Map<
+    string,
+    Array<{ text: string; at: number }>
+  >()
+  /** Inbox ids already handled, so a repeated event is not posted twice. */
+  private readonly seenInbox = new Set<string>()
+  /** Where the latest prompt of a session came from. */
+  private readonly origins = new Map<string, "mac" | "telegram">()
   /** Sessions whose running turn began with a prompt from a connector. */
   private readonly remote = new Set<string>()
   /** The level a phone answer to a permission needs, once approvals are on. */
@@ -466,9 +495,31 @@ export class Bridge {
     this.router = router
     this.now = now
     store.onChange = () => this.notify()
+    const prompt = host.prompt
+    const synthetic = host.synthetic
+    const sent = (sessionID: string, text: string) => {
+      const list = (this.sentPrompts.get(sessionID) ?? []).filter(
+        (s) => now() - s.at < SENT_TTL_MS,
+      )
+      this.sentPrompts.set(sessionID, [...list, { text, at: now() }])
+    }
     this.actions = new Actions({
       cfg,
-      host,
+      host: {
+        ...host,
+        prompt: (sessionID, text, delivery, files) => {
+          sent(sessionID, text)
+          return prompt.call(host, sessionID, text, delivery, files)
+        },
+        ...(synthetic
+          ? {
+              synthetic: (sessionID: string, text: string, resume: boolean) => {
+                sent(sessionID, text)
+                return synthetic.call(host, sessionID, text, resume)
+              },
+            }
+          : {}),
+      },
       now,
       denial: (facts) => this.denial(facts),
       setChat: (root, on) => this.setChat(root, on),
@@ -778,13 +829,25 @@ export class Bridge {
           return await this.closed(
             e.data.id,
             e.type === "form.replied" ? "Answered in the TUI" : "Cancelled",
+            e.type === "form.replied"
+              ? Object.values(e.data.answer ?? {})
+                  .flat()
+                  .join(" | ")
+              : undefined,
           )
         case "permission.asked":
           return await this.onPermission(e.data)
         case "permission.replied":
-          return await this.closed(e.data.requestID, "Answered in the TUI")
+          return await this.closed(
+            e.data.requestID,
+            "Answered in the TUI",
+            e.data.reply && PERMISSION_LABEL[e.data.reply],
+          )
         case "session.inbox.enqueued":
-          if (e.data.item?.type === "user") this.router.touch()
+          if (e.data.item?.type === "user") {
+            this.router.touch()
+            return await this.onUserPrompt(e.data)
+          }
           return
         case "session.execution.started":
           this.turns.delete(e.data.sessionID)
@@ -1810,6 +1873,7 @@ export class Bridge {
     const hide = this.cfg.chat.redact.mode === "title"
     const card: TurnCard = {
       failed,
+      origin: this.origins.get(r.rootID),
       duration:
         started === undefined
           ? undefined
@@ -1939,7 +2003,7 @@ export class Bridge {
   }
 
   /** A prompt was answered or cancelled in OpenCode. */
-  private async closed(requestID: string, note: string) {
+  private async closed(requestID: string, note: string, choice?: string) {
     const p = this.store.byRequest(requestID)
     if (!p) return this.router.touch()
     if (p.state !== "pending") return
@@ -1955,7 +2019,47 @@ export class Bridge {
     await this.markAnswered(p, {
       outcome: cancelled ? "cancelled" : "answered",
       via: "TUI",
+      answer: choice
+        ? truncate(redact(choice, this.cfg.redact), 200)
+        : undefined,
     })
+  }
+
+  /** A prompt entered a session: one typed at the Mac is shown in the topic, one this bridge sent is not. */
+  private async onUserPrompt(
+    d: Extract<BridgeEvent, { type: "session.inbox.enqueued" }>["data"],
+  ) {
+    const root = this.host.root(d.sessionID)
+    if (root !== d.sessionID) return
+    if (d.inboxID) {
+      if (this.seenInbox.has(d.inboxID)) return
+      this.seenInbox.add(d.inboxID)
+      if (this.seenInbox.size > 500)
+        this.seenInbox.delete(this.seenInbox.values().next().value!)
+    }
+    const text = d.item?.payload?.text ?? ""
+    const list = this.sentPrompts.get(root) ?? []
+    const at = list.findIndex(
+      (s) => s.text === text && this.now() - s.at < SENT_TTL_MS,
+    )
+    if (at >= 0) {
+      list.splice(at, 1)
+      this.origins.set(root, "telegram")
+      return
+    }
+    this.origins.set(root, "mac")
+    if (!text.trim() || this.cfg.chat.mirror === "remote-only") return
+    const r = await this.routed(root)
+    if (!r) return
+    const to = r.to.filter((c) => c.capabilities.inboundPrompt)
+    if (to.length === 0) return
+    const message = `🖥 You at the Mac: ${truncate(redact(text, this.cfg.chat.redact), MAX_MAC_PROMPT)}`
+    await this.dispatch(
+      "notice",
+      to,
+      (ch) => ({ message, ...this.shape(ch, r.session) }),
+      { root, silent: true },
+    )
   }
 
   /** Counts an answer and how long the prompt waited for it. */
@@ -1995,6 +2099,12 @@ export class Bridge {
           outcome: o.outcome,
           answer: o.answer,
           via: o.via,
+          origin:
+            o.via === "TUI"
+              ? "mac"
+              : this.channels.find((c) => c.id === o.via)?.type === "telegram"
+                ? "telegram"
+                : undefined,
           time,
           quote,
         })),
