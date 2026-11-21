@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.26.0...v0.27.0) (2026-11-21)
+
+
+### Features
+
+* restart the bridge when a receive loop stops stepping, and show liveness in /oob status ([#91](https://github.com/mrmm-labs/opencode-oob-bridge/issues/91)) ([5b4cb11](https://github.com/mrmm-labs/opencode-oob-bridge/commit/5b4cb119809b834ae8e4991f55c4488f85a9df0d))
+
 ## [0.26.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.25.2...v0.26.0) (2026-11-21)
 
 
