@@ -13,6 +13,7 @@ import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { redact } from "../filter.ts"
 import { ACTIONS, type Actions } from "./actions.ts"
+import { serveApp } from "./app.ts"
 import { checkInitData, fromHeader } from "../link/initdata.ts"
 import { FailLimiter, type TokenStore } from "./auth.ts"
 import type { Views } from "./views.ts"
@@ -68,6 +69,8 @@ export type ApiDeps = {
   version: string
   keepAliveMs?: number
   /** What a request that came through the relay is checked against. */
+  /** The digest as text, without marking its period as covered. */
+  digest?: () => { enabled: boolean; text: string }
   edge?: {
     operator(): number | undefined
     botToken(): string | undefined
@@ -157,6 +160,7 @@ export function handler(d: ApiDeps) {
     const get = req.method === "GET"
     const post = req.method === "POST"
     if (!get && !post) return send(res, 405, { error: "method not allowed" })
+    if (get && p[0] === "app") return serveApp(url.pathname, res)
     if (p[0] !== "v1") return send(res, 404, { error: "not found" })
     const [, a, id, b, c] = p
 
@@ -165,6 +169,7 @@ export function handler(d: ApiDeps) {
         api: API_VERSION,
         version: d.version,
         actions: d.actions.available(),
+        permissions: d.cfg.permissions.remote,
         fields: d.views.fields(),
       })
     if (get && a === "status" && p.length === 2) {
@@ -173,7 +178,16 @@ export function handler(d: ApiDeps) {
         v: s.v,
         at: s.at,
         owner: s.owner,
+        versions: s.versions,
         afk: s.afk,
+        night: s.night && {
+          ...s.night,
+          sessions: s.night.sessions.map((x) => ({
+            ...x,
+            title:
+              x.title === undefined ? undefined : redact(x.title, d.cfg.redact),
+          })),
+        },
         pending: s.pending,
         channels: s.channels.map((ch) => ({
           ...ch,
@@ -183,6 +197,19 @@ export function handler(d: ApiDeps) {
       })
     }
     if (get && a === "events" && p.length === 2) return events(req, res)
+    if (get && a === "options" && p.length === 2)
+      return send(res, 200, await d.actions.options())
+    if (get && a === "digest" && p.length === 2)
+      return send(res, 200, d.digest?.() ?? { enabled: false, text: "" })
+    if (post && a === "overnight" && id === "end" && p.length === 3) {
+      const ended = await d.control.night.end("app")
+      return send(res, ended ? 200 : 422, {
+        ok: ended,
+        text: ended
+          ? "The overnight plan is ended: nothing acts automatically now."
+          : "There is no overnight plan running.",
+      })
+    }
     if (a !== "sessions") return send(res, 404, { error: "not found" })
 
     if (get && !id)
@@ -281,6 +308,8 @@ export function handler(d: ApiDeps) {
     const p = new URL(req.url ?? "/", "http://core").pathname
     if (req.method === "GET" && p === "/healthz")
       return send(res, 200, { ok: true })
+    if (req.method === "GET" && (p === "/app" || p.startsWith("/app/")))
+      return void serveApp(p, res)
     if (p !== "/v1" && !p.startsWith("/v1/"))
       return send(res, 404, { error: "not found" })
     const operator = d.edge?.operator()

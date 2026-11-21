@@ -224,9 +224,12 @@ const HANDLE_MS = 90_000
 /** Delays before the tries after a failed delivery. */
 const RETRY_MS = [5_000, 30_000, 120_000]
 
-type Markup = {
-  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>
-}
+type Button =
+  | { text: string; callback_data: string }
+  | { text: string; url: string }
+  | { text: string; web_app: { url: string } }
+
+type Markup = { inline_keyboard: Button[][] }
 
 const buttonable = (qs: Question[]) =>
   qs.length === 1 &&
@@ -431,6 +434,56 @@ export class TelegramConnector implements Connector {
     this.poll()
   }
 
+  private app: { url: string; link?: string } | undefined
+  private buttonFor: string | undefined
+
+  launch(app: { url: string; link?: string }): void {
+    this.app = app
+    if (this.onInbound) void this.register()
+  }
+
+  /** A private chat opens the app in place; a group takes the direct link, because web_app buttons work only in private chats. */
+  private openButton(sessionID: string): Button | undefined {
+    const app = this.app
+    if (!app) return undefined
+    const id = /^[A-Za-z0-9_-]{1,64}$/.test(sessionID) ? sessionID : undefined
+    if (this.chatId && Number(this.chatId) > 0)
+      return {
+        text: "📱 Open",
+        web_app: { url: app.url + (id ? "?s=" + id : "") },
+      }
+    return app.link && id
+      ? { text: "📱 Open", url: app.link + "?startapp=" + id }
+      : undefined
+  }
+
+  private withOpen(push: Push, markup: Markup | undefined): Markup | undefined {
+    const asks = push.card?.kind === "question" || push.permission
+    const b =
+      asks && push.session ? this.openButton(push.session.id) : undefined
+    return b
+      ? { inline_keyboard: [...(markup?.inline_keyboard ?? []), [b]] }
+      : markup
+  }
+
+  /** The chat's menu button opens the app, in a private chat (the Bot API sets it per private chat only). */
+  private async menuButton(): Promise<void> {
+    const url = this.app?.url
+    const chat = this.chatId
+    if (!url || !chat || Number(chat) <= 0 || this.buttonFor === url + chat)
+      return
+    this.buttonFor = url + chat
+    try {
+      await this.call("setChatMenuButton", {
+        chat_id: Number(chat),
+        menu_button: { type: "web_app", text: "Open", web_app: { url } },
+      })
+    } catch (err) {
+      this.buttonFor = undefined
+      this.fail(err)
+    }
+  }
+
   /** Makes Telegram offer the commands after "/" in the paired chat. */
   menu(commands: MenuCommand[]): void {
     this.menuList = commands
@@ -444,6 +497,7 @@ export class TelegramConnector implements Connector {
   private async register(again = false): Promise<void> {
     const chat = this.chatId
     if (!chat) return
+    void this.menuButton()
     const { ok, problems } = validMenu(this.menuList)
     for (const p of problems) log("telegram_menu_invalid", { problem: p })
     const scope = chat.startsWith("-")
@@ -553,30 +607,33 @@ export class TelegramConnector implements Connector {
                 (push.card?.kind === "failed"
                   ? false
                   : (push.priority ?? 3) <= 2),
-              reply_markup: view
-                ? { inline_keyboard: view.rows }
-                : live && one
-                  ? this.keyboard(
-                      live.id,
-                      one.options,
-                      one.multiple,
-                      one.custom,
-                      new Set(),
-                    )
-                  : push.permission
-                    ? { inline_keyboard: [this.decisions(push.permission)] }
-                    : push.action
-                      ? {
-                          inline_keyboard: [
-                            [
-                              {
-                                text: push.action.label,
-                                callback_data: "ctl:" + push.action.control,
-                              },
+              reply_markup: this.withOpen(
+                push,
+                view
+                  ? { inline_keyboard: view.rows }
+                  : live && one
+                    ? this.keyboard(
+                        live.id,
+                        one.options,
+                        one.multiple,
+                        one.custom,
+                        new Set(),
+                      )
+                    : push.permission
+                      ? { inline_keyboard: [this.decisions(push.permission)] }
+                      : push.action
+                        ? {
+                            inline_keyboard: [
+                              [
+                                {
+                                  text: push.action.label,
+                                  callback_data: "ctl:" + push.action.control,
+                                },
+                              ],
                             ],
-                          ],
-                        }
-                      : undefined,
+                          }
+                        : undefined,
+              ),
             },
             undefined,
             undefined,
@@ -925,10 +982,14 @@ export class TelegramConnector implements Connector {
     sessionID: string,
   ): Promise<void> {
     // Always sent: an edit without it would keep the old button.
+    const open = this.openButton(sessionID)
     const reply_markup = {
-      inline_keyboard: chat
-        ? [[{ text: "🛑 Stop chat", callback_data: "chatoff" }]]
-        : [],
+      inline_keyboard: [
+        ...(chat
+          ? [[{ text: "🛑 Stop chat", callback_data: "chatoff" } as Button]]
+          : []),
+        ...(open ? [[open]] : []),
+      ],
     }
     try {
       if (topic.card === undefined) {

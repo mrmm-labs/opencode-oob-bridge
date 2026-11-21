@@ -22,7 +22,7 @@ async function rig(o: { operator?: number; token?: string } = {}) {
     } as never,
     actions: { available: () => [] } as never,
     control: {} as never,
-    cfg: {} as never,
+    cfg: { permissions: { remote: "once" } } as never,
     tokens,
     ring: {} as never,
     version: "9.9.9",
@@ -130,10 +130,10 @@ describe("a request through the relay link", () => {
     }
   })
 
-  it("serves only /v1 and GET /healthz: /admin, /app until it exists, and the rest are 404", async () => {
+  it("serves only /v1 and GET /healthz: /admin and the rest are 404", async () => {
     const r = await rig()
     const ok = { ...via(), authorization: init(r.now()) }
-    for (const p of ["/admin", "/app/", "/", "/v2/meta", "/v1x"]) {
+    for (const p of ["/admin", "/", "/v2/meta", "/v1x"]) {
       const res = await fetch(r.url + p, { headers: ok })
       assert.equal(res.status, 404, p)
       await res.arrayBuffer()

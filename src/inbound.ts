@@ -5,6 +5,7 @@
  *   #ab12 some text            free text (a custom answer)
  *   #ab12 1 | yes | 2,3        one part per question when a prompt has several
  */
+import { isObject } from "./util.ts"
 
 export type Reply =
   | { id: string; choice: number }
@@ -88,4 +89,37 @@ export function resolveAnswer(
     }
   }
   return answer
+}
+
+const MAX_TYPED = 2000
+
+/**
+ * An answer given as one value per field, as a client that has the fields on
+ * screen sends it: every field answered, a single-select with one value, a
+ * value that is an option or, where typing is allowed, any text. No guessing
+ * from numbers: undefined when it does not fit.
+ */
+export function checkAnswers(
+  questions: Question[],
+  given: unknown,
+): Answer | undefined {
+  if (!isObject(given) || questions.length === 0) return undefined
+  if (Object.keys(given).length !== questions.length) return undefined
+  const out: Answer = {}
+  for (const q of questions) {
+    const v = given[q.key]
+    const values = q.multiple ? v : [v]
+    if (!Array.isArray(values) || values.length === 0) return undefined
+    for (const x of values)
+      if (
+        typeof x !== "string" ||
+        !(
+          q.options.includes(x) ||
+          (q.custom && x.trim() && x.length <= MAX_TYPED)
+        )
+      )
+        return undefined
+    out[q.key] = q.multiple ? (values as string[]) : (values[0] as string)
+  }
+  return out
 }

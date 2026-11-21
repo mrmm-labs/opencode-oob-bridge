@@ -68,6 +68,7 @@ export class Core implements CoreHandle {
       ring: this.ring,
       version: this.o.version,
       edge: this.o.edge,
+      digest: () => this.o.bridge.digestPreview(),
     }
   }
 

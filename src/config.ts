@@ -83,6 +83,8 @@ export type Config = {
   away: { minutes: number }
   /** The core API listener: off unless `bind` is set. */
   core: { bind?: string; port: number }
+  /** The Telegram Mini App: opened from Telegram only when `url` is set. */
+  miniApp: { url?: string; link?: string; maxAgeSeconds: number }
   /** The dead-man heartbeat: off unless `url` is set. */
   deadman: { url?: string; token?: TokenSource; intervalSeconds: number }
   link: { url?: string; secret?: TokenSource }
@@ -301,6 +303,43 @@ function parseCore(raw: unknown): Config["core"] | { error: string } {
   )
     return { error: "core.port must be a port number" }
   return { bind: bind?.trim(), port }
+}
+
+export const DEFAULT_APP_MAX_AGE_S = 3600
+
+const httpsUrl = (v: unknown) => {
+  if (typeof v !== "string") return false
+  try {
+    return new URL(v).protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+function parseMiniApp(raw: unknown): Config["miniApp"] | { error: string } {
+  const off = { maxAgeSeconds: DEFAULT_APP_MAX_AGE_S }
+  if (raw === undefined) return off
+  if (!isObject(raw)) return { error: "miniApp must be an object" }
+  const { url, link, maxAgeSeconds = DEFAULT_APP_MAX_AGE_S } = raw
+  if (url !== undefined && !httpsUrl(url))
+    return { error: "miniApp.url must be an https URL" }
+  if (
+    link !== undefined &&
+    !(httpsUrl(link) && (link as string).startsWith("https://t.me/"))
+  )
+    return { error: "miniApp.link must be a https://t.me/ direct link" }
+  if (
+    typeof maxAgeSeconds !== "number" ||
+    !Number.isInteger(maxAgeSeconds) ||
+    maxAgeSeconds < 60 ||
+    maxAgeSeconds > 86_400
+  )
+    return { error: "miniApp.maxAgeSeconds must be 60 to 86400" }
+  return {
+    url: url as string | undefined,
+    link: (link as string | undefined)?.replace(/\/+$/, ""),
+    maxAgeSeconds,
+  }
 }
 
 const NAME = /^[A-Za-z0-9][-_A-Za-z0-9]{0,23}$/
@@ -553,6 +592,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
 
   const core = parseCore(raw.core)
   if ("error" in core) return core
+  const miniApp = parseMiniApp(raw.miniApp)
+  if ("error" in miniApp) return miniApp
   const deadman = parseDeadman(raw.deadman)
   if ("error" in deadman) return deadman
   const link = parseLink(raw.link)
@@ -594,6 +635,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     sidebar: sidebar as SidebarMode,
     away: { minutes },
     core,
+    miniApp,
     deadman,
     link,
     approvals,

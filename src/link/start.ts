@@ -36,6 +36,7 @@ export function edgeAuth(cfg: Config, bridge: Bridge) {
   const edge: NonNullable<ApiDeps["edge"]> = {
     operator: () => operatorId(bridge),
     botToken: () => token,
+    maxAgeSeconds: cfg.miniApp.maxAgeSeconds,
   }
   return {
     edge,

@@ -18,7 +18,7 @@ The bridge holds the bot token, so it verifies init data itself: the secret key 
 
 ### D4. Two schemes, two doors
 
-Direct tailnet clients may use the bearer token or init data. A request that arrives through the relay link, or whose source is a configured edge proxy (`core.edgeProxies`, the fallback mode), may use **only** init data, so a leaked bearer token is useless through the public hostname. The real client address is the `client` field of a link frame, or `X-Forwarded-For` in the fallback mode, trusted only from those sources.
+A direct client on the tailnet uses the bearer token only. A request that arrives through the relay link uses **only** init data, so a leaked bearer token is useless through the public hostname. The real client address is the `client` field of a link frame. There is no second public path: a reverse proxy in front of the core API (an earlier fallback) is not built, because the link needs no listening port and a proxy would need one.
 
 ### D5. The edge contract is checkable
 
@@ -27,6 +27,14 @@ Everything the edge must do is a requirement with a check, run by `pnpm run edge
 ### D6. What the app can do
 
 Exactly the core actions, with the same refusals. Destructive actions (stop, undo, resume) ask for confirmation. Permission buttons follow `permissions.remote` and the approval levels.
+
+### D7. Transport details the app relies on
+
+The app sends init data as `Authorization: tma <init data>`, the scheme the relay pre-filters. A browser `EventSource` cannot set a header, so the stream is read with `fetch` and parsed in the app, with `Last-Event-ID` on reconnect. The app has no build step: plain ES modules and one stylesheet, served as they are. Telegram's own script is not loaded: the app posts `web_app_ready` and `web_app_expand` itself and reads the theme from the hash and from `theme_changed` events.
+
+### D8. Launch is configured, never guessed
+
+The bridge opens nothing in Telegram until `miniApp.url` (the public `/app/` address) is set. `miniApp.link` (the `t.me` direct link of the registered app) adds the button in group topics.
 
 ## Risks
 

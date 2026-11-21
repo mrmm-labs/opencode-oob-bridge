@@ -30,6 +30,7 @@ import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { buildPatch, drawDiff, fileList } from "./diffimage.ts"
 import { filterSecrets, redact } from "./filter.ts"
 import {
+  checkAnswers,
   resolveAnswer,
   type Answer,
   type Question,
@@ -615,6 +616,10 @@ export class Bridge {
       digest: this.cfg.digest !== undefined,
       night: true,
     })
+    const app = this.cfg.miniApp
+    if (app?.url)
+      for (const ch of this.channels)
+        ch.launch?.({ url: app.url, link: app.link })
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
     if (this.cfg.digest && !this.digestTimer) {
@@ -1517,7 +1522,7 @@ export class Bridge {
   }
 
   /** The digest for the period since the last one, and whether it holds anything. */
-  private digestBody(): string {
+  private digestBody(peek = false): string {
     const waiting = [
       ...this.store
         .list()
@@ -1533,8 +1538,16 @@ export class Bridge {
       ),
     ]
     const night = this.night?.pending() ? this.night.report() : []
-    if (night.length) void this.night?.done()
+    if (night.length && !peek) void this.night?.done()
     return digestText({ records: this.digestLog.pending(), waiting, night })
+  }
+
+  /** The digest as it would be sent now, without covering its period. */
+  digestPreview(): { enabled: boolean; text: string } {
+    return {
+      enabled: this.cfg.digest !== undefined,
+      text: this.digestBody(true),
+    }
   }
 
   /** `/digest`: the text now, and the period counts as covered. */
@@ -2393,7 +2406,7 @@ export class Bridge {
   /** An answer from a client other than a chat: the same rules, the same single winner. */
   async answerFromClient(
     id: string,
-    a: { choice?: number; text?: string },
+    a: { choice?: number; text?: string; answers?: unknown },
   ): Promise<Result> {
     const p = this.store.get(id)
     if (!p || this.now() - p.askedAt > EXPIRY_MS)
@@ -2404,12 +2417,15 @@ export class Bridge {
       return no(
         `#${p.id}: permissions can only be answered in the OpenCode TUI.`,
       )
-    const answer = resolveAnswer(
-      p.questions ?? [],
-      a.choice !== undefined
-        ? { id, choice: a.choice }
-        : { id, text: a.text ?? "" },
-    )
+    const answer =
+      a.answers !== undefined
+        ? checkAnswers(p.questions ?? [], a.answers)
+        : resolveAnswer(
+            p.questions ?? [],
+            a.choice !== undefined
+              ? { id, choice: a.choice }
+              : { id, text: a.text ?? "" },
+          )
     if (!answer) return no(`#${p.id}: could not read that answer.`)
     return (await this.commit(p, answer, { id: "api" })).out
   }

@@ -6,7 +6,7 @@ A chat is a poor place to browse sessions, read a conversation tail, review a di
 
 - **A Mini App** served by the bridge itself under `/app/`: sessions, session detail, questions and forms, permissions (when allowed), resume, stop, model and agent switch, new session, the overnight plan and the digest.
 - **A public edge contract**: a relay with a public HTTPS hostname (a public tunnel) that serves only the Mini App assets and its API, and answers 404 to everything else. The relay reaches the bridge over the `relay-link` change: the bridge dials out to the relay over the tailnet, so the laptop opens no listening port. `core.bind: tailscale` stays as the fallback. The relay holds no bot token and no bearer token; it only pre-filters init data.
-- **Authentication at the bridge**: Telegram init data, verified with an HMAC over the bot token, accepted only for the operator's user id and only when fresh. A request that arrives through the relay link, or from the edge proxy in the fallback mode, is accepted with that scheme only. No secret is embedded in the Mini App: a key in client-side script is readable by anyone, so none is used.
+- **Authentication at the bridge**: Telegram init data, verified with an HMAC over the bot token, accepted only for the operator's user id and only when fresh. A request that arrives through the relay link is accepted with that scheme only. No secret is embedded in the Mini App: a key in client-side script is readable by anyone, so none is used.
 - **Launching**: a menu button and `web_app` button in a private chat, and a `t.me` direct link button in group topics (inline `web_app` buttons work only in private chats).
 
 ## Capabilities

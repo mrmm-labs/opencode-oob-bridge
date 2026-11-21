@@ -125,6 +125,14 @@
   //   "callers": { "secrets-tool": { "classes": ["secrets.read"] } },
   // },
 
+  // Telegram Mini App (miniapp/README.md): a page for sessions, diffs and forms,
+  // served by the core API under /app/. Needs core.bind and a public https
+  // address in front of it. Nothing is offered in Telegram until url is set.
+  // "miniApp": {
+  //   "url": "https://app.example.com/app/",
+  //   "link": "https://t.me/examplebot/app",
+  // },
+
   // OpenTelemetry (OTLP/HTTP JSON). Off unless an endpoint is set here or in
   // OTEL_EXPORTER_OTLP_ENDPOINT (and OTEL_EXPORTER_OTLP_HEADERS). Spans and
   // metrics carry ids, kinds, counts and timings: never message text, titles,

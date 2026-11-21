@@ -14,6 +14,9 @@ import { ladder, Views, type Sources } from "./views.ts"
 const cfg = (over: Partial<Config["chat"]> = {}) =>
   ({
     redact: { mode: "full" },
+    core: { port: 0 },
+    miniApp: { maxAgeSeconds: 3600 },
+    permissions: { remote: "off" },
     chat: { deny: [], models: [], projects: {}, ...over },
   }) as unknown as Config
 
