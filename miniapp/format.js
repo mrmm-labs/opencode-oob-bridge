@@ -26,6 +26,27 @@ export function stateLabel(s) {
 
 export const nameOf = (s) => s.title || s.id
 
+/** A sentence for each reason the bridge gives when it refuses a request; undefined for one it does not know. */
+export const refusalText = (reason) =>
+  ({
+    no_operator:
+      "The bridge has no operator configured. Set channels.telegram.operator in its config, or pair the bot again.",
+    no_bot_token:
+      "The bridge cannot read the bot token, so it cannot check who you are.",
+    missing:
+      "Open this app from Telegram: the sign-in data is missing, so the bridge cannot tell who you are.",
+    malformed:
+      "Open this app from Telegram: the sign-in data could not be read.",
+    bad_signature:
+      "The signature on the sign-in data did not check out: this app was opened for a different bot than the bridge's.",
+    too_old:
+      "The sign-in data is too old. Close this view and open the app again from Telegram.",
+    not_operator:
+      "Not authorised. This app is for the person who set up the bot.",
+    "too many failures":
+      "Too many failed attempts from this address: wait five minutes.",
+  })[reason]
+
 /** The connection pill; the banner under it carries the time of the last data. */
 export function connection(state) {
   if (state.conn === "live") return { key: "live", text: "Live" }

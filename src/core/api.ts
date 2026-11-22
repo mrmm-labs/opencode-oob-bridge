@@ -13,7 +13,9 @@ import type { AppApprovals } from "../approvals/types.ts"
 import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { redact } from "../filter.ts"
+import { log } from "../logger.ts"
 import { ACTIONS, type Actions } from "./actions.ts"
+import { appLine, LineGate } from "./applog.ts"
 import { serveApp } from "./app.ts"
 import { checkInitData, fromHeader } from "../link/initdata.ts"
 import { FailLimiter, type TokenStore } from "./auth.ts"
@@ -87,6 +89,23 @@ export type Edge = { client: string }
 
 export const DEFAULT_INIT_AGE_S = 3600
 
+/** Why a request on the relay link was refused: the app shows a sentence for each. */
+export type Refusal =
+  | "no_operator"
+  | "no_bot_token"
+  | "missing"
+  | "malformed"
+  | "bad_signature"
+  | "too_old"
+  | "not_operator"
+
+const WHY: Record<string, Refusal> = {
+  malformed: "malformed",
+  hash: "bad_signature",
+  age: "too_old",
+  user: "not_operator",
+}
+
 const send = (res: ServerResponse, status: number, body?: unknown) => {
   if (body === undefined) {
     res.writeHead(status)
@@ -128,6 +147,7 @@ const int = (v: string | null, d: number, max = MAX_PAGE) => {
 }
 
 export function handler(d: ApiDeps) {
+  const lines = new LineGate(30, 60_000, d.edge?.now)
   const events = (req: IncomingMessage, res: ServerResponse) => {
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -200,6 +220,16 @@ export function handler(d: ApiDeps) {
     if (get && p[0] === "app") return serveApp(url.pathname, res)
     if (p[0] !== "v1") return send(res, 404, { error: "not found" })
     const [, a, id, b, c] = p
+
+    if (post && a === "log" && p.length === 2) {
+      const body = await readBody(req)
+      if (!body) return send(res, 400, { error: "invalid body" })
+      const line = appLine(body)
+      if (!line) return send(res, 400, { error: "invalid line" })
+      if (!lines.take()) return send(res, 429, { error: "too many lines" })
+      log("app_" + line.event, { data: line.data })
+      return send(res, 200, { ok: true })
+    }
 
     if (get && a === "meta" && p.length === 2)
       return send(res, 200, {
@@ -333,6 +363,14 @@ export function handler(d: ApiDeps) {
   }
 
   const fails = new FailLimiter(d.edge?.now)
+  const lastRefusal = new Map<string, number>()
+  /** One line a minute per reason: the reason, never the credential. */
+  const refused = (reason: Refusal, status: number, client: string) => {
+    const t = (d.edge?.now ?? Date.now)()
+    if (t - (lastRefusal.get(reason) ?? -Infinity) < 60_000) return
+    lastRefusal.set(reason, t)
+    log("edge_refused", { reason, status, client })
+  }
   const done = (req: IncomingMessage, res: ServerResponse, edge = false) =>
     route(req, res, edge).catch(() => {
       if (!res.headersSent) send(res, 500, { error: "internal error" })
@@ -353,19 +391,24 @@ export function handler(d: ApiDeps) {
       return send(res, 404, { error: "not found" })
     const operator = d.edge?.operator()
     const token = d.edge?.botToken()
-    const v =
-      operator === undefined || token === undefined
-        ? undefined
-        : checkInitData(fromHeader(req.headers.authorization), {
-            operator,
-            token,
-            maxAgeSeconds: d.edge?.maxAgeSeconds ?? DEFAULT_INIT_AGE_S,
-            now: d.edge?.now,
-          })
-    if (!v?.ok) {
-      fails.fail(client)
-      return send(res, v && !v.ok ? v.status : 401)
+    const raw = fromHeader(req.headers.authorization)
+    const refuse = (status: 401 | 403, reason: Refusal) => {
+      // A refusal the bridge's own set-up causes is not the client's failure: it does not count towards the block.
+      if (reason !== "no_operator" && reason !== "no_bot_token")
+        fails.fail(client)
+      refused(reason, status, client)
+      return send(res, status, { error: reason })
     }
+    if (operator === undefined) return refuse(401, "no_operator")
+    if (token === undefined) return refuse(401, "no_bot_token")
+    if (raw === undefined) return refuse(401, "missing")
+    const v = checkInitData(raw, {
+      operator,
+      token,
+      maxAgeSeconds: d.edge?.maxAgeSeconds ?? DEFAULT_INIT_AGE_S,
+      now: d.edge?.now,
+    })
+    if (!v.ok) return refuse(v.status, WHY[v.why] ?? "malformed")
     return done(req, res, true)
   }
 

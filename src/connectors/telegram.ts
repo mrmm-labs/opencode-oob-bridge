@@ -152,6 +152,8 @@ export type TelegramOptions = {
   topicsFile?: string
   /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
   operator?: string
+  /** The same id from the config file, used when pairing stored none. */
+  operatorFallback?: string
   /** Called with the chat id, and the id of the person who paired, once pairing succeeds, to store them. */
   onPaired?: (chatId: string, userId?: string) => void
   /** Keeps the key of the command list last registered, across restarts. */
@@ -426,7 +428,7 @@ export class TelegramConnector implements Connector {
     this.id = opts.name ?? "telegram"
     this.enabled = enabled
     this.chatId = opts.chatId
-    this.userId = opts.operator
+    this.userId = opts.operator ?? opts.operatorFallback
     this.fetch = opts.fetch ?? globalThis.fetch
     this.now = opts.now ?? Date.now
     this.notify = {
@@ -486,16 +488,21 @@ export class TelegramConnector implements Connector {
       : markup
   }
 
-  /** The chat's menu button opens the app, in a private chat (the Bot API sets it per private chat only). */
+  /**
+   * The menu button opens the app. The Bot API sets it per private chat, so a group-paired bridge
+   * sets it in the operator's own chat with the bot, when the operator's id is known.
+   */
   private async menuButton(): Promise<void> {
     const url = this.app?.url
     const chat = this.chatId
-    if (!url || !chat || Number(chat) <= 0 || this.buttonFor === url + chat)
-      return
-    this.buttonFor = url + chat
+    if (!url || !chat) return
+    const target = Number(chat) > 0 ? Number(chat) : Number(this.userId)
+    if (!Number.isSafeInteger(target) || target <= 0) return
+    if (this.buttonFor === url + target) return
+    this.buttonFor = url + target
     try {
       await this.call("setChatMenuButton", {
-        chat_id: Number(chat),
+        chat_id: target,
         menu_button: { type: "web_app", text: "Open", web_app: { url } },
       })
     } catch (err) {
@@ -2945,6 +2952,8 @@ export class TelegramConnector implements Connector {
 export type TelegramConfig = {
   token: TokenSource
   chatId?: string
+  /** The operator's Telegram user id, for when pairing stored none. */
+  operator?: string
   /** Bot API base URL; the public API unless a local Bot API server is used. */
   apiBase: string
   statusCard: boolean
@@ -2968,6 +2977,16 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       )
         return { error: `${at}chatId must be a numeric chat id` }
       chatId = String(raw.chatId)
+    }
+
+    let operator: string | undefined
+    if (raw.operator !== undefined) {
+      if (
+        !(typeof raw.operator === "number" && Number.isInteger(raw.operator)) &&
+        !(typeof raw.operator === "string" && /^\d+$/.test(raw.operator))
+      )
+        return { error: `${at}operator must be a numeric Telegram user id` }
+      operator = String(raw.operator)
     }
 
     const apiBase = raw.apiBase ?? "https://api.telegram.org"
@@ -3013,6 +3032,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
     return {
       token,
       chatId,
+      operator,
       apiBase: apiBase.replace(/\/+$/, ""),
       statusCard,
       draft,
@@ -3043,6 +3063,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       inboxFile: join(env.dir, `${env.name}-inbox.jsonl`),
       topicsFile: join(env.dir, `${env.name}-topics.json`),
       operator: typeof operator === "string" ? operator : undefined,
+      operatorFallback: o.operator,
       onPaired: (chatId, userId) => env.settings.set({ chatId, userId }),
       menuStore: {
         get: () => {

@@ -538,3 +538,48 @@ describe("enrolling this phone", () => {
     assert.equal(r.ctl.state.enrol.text, "That code is not right.")
   })
 })
+
+describe("refusals and what does not need the stream", () => {
+  it("keeps the bridge's reason when it refuses, and shows it instead of 'expired'", async () => {
+    const r = rig({
+      meta: async () => {
+        throw new ApiError(401, "x", "no_operator")
+      },
+    })
+    await r.ctl.boot()
+    assert.equal(r.ctl.state.phase, "expired")
+    assert.equal(r.ctl.state.reason, "no_operator")
+    const f = rig({
+      meta: async () => {
+        throw new ApiError(403, "x", "not_operator")
+      },
+    })
+    await f.ctl.boot()
+    assert.equal(f.ctl.state.phase, "forbidden")
+    assert.equal(f.ctl.state.reason, "not_operator")
+  })
+
+  it("keeps the reason when the stream is the one refused", async () => {
+    const r = rig()
+    await r.ctl.boot()
+    r.hooks().onState("down", "expired", "too_old")
+    assert.equal(r.ctl.state.phase, "expired")
+    assert.equal(r.ctl.state.reason, "too_old")
+  })
+
+  it("lets approvals and enrolment act while the stream is down, and nothing else", async () => {
+    const r = rig()
+    await r.ctl.boot()
+    assert.equal(r.ctl.state.conn, "connecting")
+    assert.equal(r.ctl.canAct(), false)
+    await r.ctl.go("enroll")
+    assert.equal(r.ctl.canAct(), true)
+    await r.ctl.go("info")
+    assert.equal(r.ctl.canAct(), false)
+    r.hooks().onState("down")
+    await r.ctl.openApproval("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    assert.equal(r.ctl.canAct(), true)
+    await r.ctl.go("list")
+    assert.equal(r.ctl.canAct(), false)
+  })
+})

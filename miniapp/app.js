@@ -1,7 +1,14 @@
 import { Api, Stream } from "./api.js"
 import { createController } from "./controller.js"
 import { createDevice } from "./factors.js"
-import { applyTheme, followTheme, launch, ready } from "./tg.js"
+import {
+  applyTheme,
+  followTheme,
+  launch,
+  note,
+  ready,
+  setReporter,
+} from "./tg.js"
 import { render } from "./views.js"
 
 const params = launch()
@@ -10,11 +17,29 @@ followTheme()
 ready()
 
 const api = new Api({ initData: params.initData })
+
+// A few short lines for the bridge's log, so a failure on a phone can be read afterwards. Never init data.
+let reported = 0
+setReporter((event, data) => {
+  if (!params.initData || reported++ >= 40) return
+  void api.log(event, data).catch(() => {})
+})
+note("boot", {
+  ua: navigator.userAgent.slice(0, 150),
+  ver: params.version,
+  platform: params.platform,
+  sdk: !!window.Telegram?.WebApp,
+  bm: !!window.Telegram?.WebApp?.BiometricManager,
+  iter:
+    typeof ReadableStream !== "undefined" &&
+    typeof ReadableStream.prototype[Symbol.asyncIterator] === "function",
+  proxy: !!window.TelegramWebviewProxy,
+})
 const ctl = createController({
   api,
   start: params.start,
   device: createDevice(),
-  makeStream: (h) => new Stream({ api, ...h }),
+  makeStream: (h) => new Stream({ api, note, ...h }),
 })
 
 const root = document.getElementById("root")

@@ -6,6 +6,7 @@ import {
   connection,
   diffClass,
   permissionChoices,
+  refusalText,
   stateLabel,
 } from "./format.js"
 
@@ -66,5 +67,25 @@ describe("permission gate", () => {
       "always",
       "reject",
     ])
+  })
+})
+
+describe("refusal sentences", () => {
+  it("has one for each reason the bridge gives, and none for an unknown one", () => {
+    for (const r of [
+      "no_operator",
+      "no_bot_token",
+      "missing",
+      "malformed",
+      "bad_signature",
+      "too_old",
+      "not_operator",
+      "too many failures",
+    ])
+      assert.ok(refusalText(r)?.length > 20, r)
+    assert.equal(refusalText("something else"), undefined)
+    assert.equal(refusalText(undefined), undefined)
+    assert.match(refusalText("no_operator"), /no operator configured/)
+    assert.doesNotMatch(refusalText("no_operator"), /expired/)
   })
 })
