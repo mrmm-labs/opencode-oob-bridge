@@ -1667,7 +1667,17 @@ export class TelegramConnector implements Connector {
     if (out?.menu) {
       this.note("held", "waiting on a question")
       void this.react(m.message_id, "held")
-      return this.deliver(m.message_thread_id, out)
+      const menuRef = await this.deliver(m.message_thread_id, out)
+      if (menuRef !== undefined) {
+        this.bound(this.heldMenus)
+        this.heldMenus.set(out.menu.id, {
+          messageId: m.message_id,
+          thread: m.message_thread_id,
+          menuRef,
+          session,
+        })
+      }
+      return
     }
     if (out) {
       void this.react(m.message_id, "ignored")
@@ -1794,8 +1804,9 @@ export class TelegramConnector implements Connector {
         : undefined
     const sessionKey = await this.sessionAt(m.message_thread_id, to)
     if (!sessionKey) return this.unbound(m)
-    const notice = (text: string) =>
-      this.deliver(m.message_thread_id, { ok: false, text })
+    const notice = async (text: string): Promise<void> => {
+      await this.deliver(m.message_thread_id, { ok: false, text })
+    }
     if (ref.kind === "unsupported")
       return notice(
         "Voice and video messages are not supported. Send text, a photo or a document.",
@@ -2332,7 +2343,7 @@ export class TelegramConnector implements Connector {
   private async deliver(
     thread: number | undefined,
     out: Outcome,
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     try {
       this.topics ??= await this.loadTopics()
       const msg = {
@@ -2347,10 +2358,11 @@ export class TelegramConnector implements Connector {
       if (out.menu) {
         this.bound(this.menus)
         this.menus.set(out.menu.id, { choices: out.menu.choices, page: 0 })
-        await this.call("sendMessage", {
+        const sent = await this.call<{ message_id: number }>("sendMessage", {
           ...msg,
           reply_markup: this.menuKeyboard(out.menu.id, out.menu.choices, 0),
         })
+        return sent.message_id
       } else if (out.ask) {
         const sent = await this.call<{ message_id: number }>("sendMessage", {
           ...msg,
@@ -2365,6 +2377,52 @@ export class TelegramConnector implements Connector {
     } catch (err) {
       this.fail(err)
     }
+    return undefined
+  }
+
+  /** The message and menu of each held message, to settle them when the question is no longer open. */
+  private readonly heldMenus = new Map<
+    string,
+    { messageId: number; thread?: number; menuRef: number; session?: string }
+  >()
+
+  async heldReleased(
+    menuId: string,
+    o: {
+      how: "sent" | "queued" | "steered" | "failed"
+      agent?: string
+      text: string
+    },
+  ): Promise<void> {
+    const h = this.heldMenus.get(menuId)
+    if (!h || !this.chatId) return
+    this.heldMenus.delete(menuId)
+    this.menus.delete(menuId)
+    try {
+      await this.call("editMessageText", {
+        chat_id: this.chatId,
+        message_id: h.menuRef,
+        text: this.rich(o.text),
+        parse_mode: "HTML",
+        link_preview_options: { is_disabled: true },
+        reply_markup: { inline_keyboard: [] },
+      })
+    } catch (err) {
+      if (!/not modified|not found/i.test((err as Error).message))
+        this.fail(err)
+    }
+    if (o.how === "failed")
+      return void (await this.react(h.messageId, "failed"))
+    await this.acknowledge(
+      { message_id: h.messageId, message_thread_id: h.thread } as Message,
+      {
+        ok: true,
+        sent: true,
+        text: o.text,
+        delivered: { how: o.how, agent: o.agent },
+      },
+      h.session,
+    )
   }
 
   /** A tap in a menu: a page change, or a choice (always one of those offered). */

@@ -98,6 +98,8 @@ export type Card =
       via: string
       /** At the Mac (the TUI) or in Telegram, when it is one of those. */
       origin?: "mac" | "telegram"
+      /** OpenCode no longer held it when the bridge looked, so nobody saw it answered. */
+      reconciled?: boolean
       /** hh:mm, local time. */
       time: string
       /** What was asked, to keep on the message. */
@@ -284,6 +286,18 @@ export interface Connector {
     card: TurnCard,
     o: { chat: boolean },
   ): Promise<string | undefined>
+  /**
+   * A message that waited behind a question was sent after all (or could not be): shows it on the
+   * message and on the menu that held it. Ignores a menu it does not know. Never throws.
+   */
+  heldReleased?(
+    menuId: string,
+    o: {
+      how: "sent" | "queued" | "steered" | "failed"
+      agent?: string
+      text: string
+    },
+  ): Promise<void>
   /** Removes the buttons of an earlier message. Never throws. */
   unbutton?(ref: string): Promise<void>
   /** Sends a file to the session's thread; true when it did. Never throws. */

@@ -41,6 +41,7 @@ async function chatRig(
     failPrompt?: boolean | number
     permissions?: Record<string, unknown>
     turnCard?: Record<string, unknown>
+    states?: Map<string, "open" | "answered" | "cancelled" | undefined>
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -77,6 +78,7 @@ async function chatRig(
     permissions: o.permissions,
     turnCard: o.turnCard,
   }) as Config
+  const skew = { ms: 0 }
   const prompts: Array<{
     sessionID: string
     text: string
@@ -107,10 +109,24 @@ async function chatRig(
       deliveries.push(delivery)
     },
     busy: () => state.busy,
+    ...(o.states
+      ? {
+          requestState: async (_k: string, _s: string, id: string) =>
+            o.states!.get(id) ?? "open",
+        }
+      : {}),
   }
   const router = new Router(cfg, async () => true)
   const store = new PendingStore()
-  const bridge = new Bridge(cfg, host, [channel], store, router, Date.now, tel)
+  const bridge = new Bridge(
+    cfg,
+    host,
+    [channel],
+    store,
+    router,
+    () => Date.now() + skew.ms,
+    tel,
+  )
   bridge.start()
   const ev = (type: string, data: Record<string, unknown> = {}) =>
     bridge.onEvent({
@@ -119,6 +135,7 @@ async function chatRig(
     } as unknown as BridgeEvent)
   return {
     tg,
+    skew,
     router,
     bridge,
     store,
@@ -1794,6 +1811,40 @@ describe("oob_send_file", () => {
     const bad = await r.bridge.sendFile("root", { path })
     assert.equal(bad.ok, false)
     assert.equal(r.tg.of("sendDocument").length, 3)
+    await r.done()
+  })
+})
+
+describe("permissions OpenCode no longer holds", () => {
+  it("are closed by the check, and the digest counts them out", async () => {
+    const states = new Map<string, "open" | "answered">()
+    const r = await chatRig({ states })
+    r.bridge.digestGapMs = 60
+    await chatOn(r)
+    for (const id of ["per_1", "per_2"])
+      await r.bridge.onEvent({
+        type: "permission.asked",
+        data: { id, sessionID: "root", action: "shell", resources: ["x"] },
+      } as unknown as BridgeEvent)
+    const shown = () => [
+      ...r.sends(),
+      ...r.tg.of("editMessageText").map((c) => c.body),
+    ]
+    await r.tg.waitFor(() =>
+      shown().find((b) => /2 permissions waiting/.test(b.text)),
+    )
+    states.set("per_1", "answered")
+    states.set("per_2", "answered")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 2)
+    assert.deepEqual(
+      r.store.list().map((p) => [p.state, p.answeredBy]),
+      [
+        ["answered", "unknown (reconciled)"],
+        ["answered", "unknown (reconciled)"],
+      ],
+    )
+    await r.tg.waitFor(() => shown().find((b) => /none waiting/.test(b.text)))
     await r.done()
   })
 })

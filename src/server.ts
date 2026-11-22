@@ -238,6 +238,7 @@ export function serverHost(
   sessions: Sessions,
   forms: (r: Omit<FormRelay, "token">) => Promise<void>,
   canReplyForm?: () => boolean | Promise<boolean>,
+  requestState?: Host["requestState"],
 ): Host {
   return {
     async session(id) {
@@ -253,6 +254,7 @@ export function serverHost(
     replyForm: (sessionID, formID, answer) =>
       forms({ sessionID, formID, answer }),
     canReplyForm,
+    requestState,
     replyPermission: (sessionID, requestID, decision) =>
       ctx.permission.reply({ sessionID, requestID, decision } as never),
     prompt: async (sessionID, text, delivery, files) => {
@@ -500,6 +502,8 @@ async function boot(
         return await service.reply(r)
       } catch (err) {
         log("form_reply_service_failed", { message: (err as Error).message })
+        // A form the service does not have is not in a window either.
+        if (/not found/i.test((err as Error).message)) throw err
         if (control.pickTui() === undefined)
           throw new Error(
             "The OpenCode service refused the answer (" +
@@ -515,6 +519,7 @@ async function boot(
     sessions,
     replyForm,
     async () => control.pickTui() !== undefined || (await service.ready()),
+    (kind, sessionID, requestID) => service.state(kind, sessionID, requestID),
   )
   const digest = new DigestLog(join(dir, "digest.jsonl"))
   await digest.load()
