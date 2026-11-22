@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.40.0...v0.41.0) (2026-11-22)
+
+
+### Features
+
+* approvals are answered only in the app, sent to a DM or an Approvals topic ([#146](https://github.com/mrmm-labs/opencode-oob-bridge/issues/146)) ([9e7ae98](https://github.com/mrmm-labs/opencode-oob-bridge/commit/9e7ae989def7bf6317626b6fea4eae4338abc392))
+
 ## [0.40.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.3...v0.40.0) (2026-11-22)
 
 
