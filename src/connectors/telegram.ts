@@ -398,6 +398,9 @@ export class TelegramConnector implements Connector {
   >()
   /** Forms answered field by field, by prompt id. */
   private readonly steppers = new Map<string, Stepper>()
+  private known:
+    | ((id: string) => { title: string; questions: Question[] } | undefined)
+    | undefined
   /** Force-reply questions of a command: message id to the question's id. */
   private readonly asks = new Map<string, string>()
   private botName: string | undefined
@@ -1207,6 +1210,14 @@ export class TelegramConnector implements Connector {
 
   silence(isQuiet: () => boolean): void {
     this.quiet = isQuiet
+  }
+
+  forms(
+    lookup: (
+      id: string,
+    ) => { title: string; questions: Question[] } | undefined,
+  ): void {
+    this.known = lookup
   }
 
   private async call<T>(
@@ -2097,16 +2108,46 @@ export class TelegramConnector implements Connector {
         ...r,
       })
 
-    if (/^\d+$/.test(act)) return reply({ choice: Number(act), text: act })
+    if (/^\d+$/.test(act)) {
+      log("form_select", { id, kind: "prompt", act: "pick", outcome: "ok" })
+      return reply({ choice: Number(act), text: act })
+    }
     if (act === "x") return this.askTyped(cb.id, id, cb.message)
 
-    const p = this.prompts.get(id)
-    if (!p)
-      return this.toast(
-        cb.id,
-        `No longer active here: answer in the TUI, or send "#${id} 1,3".`,
-      )
+    let p = this.prompts.get(id)
+    if (!p) {
+      const q = this.known?.(id)?.questions
+      if (!q || q.length !== 1) {
+        log("form_select", { id, kind: "prompt", outcome: "unknown" })
+        return this.toast(
+          cb.id,
+          `No longer active here: answer in the TUI, or send "#${id} 1,3".`,
+        )
+      }
+      p = {
+        options: q[0].options,
+        multiple: q[0].multiple,
+        custom: q[0].custom,
+        selected: new Set(),
+      }
+      this.prompts.set(id, p)
+      log("form_select", { id, kind: "prompt", outcome: "restored" })
+      await this.toast(cb.id, "The bridge restarted: tick again.")
+      return this.call("editMessageReplyMarkup", {
+        chat_id: this.chatId,
+        message_id,
+        reply_markup: this.keyboard(id, p.options, true, p.custom, p.selected),
+      })
+        .then(() => undefined)
+        .catch((err) => this.fail(err))
+    }
     if (act === "d") {
+      log("form_submit", {
+        id,
+        kind: "prompt",
+        ticked: p.selected.size,
+        outcome: p.selected.size === 0 ? "refused" : "ok",
+      })
       if (p.selected.size === 0)
         return this.toast(cb.id, "Tick at least one option.")
       return reply({
@@ -2117,6 +2158,7 @@ export class TelegramConnector implements Connector {
     if (n < 1 || n > p.options.length)
       return this.toast(cb.id, "Unknown button.")
     if (!p.selected.delete(n)) p.selected.add(n)
+    log("form_select", { id, kind: "prompt", act: "toggle", outcome: "ok" })
     await this.toast(cb.id)
     try {
       await this.call("editMessageReplyMarkup", {
@@ -2163,12 +2205,27 @@ export class TelegramConnector implements Connector {
     id: string,
     act: Act | "write",
   ): Promise<void> {
-    const s = this.steppers.get(id)
-    if (!s)
-      return this.toast(
+    let s = this.steppers.get(id)
+    if (!s) {
+      // A restart forgot the choices: the buttons start the form again, and this tap is not applied.
+      const k = this.known?.(id)
+      if (!k || k.questions.length < 2) {
+        log("form_select", { id, kind: "stepper", outcome: "unknown" })
+        return this.toast(
+          cb.id,
+          `No longer active here: answer in the TUI, or send "#${id} 1 | 2".`,
+        )
+      }
+      s = newStepper(id, k.questions, k.title)
+      s.msg = cb.message!.message_id
+      this.steppers.set(id, s)
+      log("form_select", { id, kind: "stepper", outcome: "restored" })
+      await this.toast(
         cb.id,
-        `No longer active here: answer in the TUI, or send "#${id} 1 | 2".`,
+        "The bridge restarted: choose again from question 1.",
       )
+      return this.redraw(s, s.msg)
+    }
     s.msg = cb.message!.message_id
     if (act === "write") {
       await this.toast(cb.id)
@@ -2188,7 +2245,16 @@ export class TelegramConnector implements Connector {
       }
       return
     }
+    const field = s.at
     const out = step(s, act)
+    log(out.reply !== undefined ? "form_submit" : "form_select", {
+      id,
+      kind: "stepper",
+      act: act.t,
+      field,
+      fields: s.questions.length,
+      outcome: out.toast ? "refused" : out.cancel ? "cancelled" : "ok",
+    })
     if (out.cancel) {
       this.steppers.delete(id)
       await this.toast(cb.id, "Cancelled")

@@ -725,6 +725,13 @@ export class Bridge {
         ch.launch?.({ url: app.url, link: app.link })
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
+    for (const ch of this.channels)
+      ch.forms?.((id) => {
+        const p = this.store.get(id)
+        return p?.kind === "question" && p.state === "pending" && p.questions
+          ? { title: p.title, questions: p.questions }
+          : undefined
+      })
     if (this.cfg.digest && !this.digestTimer) {
       this.digestTimer = setInterval(
         () => void this.digestTick(),
@@ -2817,6 +2824,7 @@ export class Bridge {
     const answer = resolveAnswer(p.questions ?? [], reply)
     if (!answer) {
       info.outcome = "unreadable"
+      log("form_reply_failed", { id: p.id, via: ch.id, reason: "unreadable" })
       return no(
         `#${p.id}: could not read that answer. ${ch.hint(p.id, p.questions ?? [])}`,
       )
@@ -2848,7 +2856,13 @@ export class Bridge {
       await this.actions.answerForm(p.sessionID, p.requestID, answer)
     } catch (err) {
       log("reply_error", { id: p.id, message: (err as Error).message })
-      if (/not found/i.test((err as Error).message)) {
+      const gone = /not found/i.test((err as Error).message)
+      log("form_reply_failed", {
+        id: p.id,
+        via: via.id,
+        reason: gone ? "not-found" : "error",
+      })
+      if (gone) {
         // OpenCode no longer has it: it was answered at the Mac.
         await this.settleStale(this.store.get(p.id)!, "answered")
         if (
@@ -2869,6 +2883,11 @@ export class Bridge {
         out: no(`#${p.id}: not applied (already answered or expired).`),
       }
     }
+    log("form_reply_ok", {
+      id: p.id,
+      via: via.id,
+      fields: Object.keys(answer).length,
+    })
     const given = redact(
       Object.values(answer).flat().join(" | "),
       this.cfg.redact,
