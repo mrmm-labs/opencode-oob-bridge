@@ -997,6 +997,7 @@ describe("approvals: L2 factors", () => {
     assert.equal(got.state, "approved")
     assert.equal(got.answer?.level, 1)
     assert.equal(got.answer?.approver, "42")
+    assert.equal(s.a.pending(), 0, "nothing is left to wait for")
   })
 
   it("withdraws when the operator is at the Mac, and expires on time", async () => {

@@ -66,7 +66,8 @@ async function rig(
   }
   const router = new Router(cfg, async () => true, now)
   router.set("root", o.route !== false)
-  const bridge = new Bridge(cfg, host, [channel], new PendingStore(), router)
+  const store = new PendingStore()
+  const bridge = new Bridge(cfg, host, [channel], store, router)
   const settings = new SettingsStore()
   const control = new Control({
     bridge,
@@ -93,6 +94,7 @@ async function rig(
   return {
     tg,
     bridge,
+    store,
     control,
     router,
     settings,
@@ -603,6 +605,40 @@ describe("version", () => {
     assert.equal(rep.core.api, "v1")
     assert.deepEqual(rep.warnings, [])
     assert.match(await r.control.versionText(), /All versions match\./)
+    await r.done()
+  })
+
+  it("says what is still pending, as counts, only when something is", async () => {
+    const r = await rig()
+    const none = { open: 0, questions: 0, approvals: 0, permissions: 0 }
+    assert.deepEqual(r.control.snapshot().drain, none)
+    assert.deepEqual((await r.control.versionReport()).drain, none)
+    assert.doesNotMatch(await r.control.versionText(), /Open:/)
+
+    const entry = (
+      id: string,
+      kind: "question" | "permission",
+      state = "pending",
+    ) =>
+      ({
+        id,
+        kind,
+        requestID: "r_" + id,
+        sessionID: "root",
+        rootSessionID: "root",
+        title: "secret title",
+        askedAt: 1,
+        state,
+      }) as never
+    r.store.put(entry("q1", "question"))
+    r.store.put(entry("q2", "question", "answered"))
+    r.store.put(entry("p1", "permission"))
+    r.control.approvals = { pending: () => 1 } as never
+    const open = { open: 3, questions: 1, approvals: 1, permissions: 1 }
+    assert.deepEqual(r.control.snapshot().drain, open)
+    const text = await r.control.versionText()
+    assert.match(text, /Open: 3 \(questions 1, approvals 1, permissions 1\)/)
+    assert.doesNotMatch(text, /secret title|q1|p1/)
     await r.done()
   })
 

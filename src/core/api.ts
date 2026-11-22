@@ -266,6 +266,7 @@ export function handler(d: ApiDeps) {
           })),
         },
         pending: s.pending,
+        drain: s.drain,
         channels: s.channels.map((ch) => ({
           ...ch,
           lastError: ch.lastError && redact(ch.lastError, d.cfg.redact),

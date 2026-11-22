@@ -303,6 +303,7 @@ describe("http api", () => {
       owner: {},
       afk: {},
       pending: 0,
+      drain: { open: 2, questions: 1, approvals: 1, permissions: 0 },
       channels: [],
       sessions: [row],
       stuck: [],
@@ -392,6 +393,23 @@ describe("http api", () => {
         (await fetch(r.url + "/v1/prompts/p5gf", { headers: {} })).status,
         401,
       )
+    } finally {
+      await r.api.close()
+    }
+  })
+
+  it("serves the drain counts in the status", async () => {
+    const r = await rig()
+    try {
+      const s = (await (
+        await fetch(r.url + "/v1/status", { headers: r.h })
+      ).json()) as { drain: unknown }
+      assert.deepEqual(s.drain, {
+        open: 2,
+        questions: 1,
+        approvals: 1,
+        permissions: 0,
+      })
     } finally {
       await r.api.close()
     }
