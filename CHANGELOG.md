@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.0...v0.39.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* share an open enrolment between plugin instances ([#136](https://github.com/mrmm-labs/opencode-oob-bridge/issues/136)) ([efa4435](https://github.com/mrmm-labs/opencode-oob-bridge/commit/efa44351af12f2e9bd7e739dec3f03ce7d9e043d))
+
 ## [0.39.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.38.0...v0.39.0) (2026-11-22)
 
 
