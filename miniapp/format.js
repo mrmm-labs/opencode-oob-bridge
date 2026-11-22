@@ -50,7 +50,71 @@ export function stateLabel(s) {
   )
 }
 
-export const nameOf = (s) => s.title || s.id
+/** What a session is called: its title, else its project or folder, else a short form of its id. */
+export const nameOf = (s) =>
+  s.title || s.project || s.folder || "#" + String(s.id).slice(-6)
+
+/** The line under the name: project or folder, agent and model, without repeating the name. */
+export function subtitle(s) {
+  const name = nameOf(s)
+  return [s.project || s.folder, s.agent, s.model]
+    .filter((x) => x && x !== name)
+    .join(" · ")
+}
+
+/** The letter and hue of a session's circle: the same project always gets the same colour. */
+export function avatarOf(s) {
+  const key = String(s.project || s.folder || s.title || s.id)
+  let hash = 0
+  for (const ch of key) hash = (hash * 31 + ch.codePointAt(0)) >>> 0
+  const letter = [...key].find((c) => /[\p{L}\p{N}]/u.test(c)) ?? "?"
+  return { letter: letter.toUpperCase(), hue: hash % 360 }
+}
+
+/** "now", "2m", "3h", "5d": the short age shown at the end of a row. */
+export function short(at, now) {
+  if (at === undefined) return ""
+  const s = Math.max(0, Math.round((now - at) / 1000))
+  if (s < 10) return "now"
+  if (s < 60) return s + "s"
+  if (s < 3600) return Math.floor(s / 60) + "m"
+  if (s < 86_400) return Math.floor(s / 3600) + "h"
+  return Math.floor(s / 86_400) + "d"
+}
+
+/** The sessions in the sections of the list: waiting on you, working, and the rest. */
+export function groups(sessions) {
+  const waiting = []
+  const working = []
+  const idle = []
+  for (const s of sessions) {
+    if (s.pending > 0 || s.state === "suspended" || s.stuck) waiting.push(s)
+    else if (s.state === "working") working.push(s)
+    else idle.push(s)
+  }
+  return [
+    { key: "waiting", title: "Waiting on you", items: waiting },
+    { key: "working", title: "Working", items: working },
+    { key: "idle", title: "Idle", items: idle },
+  ].filter((g) => g.items.length > 0)
+}
+
+/** The text a search looks in for a session. */
+export const hay = (s) =>
+  [nameOf(s), s.project, s.folder, s.agent, s.model, s.id]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+
+/** Whether every word typed in the search field is somewhere in the text. */
+export const hasWords = (text, query) =>
+  String(query)
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((w) => String(text).toLowerCase().includes(w))
+
+export const matches = (s, query) => hasWords(hay(s), query)
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/
 

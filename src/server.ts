@@ -249,7 +249,13 @@ export function serverHost(
     root: (id) => sessions.root(id),
     peek: (id) => {
       const i = sessions.info.get(id)
-      return i && { agent: i.agent, directory: i.location?.directory }
+      return (
+        i && {
+          agent: i.agent,
+          directory: i.location?.directory,
+          title: i.title,
+        }
+      )
     },
     replyForm: (sessionID, formID, answer) =>
       forms({ sessionID, formID, answer }),

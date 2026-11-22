@@ -26,6 +26,8 @@ const initial = () => ({
   status: undefined,
   options: undefined,
   sessions: [],
+  /** True once the list has been read once: before that the screen shows placeholders. */
+  loaded: false,
   total: 0,
   route: { name: "list" },
   detail: undefined,
@@ -95,7 +97,7 @@ export function createController({
 
   async function loadList() {
     const l = await guard(() => api.sessions())
-    set({ sessions: l.sessions, total: l.total })
+    set({ sessions: l.sessions, total: l.total, loaded: true })
     touch()
   }
   async function loadStatus() {

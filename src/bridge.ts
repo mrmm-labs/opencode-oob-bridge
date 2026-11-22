@@ -94,7 +94,9 @@ export interface Host {
   /** Whether a turn is running in the session. */
   busy(sessionID: string): boolean
   /** What is known of a session right now, without asking: for views that must not wait. */
-  peek?(sessionID: string): { agent?: string; directory?: string } | undefined
+  peek?(
+    sessionID: string,
+  ): { agent?: string; directory?: string; title?: string } | undefined
   /** Starts a session in a folder; the caller has checked the folder against the allowlist. */
   createSession(o: {
     directory: string

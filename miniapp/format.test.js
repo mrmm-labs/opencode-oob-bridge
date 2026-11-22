@@ -3,7 +3,13 @@ import { describe, it } from "node:test"
 
 import {
   aboutLine,
+  avatarOf,
+  groups,
   isStale,
+  matches,
+  nameOf,
+  short,
+  subtitle,
   ago,
   connection,
   diffClass,
@@ -156,5 +162,91 @@ describe("the version footer", () => {
     assert.equal(isStale("0.37.0-bbbb2222", "0.37.0-bbbb2222"), false)
     assert.equal(isStale("x", undefined), false)
     assert.equal(isStale("x", ""), false)
+  })
+})
+
+describe("the session list", () => {
+  const s = (o) => ({ id: "ses_abcdef123456", state: "idle", pending: 0, ...o })
+
+  it("names a session by its title, then its project, then its folder, then a short id", () => {
+    assert.equal(
+      nameOf(s({ title: "Fix login", project: "shop" })),
+      "Fix login",
+    )
+    assert.equal(nameOf(s({ project: "shop", folder: "web" })), "shop")
+    assert.equal(nameOf(s({ folder: "web" })), "web")
+    assert.equal(nameOf(s({})), "#123456")
+  })
+
+  it("puts project, agent and model under the name, without saying the name twice", () => {
+    assert.equal(
+      subtitle(
+        s({ title: "Fix", project: "shop", agent: "build", model: "m1" }),
+      ),
+      "shop · build · m1",
+    )
+    assert.equal(subtitle(s({ project: "shop", agent: "build" })), "build")
+    assert.equal(subtitle(s({})), "")
+  })
+
+  it("gives one letter and colour to a project, the same each time", () => {
+    const a = avatarOf(s({ project: "shop" }))
+    assert.deepEqual(a, avatarOf(s({ project: "shop", title: "other" })))
+    assert.equal(a.letter, "S")
+    assert.ok(a.hue >= 0 && a.hue < 360)
+    assert.equal(avatarOf(s({ title: "éclair" })).letter, "É")
+    assert.equal(avatarOf({ id: "---" }).letter, "?")
+    assert.notEqual(
+      avatarOf(s({ project: "shop" })).hue,
+      avatarOf(s({ project: "api" })).hue,
+    )
+  })
+
+  it("counts the age in one unit", () => {
+    const T = 1_000_000_000
+    assert.equal(short(undefined, T), "")
+    assert.equal(short(T - 3000, T), "now")
+    assert.equal(short(T - 30_000, T), "30s")
+    assert.equal(short(T - 120_000, T), "2m")
+    assert.equal(short(T - 3 * 3600_000, T), "3h")
+    assert.equal(short(T - 5 * 86_400_000, T), "5d")
+  })
+
+  it("sorts sessions into waiting, working and idle, and leaves out an empty section", () => {
+    const g = groups([
+      s({ id: "a", pending: 2 }),
+      s({ id: "b", state: "working" }),
+      s({ id: "c", state: "suspended" }),
+      s({ id: "d" }),
+      s({ id: "e", state: "failed" }),
+      s({ id: "f", state: "working", stuck: true }),
+    ])
+    assert.deepEqual(
+      g.map((x) => [x.key, x.items.map((i) => i.id)]),
+      [
+        ["waiting", ["a", "c", "f"]],
+        ["working", ["b"]],
+        ["idle", ["d", "e"]],
+      ],
+    )
+    assert.deepEqual(
+      groups([s({ id: "x" })]).map((x) => x.key),
+      ["idle"],
+    )
+    assert.deepEqual(groups([]), [])
+  })
+
+  it("finds a session by every word, in its name, project, agent, model or id", () => {
+    const x = s({
+      title: "Fix login",
+      project: "shop",
+      agent: "build",
+      model: "claude",
+    })
+    assert.equal(matches(x, ""), true)
+    assert.equal(matches(x, "login shop"), true)
+    assert.equal(matches(x, "CLAUDE"), true)
+    assert.equal(matches(x, "abcdef"), true)
+    assert.equal(matches(x, "login nope"), false)
   })
 })

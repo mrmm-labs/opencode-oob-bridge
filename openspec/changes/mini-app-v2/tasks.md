@@ -27,4 +27,9 @@
 
 ## 6. The redesign
 
-- [ ] 6.1 Titles, native-style list and detail, native controls, markdown (phase 2).
+- [x] 6.1 Titles from the host, folder name, and the title fallback chain. Verify: core test and format tests.
+- [x] 6.2 Native-style list: header, search, sections, grouped cards, placeholders. Verify: format tests and screenshots at 390 and 320 px, dark and light.
+- [x] 6.3 Telegram's controls: back, settings, confirm popup, haptics, colours, swipe. Verify: tests with a fake client; the page falls back where the client is old.
+- [x] 6.4 Session as a conversation: bubbles with markdown, pending card on top, message bar, controls. Verify: markdown tests and screenshots.
+- [x] 6.5 Small-phone layout and the offline bar. Verify: no horizontal overflow at 320 px in the screenshots.
+- [ ] 6.6 Not done: the last message in the list row, swipe actions on a row, the main button as send.

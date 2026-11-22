@@ -132,3 +132,98 @@ When Face ID cannot be used, the app SHALL say which of these it is: Telegram to
 
 - **WHEN** access was requested and is not granted
 - **THEN** the app says to allow Face ID for Telegram in iOS Settings and in the app's menu, and logs `refused`
+
+### Requirement: A session is named by its title, then its project, then a short id
+
+The app SHALL name a session by its title; when it has none, by its project; then by the last part of its directory; and at last by a short form of its id. The API SHALL fill a missing title from what the host knows of the session, and SHALL give only the last part of the directory (`folder`), never the path.
+
+#### Scenario: Title from the host
+
+- **WHEN** the bridge has no title for a session and the host knows one
+- **THEN** the list shows the host's title
+
+#### Scenario: Only a short id is known
+
+- **WHEN** a session has no title, no project and no directory
+- **THEN** its row shows `#` and the last six characters of its id
+
+#### Scenario: No path on the phone
+
+- **WHEN** a session's directory is `/work/private/shop`
+- **THEN** the API gives the folder `shop` and nothing of the rest
+
+### Requirement: The list groups sessions the way Telegram's own lists look
+
+The home screen SHALL show the app name with a one-line description, a search field, a row to start a new session, and the sessions in sections (waiting on you, working, idle), each in one rounded card. Typing in the search field SHALL hide the rows that do not match every word.
+
+#### Scenario: Sections
+
+- **WHEN** one session has a question, one is working and one is idle
+- **THEN** each is in its own section, in that order, and an empty section is not shown
+
+#### Scenario: A row
+
+- **WHEN** a session is listed
+- **THEN** its row shows a coloured circle with its letter and a status dot, its name, project, agent and model, its age, a badge with the number waiting on the person, and a chevron
+
+#### Scenario: Loading
+
+- **WHEN** the list has not been read yet
+- **THEN** placeholder rows are shown
+
+#### Scenario: Search
+
+- **WHEN** the person types "api"
+- **THEN** only the sessions with "api" in their name, project, folder, agent, model or id stay
+
+### Requirement: The app uses Telegram's own controls where the client has them
+
+The app SHALL use Telegram's back button for every screen but the list, the settings button for Info, Telegram's confirm popup for stop, undo and resume, haptic feedback for taps, and the secondary background colour for the bar and the page. It SHALL turn off the swipe that closes the app, because the lists scroll. On a client that lacks a control it SHALL draw its own, and it SHALL read each colour from the theme Telegram gives it.
+
+#### Scenario: Back
+
+- **WHEN** a session is open on a client with the back button
+- **THEN** the button is shown, and pressing it returns to the list
+
+#### Scenario: Confirm
+
+- **WHEN** the person taps Stop on a client with the popup
+- **THEN** Telegram's popup asks, and the app's own sheet is not drawn
+
+#### Scenario: An old client
+
+- **WHEN** the client is older than a control needs
+- **THEN** the page draws its own back link and confirm sheet
+
+### Requirement: A session opens as a conversation
+
+The session screen SHALL start with the session's name, model and state, then the question or permission it waits on, then the conversation as chat bubbles, then changes and todos, and a message bar that stays at the bottom. A message SHALL show its markdown, built as elements so no text is read as markup.
+
+#### Scenario: A question waits
+
+- **WHEN** a session has a pending question
+- **THEN** its card is above the conversation
+
+#### Scenario: Controls
+
+- **WHEN** the session screen is open
+- **THEN** watch and chat are controls inside it, changes are behind one row, and a steer toggle sits by the send button while a turn runs
+
+#### Scenario: Markdown
+
+- **WHEN** a message holds a table and a code block
+- **THEN** both are drawn, and an HTML tag in the text shows as text
+
+#### Scenario: Steering
+
+- **WHEN** a turn is running and the person turns Steer on and sends
+- **THEN** the message is injected into the turn instead of queued
+
+### Requirement: The app is readable on a small phone
+
+Text SHALL be at least 17 px in the body, taps SHALL have at least 44 px, content SHALL keep a 16 px inset and the safe area, and nothing SHALL scroll sideways at 320 px wide. The app SHALL show a slim bar, not a banner, when it is offline, with the time of the last update.
+
+#### Scenario: 320 px
+
+- **WHEN** the app is shown 320 px wide
+- **THEN** no screen is wider than the screen

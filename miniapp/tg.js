@@ -5,6 +5,20 @@
 
 const START = /^[A-Za-z0-9_-]{1,64}$/
 
+/** Whether a client version such as "7.10" is at least a needed one such as "7.2". */
+export function versionAtLeast(have, need) {
+  const n = (s) =>
+    String(s)
+      .split(".")
+      .map((x) => Number.parseInt(x, 10) || 0)
+  const [h, w] = [n(have), n(need)]
+  for (let i = 0; i < Math.max(h.length, w.length); i++) {
+    const [a, b] = [h[i] ?? 0, w[i] ?? 0]
+    if (a !== b) return a > b
+  }
+  return true
+}
+
 /** Reads what Telegram put in the URL: the init data, the theme and the session to open. */
 export function launch(loc = globalThis.location) {
   const hash = new URLSearchParams((loc.hash || "").replace(/^#/, ""))
@@ -89,14 +103,18 @@ export function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-/** `fg` when it reads on `bg` at 4.5:1, else the first fallback that does, else black or white. */
-export function readable(fg, bg, ...fallbacks) {
+/** `fg` when it reads on `bg` at `min`:1, else the first fallback that does, else black or white. */
+export function readableAt(min, fg, bg, ...fallbacks) {
   for (const c of [fg, ...fallbacks])
-    if ((contrast(c, bg) ?? 0) >= 4.5) return c
+    if ((contrast(c, bg) ?? 0) >= min) return c
   return (contrast("#000000", bg) ?? 0) >= (contrast("#ffffff", bg) ?? 0)
     ? "#000000"
     : "#ffffff"
 }
+
+/** `fg` when it reads on `bg` at 4.5:1, else the first fallback that does, else black or white. */
+export const readable = (fg, bg, ...fallbacks) =>
+  readableAt(4.5, fg, bg, ...fallbacks)
 
 /** The CSS variables for a Telegram theme; text colours are corrected where the theme would not reach 4.5:1. */
 export function themeVars(t) {
@@ -105,6 +123,7 @@ export function themeVars(t) {
   const bg2 = hex(t.secondary_bg_color) ? t.secondary_bg_color : bg
   const text = readable(t.text_color, bg)
   const btn = hex(t.button_color) ? t.button_color : text
+  const section = hex(t.section_bg_color) ? t.section_bg_color : bg
   return {
     "--bg": bg,
     "--bg2": bg2,
@@ -114,6 +133,27 @@ export function themeVars(t) {
     "--btn": btn,
     "--btn-text": readable(t.button_text_color, btn),
     "--danger": readable(t.destructive_text_color, bg2, text),
+    "--section": section,
+    "--sep": hex(t.section_separator_color)
+      ? t.section_separator_color
+      : "color-mix(in srgb, " + text + " 16%, transparent)",
+    "--subtitle": readable(
+      t.subtitle_text_color || t.hint_color,
+      section,
+      text,
+    ),
+    // The accent is the blue of a bold title, a link or an icon: Telegram's own blue on white is 4.1:1.
+    "--accent": readableAt(
+      4,
+      t.accent_text_color || t.link_color,
+      section,
+      text,
+    ),
+    "--sect-head": readable(
+      t.section_header_text_color || t.hint_color,
+      bg2,
+      text,
+    ),
     "--scheme": lum(hex(bg)) < 0.4 ? "dark" : "light",
   }
 }
@@ -149,11 +189,14 @@ export function followTheme(win = globalThis) {
   if (sdk(win)) {
     // Telegram's script owns the receive hooks: ask it for the events instead of replacing them.
     win.Telegram.WebApp.onEvent?.("themeChanged", () =>
-      applyTheme(
-        win.Telegram.WebApp.themeParams ?? {},
-        win.document.documentElement,
-      ),
+      on("theme_changed", { theme_params: win.Telegram.WebApp.themeParams }),
     )
+    for (const type of [
+      "back_button_pressed",
+      "settings_button_pressed",
+      "popup_closed",
+    ])
+      win.Telegram.WebView?.onEvent?.(type, (_t, d) => on(type, d))
     return
   }
   hooks(win, on)
@@ -173,6 +216,88 @@ function hooks(win, on) {
   }
   win.TelegramGameProxy = { ...win.TelegramGameProxy, receiveEvent: on }
   win.TelegramGameProxy_receiveEvent = on
+}
+
+/** The first Telegram version that has each part of its chrome. */
+const FROM = {
+  back: "6.1",
+  haptic: "6.1",
+  colors: "6.1",
+  popup: "6.2",
+  settings: "6.10",
+  swipe: "7.7",
+}
+
+const HAPTIC = {
+  light: ["impact", { impact_style: "light" }],
+  medium: ["impact", { impact_style: "medium" }],
+  heavy: ["impact", { impact_style: "heavy" }],
+  success: ["notification", { notification_type: "success" }],
+  warning: ["notification", { notification_type: "warning" }],
+  error: ["notification", { notification_type: "error" }],
+  select: ["selection_change", {}],
+}
+
+/**
+ * What the page asks of Telegram's own chrome: the back and settings buttons, the colour of the bar,
+ * a tap of feedback and a confirm popup. Each is used only on a client that has it; on any other
+ * every call does nothing, and `confirm` answers `undefined` so the page shows its own.
+ */
+export function chrome(win = globalThis, version = "") {
+  const has = (k) => version !== "" && versionAtLeast(version, FROM[k])
+  const ev = (name, data) => post(win, name, data)
+  return {
+    has,
+    back: (visible) =>
+      has("back") && ev("web_app_setup_back_button", { is_visible: visible }),
+    settings: (visible) =>
+      has("settings") &&
+      ev("web_app_setup_settings_button", { is_visible: visible }),
+    /** The bar and the page take the colour of Telegram's secondary background. */
+    colors(t) {
+      if (!has("colors")) return
+      const c = hex(t?.secondary_bg_color)
+        ? t.secondary_bg_color
+        : hex(t?.bg_color)
+          ? t.bg_color
+          : undefined
+      if (!c) return
+      ev("web_app_set_header_color", { color: c })
+      ev("web_app_set_background_color", { color: c })
+    },
+    haptic(kind = "light") {
+      const h = HAPTIC[kind]
+      if (h && has("haptic"))
+        ev("web_app_trigger_haptic_feedback", { type: h[0], ...h[1] })
+    },
+    /** Whether a swipe down may close the app: off where the page scrolls. */
+    swipes: (allow) =>
+      has("swipe") &&
+      ev("web_app_setup_swipe_behavior", { allow_vertical_swipe: allow }),
+    /** Telegram's own confirm popup: true for the button, false for cancel, undefined when there is none. */
+    confirm(message, { ok = "Yes", destructive = false } = {}) {
+      if (!has("popup")) return Promise.resolve(undefined)
+      return new Promise((resolve) => {
+        const off = onEvent((type, d) => {
+          if (type !== "popup_closed") return
+          off()
+          resolve(d?.button_id === "ok")
+        })
+        ev("web_app_open_popup", {
+          title: "",
+          message: String(message).slice(0, 256),
+          buttons: [
+            {
+              id: "ok",
+              type: destructive ? "destructive" : "default",
+              text: ok,
+            },
+            { id: "cancel", type: "cancel" },
+          ],
+        })
+      })
+    },
+  }
 }
 
 const biometryInfo = (d) => ({

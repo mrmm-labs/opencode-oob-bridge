@@ -9,7 +9,7 @@ import type { Config } from "../config.ts"
 import { Actions } from "./actions.ts"
 import { EventRing, startApi, type Api } from "./api.ts"
 import { TokenStore } from "./auth.ts"
-import { ladder, Views, type Sources } from "./views.ts"
+import { folderOf, ladder, Views, type Sources } from "./views.ts"
 
 const cfg = (over: Partial<Config["chat"]> = {}) =>
   ({
@@ -223,6 +223,47 @@ describe("view-models", () => {
       undefined,
     )
     assert.deepEqual(f, { value: 7, source: "b" })
+  })
+
+  it("fills a missing title from what the host knows, and gives only the last part of the directory", () => {
+    const row = {
+      id: "ses_1",
+      mode: "auto" as const,
+      chat: false,
+      busy: false,
+      prompts: [],
+    }
+    const v = (peek: unknown, title?: string) =>
+      new Views({
+        control: {
+          snapshot: () => ({ sessions: [{ ...row, title }], stuck: [] }),
+        } as never,
+        bridge: { known: () => [], openPromptList: () => [] } as never,
+        host: { ...host([]), peek } as never,
+        cfg: cfg(),
+        sources: sources(),
+      })
+    const known = () => ({
+      title: "Fix login",
+      directory: "/work/private/shop/",
+    })
+    const a = v(known).list().sessions[0]
+    assert.equal(a.title, "Fix login")
+    assert.equal(a.folder, "shop")
+    assert.doesNotMatch(JSON.stringify(a), /private/)
+    assert.equal(v(known, "Own title").list().sessions[0].title, "Own title")
+    const none = v(() => undefined).list().sessions[0]
+    assert.equal(none.title, undefined)
+    assert.equal(none.folder, undefined)
+    assert.equal(v(undefined).list().sessions[0].title, undefined)
+  })
+
+  it("names the folder whichever way the path is written", () => {
+    assert.equal(folderOf("/a/b/shop"), "shop")
+    assert.equal(folderOf("C:\\work\\shop\\"), "shop")
+    assert.equal(folderOf("/"), undefined)
+    assert.equal(folderOf(undefined), undefined)
+    assert.equal(folderOf("/x/" + "y".repeat(80))?.length, 60)
   })
 
   it("masks a secret in a message", async () => {

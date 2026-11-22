@@ -1,6 +1,8 @@
 // The L2 factors on the phone: which ones this device can use, in the bridge's order, and the proofs.
 // The bridge checks every proof; nothing here decides whether an approval is granted.
-import { biometric, note } from "./tg.js"
+import { biometric, note, versionAtLeast } from "./tg.js"
+
+export { versionAtLeast }
 
 const TAG = "oob-l2-biometric-v1"
 
@@ -70,20 +72,6 @@ export async function passkeySupported(win = globalThis) {
   } catch {
     return false
   }
-}
-
-/** Whether a client version such as "7.10" is at least a needed one such as "7.2". */
-export function versionAtLeast(have, need) {
-  const n = (s) =>
-    String(s)
-      .split(".")
-      .map((x) => Number.parseInt(x, 10) || 0)
-  const [h, w] = [n(have), n(need)]
-  for (let i = 0; i < Math.max(h.length, w.length); i++) {
-    const [a, b] = [h[i] ?? 0, w[i] ?? 0]
-    if (a !== b) return a > b
-  }
-  return true
 }
 
 /** Telegram added the biometric manager in 7.2. */
