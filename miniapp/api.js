@@ -71,6 +71,9 @@ export class Api {
   meta() {
     return this.request("GET", "/v1/meta")
   }
+  prompt(id) {
+    return this.request("GET", "/v1/prompts/" + encodeURIComponent(id))
+  }
   approval(id) {
     return this.request("GET", "/v1/approvals/" + encodeURIComponent(id))
   }

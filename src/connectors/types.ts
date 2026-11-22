@@ -326,12 +326,6 @@ export interface Connector {
   ): Promise<boolean>
   /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
   silence?(isQuiet: () => boolean): void
-  /** Tells the connector how to look up a question that is still open, to rebuild the buttons' state after a restart. */
-  forms?(
-    lookup: (
-      id: string,
-    ) => { title: string; questions: Question[] } | undefined,
-  ): void
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
   menu?(commands: MenuCommand[]): void
   /** The user id stored at pairing: the only person whose tap or code answers an approval. Undefined until known. */

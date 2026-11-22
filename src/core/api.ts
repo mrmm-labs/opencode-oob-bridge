@@ -281,6 +281,10 @@ export function handler(d: ApiDeps) {
       })
     }
     if (a === "approvals") return approvalsRoute(req, res, p, edge)
+    if (get && a === "prompts" && id && !b && /^[A-Za-z0-9]{1,16}$/.test(id)) {
+      const v = d.views.prompt(id)
+      return v ? send(res, 200, v) : send(res, 404, { error: "not found" })
+    }
     if (a !== "sessions") return send(res, 404, { error: "not found" })
 
     if (get && !id)

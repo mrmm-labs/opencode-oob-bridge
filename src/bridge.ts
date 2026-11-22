@@ -725,13 +725,6 @@ export class Bridge {
         ch.launch?.({ url: app.url, link: app.link })
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
-    for (const ch of this.channels)
-      ch.forms?.((id) => {
-        const p = this.store.get(id)
-        return p?.kind === "question" && p.state === "pending" && p.questions
-          ? { title: p.title, questions: p.questions }
-          : undefined
-      })
     if (this.cfg.digest && !this.digestTimer) {
       this.digestTimer = setInterval(
         () => void this.digestTick(),
@@ -1643,6 +1636,11 @@ export class Bridge {
   }
 
   /** Prompts of the session that wait for an answer, oldest first. */
+  /** One pending entry by its short id, in any state. */
+  promptEntry(id: string): Pending | undefined {
+    return this.store.get(id)
+  }
+
   openPromptList(root: string): Pending[] {
     return this.store
       .list()

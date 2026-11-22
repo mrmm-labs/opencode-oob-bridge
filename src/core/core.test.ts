@@ -310,7 +310,31 @@ describe("http api", () => {
     const control = { snapshot: () => snap } as never
     const views = new Views({
       control,
-      bridge: { known: () => [], openPromptList: () => [] } as never,
+      bridge: {
+        known: () => [],
+        openPromptList: () => [],
+        promptEntry: (id: string) =>
+          id === "p5gf"
+            ? {
+                id,
+                kind: "question",
+                state: "pending",
+                rootSessionID: "ses_1",
+                title: "ask",
+                askedAt: 1,
+                questions: [
+                  {
+                    key: "q0",
+                    header: "h",
+                    text: "t",
+                    options: ["a", "b"],
+                    multiple: false,
+                    custom: true,
+                  },
+                ],
+              }
+            : undefined,
+      } as never,
       host: host(calls),
       cfg: cfg(),
       sources: { tail: [], diff: [], todos: [] },
@@ -342,6 +366,32 @@ describe("http api", () => {
         assert.equal(await res.text(), "")
       }
       assert.equal((await fetch(r.url + "/nothing")).status, 401)
+    } finally {
+      await r.api.close()
+    }
+  })
+
+  it("serves a question by its short id, in any state, and 404s an unknown one", async () => {
+    const r = await rig()
+    try {
+      const ok = await fetch(r.url + "/v1/prompts/p5gf", { headers: r.h })
+      assert.equal(ok.status, 200)
+      const v = (await ok.json()) as {
+        state: string
+        session: string
+        items: Array<{ options: string[] }>
+      }
+      assert.equal(v.state, "pending")
+      assert.equal(v.session, "ses_1")
+      assert.deepEqual(v.items[0].options, ["a", "b"])
+      assert.equal(
+        (await fetch(r.url + "/v1/prompts/zz99", { headers: r.h })).status,
+        404,
+      )
+      assert.equal(
+        (await fetch(r.url + "/v1/prompts/p5gf", { headers: {} })).status,
+        401,
+      )
     } finally {
       await r.api.close()
     }

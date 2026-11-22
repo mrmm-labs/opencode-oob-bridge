@@ -100,7 +100,6 @@ describe("TelegramConnector outbound", () => {
     assert.deepEqual(c.reply_markup.inline_keyboard, [
       [{ text: "1️⃣ Yes", callback_data: "ab12:1" }],
       [{ text: "2️⃣ No", callback_data: "ab12:2" }],
-      [{ text: "✏️ Type an answer", callback_data: "ab12:x" }],
     ])
     assert.ok(
       c.reply_markup.inline_keyboard
@@ -122,32 +121,101 @@ describe("TelegramConnector outbound", () => {
     await r.done()
   })
 
-  it("steps through several questions with buttons, and offers numbered text for many options", async () => {
+  it("a question that is not one tap has no option buttons, and one button to the app when there is an app", async () => {
     const r = await rig()
     const two = [...yesNo, ...yesNo.map((q) => ({ ...q, key: "q1" }))]
-    await r.channel.send({
-      message: "m",
-      prompt: { id: "ab12", questions: two },
-    })
     const many = toQuestions([
       {
         key: "q0",
         type: "string",
-        options: Array.from({ length: 11 }, (_, i) => ({ label: `o${i}` })),
+        options: Array.from({ length: 5 }, (_, i) => ({ label: `o${i}` })),
       },
     ])
-    await r.channel.send({
-      message: "m",
-      prompt: { id: "cd34", questions: many },
-    })
-    const [first, second] = r.tg.of("sendMessage")
-    assert.match(
-      first.body.reply_markup.inline_keyboard[0][0].callback_data,
-      /^s:ab12:o1$/,
-    )
-    assert.equal(second.body.reply_markup, undefined)
+    const long = toQuestions([
+      {
+        key: "q0",
+        type: "string",
+        options: [{ label: "Yes" }, { label: "x".repeat(25) }],
+      },
+    ])
+    const send = (id: string, questions: typeof two) =>
+      r.channel.send({ message: "m", prompt: { id, questions } })
+    await send("ab12", two)
+    await send("cd34", many)
+    await send("ef56", pick)
+    await send("gh78", long)
+    assert.ok(r.tg.of("sendMessage").every((s) => !s.body.reply_markup))
     assert.match(r.channel.hint("ab12", two), /one answer per question/)
     assert.match(r.channel.hint("cd34", many), /number or text/)
+
+    r.channel.launch({ url: "https://app.example.com/app/" })
+    await send("ij90", two)
+    await send("kl12", pick)
+    await send("mn34", long)
+    for (const s of r.tg.of("sendMessage").slice(4)) {
+      const rows = s.body.reply_markup.inline_keyboard
+      assert.equal(rows.length, 1)
+      assert.equal(rows[0].length, 1)
+      assert.equal(rows[0][0].text, "📱 Answer in app")
+      assert.match(rows[0][0].web_app.url, /\?s=f_(ij90|kl12|mn34)$/)
+    }
+    assert.match(r.channel.hint("ab12", two), /Tap 📱 Answer in app, or reply/)
+    await r.done()
+  })
+
+  it("a one-tap question that allows typing adds the app button under its options", async () => {
+    const r = await rig()
+    r.channel.launch({ url: "https://app.example.com/app/" })
+    await r.channel.send({
+      message: "m",
+      prompt: { id: "ab12", questions: yesNo },
+    })
+    const rows = r.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard
+    assert.deepEqual(
+      rows.map((x: Array<{ text: string }>) => x[0].text),
+      ["1️⃣ Yes", "2️⃣ No", "📱 Answer in app"],
+    )
+    await r.done()
+  })
+
+  it("a one-tap question with no typing gets the session's 📱 Open on a row of its own", async () => {
+    const r = await rig()
+    r.channel.launch({ url: "https://app.example.com/app/" })
+    await r.channel.send({
+      message: "m",
+      session: { id: "ses_1", name: "shop · Fix", project: "shop" },
+      prompt: { id: "ab12", questions: [{ ...yesNo[0], custom: false }] },
+      card: {
+        kind: "question",
+        agent: "a",
+        project: "shop",
+        questions: [
+          { text: "Go?", options: [], multiple: false, custom: false },
+        ],
+      },
+    })
+    const rows = r.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard
+    assert.equal(rows.at(-1).length, 1)
+    assert.equal(rows.at(-1)[0].text, "📱 Open")
+    assert.match(rows.at(-1)[0].web_app.url, /\?s=s_ses_1$/)
+    await r.done()
+  })
+
+  it("in a group the app button is the direct link with the question's start parameter", async () => {
+    const r = await rig({ chatId: "-100123" })
+    r.channel.launch({
+      url: "https://app.example.com/app/",
+      link: "https://t.me/bot/app",
+    })
+    await r.channel.send({
+      message: "m",
+      prompt: { id: "ab12", questions: pick },
+    })
+    const b = r.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard[0][0]
+    assert.deepEqual(b, {
+      text: "📱 Answer in app",
+      url: "https://t.me/bot/app?startapp=f_ab12",
+    })
     await r.done()
   })
 
@@ -212,40 +280,13 @@ describe("TelegramConnector inbound", () => {
     await r.done()
   })
 
-  it("multiple choice toggles ticks in place and Done sends the numbers", async () => {
-    const r = await rig({}, async () => ({ ok: true, text: "ok" }))
-    const ref = await r.channel.send({
-      message: "q",
-      prompt: { id: "ab12", questions: pick },
-    })
-    const first = r.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard
-    assert.deepEqual(first.at(-1), [{ text: "Done", callback_data: "ab12:d" }])
-
-    r.tg.callback(CHAT, Number(ref), "ab12:d")
-    const none = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.match(none.body.text, /at least one/)
-    assert.equal(r.got.length, 0)
-
-    r.tg.callback(CHAT, Number(ref), "ab12:t3")
-    r.tg.callback(CHAT, Number(ref), "ab12:t1")
-    await r.tg.waitFor(() => r.tg.of("editMessageReplyMarkup")[1])
-    const kb = r.tg.of("editMessageReplyMarkup")[1].body.reply_markup
-      .inline_keyboard
-    assert.deepEqual(
-      kb.map((row: Array<{ text: string }>) => row[0].text),
-      ["✓ 1️⃣ a", "2️⃣ b", "✓ 3️⃣ c", "✏️ Type an answer", "Done"],
-    )
-    r.tg.callback(CHAT, Number(ref), "ab12:d")
-    await r.tg.waitFor(() => r.got[0])
-    assert.deepEqual(said(r.got[0]), { id: "ab12", text: "1,3" })
-    await r.done()
-  })
-
-  it("a toggle on a prompt this process does not know says so", async () => {
+  it("the toggle, Done, type and stepper buttons of an earlier version only point to the app", async () => {
     const r = await rig()
-    r.tg.callback(CHAT, 1, "zz99:t1")
-    const t = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.match(t.body.text, /No longer active/)
+    for (const data of ["ab12:t1", "ab12:d", "ab12:x", "s:ab12:o1"])
+      r.tg.callback(CHAT, 501, data)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[3])
+    for (const t of r.tg.of("answerCallbackQuery"))
+      assert.match(t.body.text, /moved to the app/)
     assert.equal(r.got.length, 0)
     await r.done()
   })
@@ -478,7 +519,7 @@ describe("Bridge with telegram and another channel", () => {
     const id = b.store.list()[0].id
     assert.match(b.stub.sent[0].message, /answer via ntfy/)
     const tgMsg = b.tg.of("sendMessage")[0].body
-    assert.match(tgMsg.text, /Tap a button, ✏️ to type, or reply/)
+    assert.match(tgMsg.text, /Tap a button, or reply/)
     assert.equal(
       tgMsg.reply_markup.inline_keyboard[0][0].callback_data,
       `${id}:1`,
@@ -587,17 +628,13 @@ describe("Bridge with telegram and another channel", () => {
     await b.done()
   })
 
-  it("several questions: a stepper, and one numbered reply still answers all", async () => {
+  it("several questions: no buttons, and one numbered reply still answers all", async () => {
     const b = await bridgeRig()
     await b.ask("frm_1", [
       { ...yesNoField, key: "q0", title: "A" },
       { ...yesNoField, key: "q1", title: "B" },
     ])
-    assert.match(
-      b.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard[0][0]
-        .callback_data,
-      /^s:/,
-    )
+    assert.equal(b.tg.of("sendMessage")[0].body.reply_markup, undefined)
     b.tg.message(CHAT, "1 | no", 501)
     await b.tg.waitFor(() => b.replies[0])
     assert.deepEqual((b.replies[0] as { answer: unknown }).answer, {
@@ -873,23 +910,14 @@ const ev = (type: string, data: Record<string, unknown> = {}) =>
   ({ type, data: { sessionID: "root", ...data } }) as unknown as BridgeEvent
 
 describe("Telegram: typed answers and groups", () => {
-  it("✏️ asks for a typed answer in the same topic; a reply to that prompt is a literal answer", async () => {
+  it("a typing field has no ✏️ button, and a reply to the message still answers", async () => {
     const b = await bridgeRig()
     await b.ask("frm_1", [yesNoField])
-    const id = b.store.list()[0].id
-    b.tg.callback(CHAT, 501, `${id}:x`, 9001)
-    const ask = await b.tg.waitFor(() => b.tg.of("sendMessage")[1])
-    assert.equal(ask.body.text, `Type your answer for #${id}`)
-    assert.equal(ask.body.message_thread_id, 9001)
-    assert.deepEqual(ask.body.reply_markup, {
-      force_reply: true,
-      input_field_placeholder: "Your answer",
-    })
-    assert.equal(b.tg.of("answerCallbackQuery").length, 1)
-    // "2" is text here, not the second option.
-    b.tg.message(CHAT, "2", 502)
+    const kb = b.tg.of("sendMessage")[0].body.reply_markup.inline_keyboard
+    assert.equal(kb.length, 2)
+    b.tg.message(CHAT, "2", 501)
     await b.tg.waitFor(() => b.replies[0])
-    assert.deepEqual((b.replies[0] as { answer: unknown }).answer, { q0: "2" })
+    assert.deepEqual((b.replies[0] as { answer: unknown }).answer, { q0: "No" })
     await b.done()
   })
 
@@ -962,7 +990,7 @@ describe("Telegram: message layout", () => {
         "      <i>Deploy to &lt;prod&gt;</i>",
         "2️⃣ <b>Wait</b>",
         "",
-        "<i>Tap a button, ✏️ to type, or reply.</i>",
+        "<i>Tap a button, or reply.</i>",
       ].join("\n"),
     )
     assert.equal(q.reply_markup.inline_keyboard[0][0].text, "1️⃣ Ship it ⭐")
