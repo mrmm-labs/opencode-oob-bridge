@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.1...v0.36.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* close prompts OpenCode no longer holds, and send what waited behind them ([#124](https://github.com/mrmm-labs/opencode-oob-bridge/issues/124)) ([cc140b1](https://github.com/mrmm-labs/opencode-oob-bridge/commit/cc140b1ded7b4ff793ebf9d21cd8b06ffc9aa52a))
+
 ## [0.36.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.0...v0.36.1) (2026-11-22)
 
 
