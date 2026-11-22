@@ -264,6 +264,8 @@ export interface Connector {
     gapMs?: number,
     /** Most edits a minute. */
     budget?: number,
+    /** The assistant message the text belongs to. A different one is a later step: what was shown stays, and the new text goes in new messages. */
+    step?: string,
   ): void
   /** Posts the final text of a turn to the session's thread. Only with `inboundPrompt`; never throws. */
   reply?(

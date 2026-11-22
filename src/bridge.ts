@@ -1766,6 +1766,7 @@ export class Bridge {
             clean,
             this.cfg.chat.streamMs,
             this.cfg.chat.streamBudget,
+            this.turns.get(root)?.msg,
           )
     } catch (err) {
       log("stream_error", { message: (err as Error).message })
