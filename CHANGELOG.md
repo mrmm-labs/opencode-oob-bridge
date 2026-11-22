@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.1...v0.37.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* keep streamed text the reader has seen, retry a failed final ([#130](https://github.com/mrmm-labs/opencode-oob-bridge/issues/130)) ([3c045db](https://github.com/mrmm-labs/opencode-oob-bridge/commit/3c045db4d8af75b8081a256e5250f8774533c70f))
+
 ## [0.37.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.0...v0.37.1) (2026-11-22)
 
 
