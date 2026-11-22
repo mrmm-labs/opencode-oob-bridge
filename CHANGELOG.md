@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.2...v0.37.0) (2026-11-22)
+
+
+### Features
+
+* pair by QR code, and open the session an Open button names ([#126](https://github.com/mrmm-labs/opencode-oob-bridge/issues/126)) ([a0b120c](https://github.com/mrmm-labs/opencode-oob-bridge/commit/a0b120cc96446a9ec0db197aeb80fc82e8bd0a5e))
+
 ## [0.36.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.1...v0.36.2) (2026-11-22)
 
 
