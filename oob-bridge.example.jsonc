@@ -138,6 +138,10 @@
   //   "link": "https://t.me/examplebot/app",
   // },
 
+  // Mask outbound text through a local secret broker's scrub socket (README, "Secret
+  // scrubbing"). Fails closed: if the socket cannot answer, a push carries its title only.
+  // "scrub": { "socket": "/run/user/1000/secret-broker/scrub.sock", "timeoutMs": 2000 },
+
   // How much bridge.log holds: "warn" (failures), "info" (every inbound and outbound outcome, default) or "debug" (also each step).
   // "log": { "level": "info" },
   // OpenTelemetry (OTLP/HTTP JSON). Off unless an endpoint is set here or in

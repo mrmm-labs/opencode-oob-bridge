@@ -25,6 +25,7 @@ import {
   type Profile,
 } from "./messages.ts"
 import type { OtelTarget } from "./otel.ts"
+import { parseScrub, type ScrubTarget } from "./scrub.ts"
 import { isArgv, isObject, URL_RE } from "./util.ts"
 
 export type Rule = {
@@ -129,6 +130,8 @@ export type Config = {
   profiles: Profile[]
   /** Set when `otel.endpoint` is; the environment may still turn telemetry on. */
   otel?: OtelTarget
+  /** Set when `scrub.socket` is: outbound connector text is masked through it. */
+  scrub?: ScrubTarget
   /** How much the bridge log holds: `warn` failures only, `info` every inbound and outbound outcome (default), `debug` also each step. */
   log: { level: LogLevel }
 }
@@ -646,6 +649,13 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     }
   }
 
+  let scrub: ScrubTarget | undefined
+  if (raw.scrub !== undefined) {
+    const s = parseScrub(raw.scrub)
+    if ("error" in s) return s
+    scrub = s
+  }
+
   const core = parseCore(raw.core)
   if ("error" in core) return core
   const miniApp = parseMiniApp(raw.miniApp)
@@ -720,6 +730,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     messages,
     profiles,
     otel,
+    scrub,
     log: { level: logLevel },
   }
 }
