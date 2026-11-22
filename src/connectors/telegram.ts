@@ -1987,7 +1987,7 @@ export class TelegramConnector implements Connector {
       this.rejected("callback")
       return log("telegram_ignored", { kind: "callback" })
     }
-    if (/^ap:/.test(cb.data ?? "")) return this.toast(cb.id, MOVED)
+    if (cb.data?.startsWith("ap:")) return this.toast(cb.id, MOVED)
     if (cb.data === "chatoff") {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
