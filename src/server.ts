@@ -27,6 +27,7 @@ import { Core } from "./core/index.ts"
 import { Deadman, selfCheck, urlProblem } from "./deadman.ts"
 import type { LinkClient } from "./link/client.ts"
 import { edgeAuth, startLink } from "./link/start.ts"
+import { scrubClient, withScrub } from "./scrub.ts"
 import { resolveToken } from "./token.ts"
 import { acquire, read as readLock, type Lock } from "./lock.ts"
 import { log } from "./logger.ts"
@@ -478,7 +479,9 @@ async function boot(
         c.options,
       )
       connector.enabled = settings.channel(name).enabled ?? c.enabled
-      return connector
+      return cfg.scrub
+        ? withScrub(connector, scrubClient(cfg.scrub), log)
+        : connector
     },
   )
   const store = new PendingStore(join(dir, "pending.jsonl"))

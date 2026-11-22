@@ -936,6 +936,26 @@ A class that is not listed, or not listed for the calling tool, is refused. A re
 
 The signing key (Ed25519) and the code seed live in the macOS Keychain, read through the Security framework, never in a plain file. If the Keychain is locked, `/oob approvals unlock` asks macOS at the Mac. Level 2 is met by any factor in `approvals.l2.factors` (default `["biometric", "passkey", "totp"]`): Face ID in the Mini App, a passkey where the webview supports it, or the typed code, which stays the fallback. Only the paired Telegram user answers, and a group's other members cannot. The full design is in [docs/approvals.md](docs/approvals.md).
 
+## Secret scrubbing
+
+A pasted key or a printed password would otherwise travel to ntfy or Telegram. If a local secret broker serves a scrub socket, point the bridge at it:
+
+```jsonc
+"scrub": { "socket": "/run/user/1000/secret-broker/scrub.sock", "timeoutMs": 2000 }
+```
+
+Every connector's outbound text (pushes, edits, streamed session text, posted replies) is sent through the socket first, and the bridge sends what comes back. One request covers a whole push: title, message, tags, session name, question text and card text. Ids, priority and transport facts are not sent.
+
+The socket speaks newline-delimited JSON, protocol version 1. The bridge sends `{"v":1,"id":"…","op":"scrub","text":"…","origin":"outbound","caller":"oob-bridge"}` and uses a reply only if it has the same `id`, `"ok":true` and a `text`.
+
+It fails closed. If the socket is missing, locked, still loading, slower than `timeoutMs` or answers badly, a push is sent with its title only: the message is replaced by a fixed notice, and tags, card, buttons and session name are dropped. Streamed updates and posted replies are dropped. The log records the failure kind (`scrub_failed`), never text.
+
+Limits:
+
+- Only values the broker knows are masked. A secret it has never seen passes through.
+- Text that does not go through a connector, such as the relay link and the Mini App views, is not scrubbed.
+- Without `scrub.socket` nothing changes.
+
 ## Security
 
 - ntfy `http` buttons are sent by the app with no identity: **anyone who can publish to
