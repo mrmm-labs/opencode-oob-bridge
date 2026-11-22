@@ -111,16 +111,41 @@ describe("start", () => {
     assert.equal(r.ctl.state.detail.id, "s1")
   })
 
-  it("goes back to the list when the named session is gone", async () => {
-    const r = rig({
-      start: "gone",
-      session: async () => {
-        throw err(404)
-      },
-    })
+  it("opens a session named with the s_ prefix, and still a bare id", async () => {
+    const a = rig({ start: "s_s1" })
+    await a.ctl.boot()
+    assert.deepEqual(a.ctl.state.route, { name: "session", id: "s1" })
+    assert.ok(a.calls.includes("session:s1"))
+  })
+
+  it("opens the enrolment screen with the scanned code, and does not act on it", async () => {
+    const r = rig({ start: "enrol_ABCD2345" })
+    await r.ctl.boot()
+    assert.equal(r.ctl.state.route.name, "enroll")
+    assert.equal(r.ctl.state.enrolCode, "ABCD2345")
+    assert.ok(!r.calls.some((c) => c.startsWith("enrol")))
+    assert.equal(r.ctl.canAct(), true)
+  })
+
+  it("falls back to the list for a start parameter it cannot read, with no toast", async () => {
+    const r = rig({ start: "enrol_" })
     await r.ctl.boot()
     assert.equal(r.ctl.state.route.name, "list")
-    assert.equal(r.ctl.state.toast.ok, false)
+    assert.equal(r.ctl.state.toast, undefined)
+  })
+
+  it("goes back to the list when the named session is gone", async () => {
+    for (const status of [404, 400]) {
+      const r = rig({
+        start: "s_gone",
+        session: async () => {
+          throw err(status)
+        },
+      })
+      await r.ctl.boot()
+      assert.equal(r.ctl.state.route.name, "list")
+      assert.equal(r.ctl.state.toast.ok, false)
+    }
   })
 })
 

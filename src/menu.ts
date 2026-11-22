@@ -968,15 +968,24 @@ async function approvalsCommand(
     }))
   }
   if (action === "enroll-biometric" || action === "enroll-passkey") {
+    const lines = []
+    if (typeof d.link === "string") {
+      const qr = renderQr(d.link)
+      const w = terminal(ctx)
+      // Dialog padding, title and the lines below the code.
+      if (!w || (w.cols >= qr.width + 10 && w.rows >= qr.height + 14))
+        lines.push("Scan with your phone camera:", ...qr.lines, "")
+    }
+    lines.push(
+      "Or open the Mini App on the phone, choose Set up, and enter this code.",
+      "",
+      String(d.code).replace(/^(.{4})/, "$1-"),
+      "",
+      "It works once and expires in 5 minutes.",
+    )
     return void (await ctx.ui.dialog.alert({
       title: `${TITLE}: enrol ${action === "enroll-biometric" ? "Face ID" : "a passkey"}`,
-      message: [
-        "Open the Mini App on the phone, choose Set up, and enter this code.",
-        "",
-        String(d.code).replace(/^(.{4})/, "$1-"),
-        "",
-        "It works once and expires in 5 minutes.",
-      ].join("\n"),
+      message: lines.join("\n"),
     }))
   }
   if (action === "devices") {

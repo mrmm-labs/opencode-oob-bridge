@@ -2,6 +2,7 @@
 import { ApiError } from "./api.js"
 import { orderFactors } from "./factors.js"
 import * as F from "./form.js"
+import { parseStart } from "./format.js"
 
 export const CONFIRM = {
   stop: "Stop the running turn?",
@@ -37,6 +38,8 @@ const initial = () => ({
   busy: false,
   approval: undefined,
   enrol: undefined,
+  /** The code a scanned QR carried: the enrolment screen starts with it filled in. */
+  enrolCode: undefined,
 })
 
 export function createController({
@@ -146,8 +149,13 @@ export function createController({
         quiet(loadStatus()),
         quiet(guard(() => api.options()).then((options) => set({ options }))),
       ])
-      if (start.startsWith("a_")) await self.openApproval(start.slice(2))
-      else if (start) await self.open(start)
+      const target = parseStart(start)
+      if (target?.kind === "approval") await self.openApproval(target.id)
+      else if (target?.kind === "session") await self.open(target.id)
+      else if (target?.kind === "enrol") {
+        set({ enrolCode: target.code })
+        await self.go("enroll")
+      }
       stream = makeStream({
         onState: (state, why, reason) => {
           if (why === "expired")
@@ -208,7 +216,7 @@ export function createController({
       try {
         await loadDetail(id)
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) {
+        if (err instanceof ApiError && [400, 404].includes(err.status)) {
           toast("That session is not there any more.", false)
           set({ route: { name: "list" } })
         }

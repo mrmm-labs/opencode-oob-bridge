@@ -6,6 +6,7 @@ import {
   connection,
   diffClass,
   permissionChoices,
+  parseStart,
   refusalText,
   stateLabel,
 } from "./format.js"
@@ -87,5 +88,34 @@ describe("refusal sentences", () => {
     assert.equal(refusalText(undefined), undefined)
     assert.match(refusalText("no_operator"), /no operator configured/)
     assert.doesNotMatch(refusalText("no_operator"), /expired/)
+  })
+})
+
+describe("the start parameter", () => {
+  it("names a session, an approval or an enrolment by its prefix", () => {
+    assert.deepEqual(parseStart("s_ses_1"), { kind: "session", id: "ses_1" })
+    assert.deepEqual(parseStart("a_01ARZ"), { kind: "approval", id: "01ARZ" })
+    assert.deepEqual(parseStart("enrol_ABCD2345"), {
+      kind: "enrol",
+      code: "ABCD2345",
+    })
+  })
+
+  it("takes a bare id as a session, for a message sent before the prefixes", () => {
+    assert.deepEqual(parseStart("ses_1"), { kind: "session", id: "ses_1" })
+  })
+
+  it("asks for nothing when it is empty, too long, odd, or an enrolment without a usable code", () => {
+    for (const bad of [
+      "",
+      undefined,
+      "a/b",
+      "x".repeat(65),
+      "enrol_",
+      "enrol_" + "A".repeat(17),
+      "s_",
+      "a_",
+    ])
+      assert.equal(parseStart(bad), undefined, String(bad))
   })
 })
