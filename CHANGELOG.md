@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.38.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.2...v0.38.0) (2026-11-22)
+
+
+### Features
+
+* redo the Mini App screens in Telegram's style, with names, search, sections and a chat view ([#132](https://github.com/mrmm-labs/opencode-oob-bridge/issues/132)) ([18c106d](https://github.com/mrmm-labs/opencode-oob-bridge/commit/18c106d9e938f2f7fefc266231790b2af6470850))
+
 ## [0.37.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.1...v0.37.2) (2026-11-22)
 
 
