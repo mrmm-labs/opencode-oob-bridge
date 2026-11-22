@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.3](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.2...v0.39.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* keep question buttons working after a restart, log every tap ([#140](https://github.com/mrmm-labs/opencode-oob-bridge/issues/140)) ([0101eaa](https://github.com/mrmm-labs/opencode-oob-bridge/commit/0101eaabb172d54ad75a8ae06d8a4dfb657401c8))
+
 ## [0.39.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.1...v0.39.2) (2026-11-22)
 
 
