@@ -116,15 +116,6 @@ const threeFields = {
   },
 }
 
-const asked = async (r: Awaited<ReturnType<typeof rig>>) => {
-  await r.ev("form.created", threeFields)
-  const m = await r.tg.waitFor(() =>
-    r.sends().find((b) => /Which db/.test(b.text)),
-  )
-  const id = r.store.list()[0].id
-  return { m, id }
-}
-
 const twoFields = {
   form: {
     id: "frm_2",

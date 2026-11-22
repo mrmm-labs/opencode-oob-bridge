@@ -5,7 +5,7 @@
  */
 import type { ApprovalView, Settled } from "../approvals/types.ts"
 import { filterSecrets } from "../filter.ts"
-import { clock, truncate } from "../util.ts"
+import { clock } from "../util.ts"
 import { header, MAX_FILES, MAX_SUMMARY } from "../turncard.ts"
 import type {
   Card,
