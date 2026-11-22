@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import {
   biometric,
+  chrome,
   contrast,
   followTheme,
   launch,
@@ -10,6 +11,7 @@ import {
   readable,
   setReporter,
   themeVars,
+  versionAtLeast,
 } from "./tg.js"
 
 const loc = (hash, search = "") => ({ hash, search })
@@ -102,6 +104,43 @@ describe("theme", () => {
         contrast(v[fg], v[bg]) >= 4.5,
         fg + " on " + bg + " " + contrast(v[fg], v[bg]),
       )
+  })
+
+  it("takes the section colours from Telegram, and falls back to the page's own", () => {
+    const base = {
+      bg_color: "#17212b",
+      text_color: "#f5f5f5",
+      hint_color: "#708499",
+      link_color: "#6ab3f3",
+      secondary_bg_color: "#232e3c",
+    }
+    const plain = themeVars(base)
+    assert.equal(plain["--section"], "#17212b")
+    assert.match(plain["--sep"], /color-mix/)
+    const full = themeVars({
+      ...base,
+      section_bg_color: "#1c2733",
+      section_separator_color: "#0e1621",
+      subtitle_text_color: "#7d8b99",
+      accent_text_color: "#6ab2f2",
+      section_header_text_color: "#6ab3f3",
+    })
+    assert.equal(full["--section"], "#1c2733")
+    assert.equal(full["--sep"], "#0e1621")
+    for (const [fg, bg, min] of [
+      ["--subtitle", "--section", 4.5],
+      ["--accent", "--section", 4],
+      ["--sect-head", "--bg2", 4.5],
+    ])
+      assert.ok(contrast(full[fg], full[bg]) >= min, fg)
+    // Telegram's blue on white keeps its colour as the accent.
+    const day = themeVars({
+      bg_color: "#ffffff",
+      text_color: "#000000",
+      link_color: "#2481cc",
+      accent_text_color: "#2481cc",
+    })
+    assert.equal(day["--accent"], "#2481cc")
   })
 
   it("sets nothing for a theme it cannot read, so the stylesheet defaults stay", () => {
@@ -376,5 +415,118 @@ describe("biometric manager of Telegram's script", () => {
     })
     note("x")
     setReporter((e, d) => lines.push([e, d]))
+  })
+})
+
+describe("Telegram's chrome", () => {
+  const rig = () => {
+    const sent = []
+    const win = {
+      TelegramWebviewProxy: {
+        postEvent: (e, d) => sent.push([e, JSON.parse(d)]),
+      },
+    }
+    return { sent, win }
+  }
+  const theme = { bg_color: "#112233", secondary_bg_color: "#223344" }
+
+  it("compares client versions part by part", () => {
+    assert.equal(versionAtLeast("6.10", "6.2"), true)
+    assert.equal(versionAtLeast("6.1", "6.2"), false)
+    assert.equal(versionAtLeast("8", "7.7"), true)
+  })
+
+  it("does nothing on a client without the part, or with no version", async () => {
+    for (const v of ["", "6.0"]) {
+      const { sent, win } = rig()
+      const c = chrome(win, v)
+      c.back(true)
+      c.colors(theme)
+      c.haptic("light")
+      assert.equal(await c.confirm("sure?"), undefined)
+      assert.deepEqual(sent, [], v)
+    }
+    const { sent, win } = rig()
+    const c = chrome(win, "6.1")
+    c.back(true)
+    c.settings(true)
+    c.swipes(false)
+    assert.deepEqual(sent, [
+      ["web_app_setup_back_button", { is_visible: true }],
+    ])
+    assert.equal(await c.confirm("sure?"), undefined)
+  })
+
+  it("sets the bar and the page to the secondary background, falling back to the background", () => {
+    const { sent, win } = rig()
+    const c = chrome(win, "8.0")
+    c.colors(theme)
+    c.colors({ bg_color: "#112233" })
+    c.colors({})
+    assert.deepEqual(sent, [
+      ["web_app_set_header_color", { color: "#223344" }],
+      ["web_app_set_background_color", { color: "#223344" }],
+      ["web_app_set_header_color", { color: "#112233" }],
+      ["web_app_set_background_color", { color: "#112233" }],
+    ])
+  })
+
+  it("sends haptic feedback of each kind and nothing for an unknown one", () => {
+    const { sent, win } = rig()
+    const c = chrome(win, "8.0")
+    c.haptic("heavy")
+    c.haptic("success")
+    c.haptic("select")
+    c.haptic("nonsense")
+    assert.deepEqual(sent, [
+      [
+        "web_app_trigger_haptic_feedback",
+        { type: "impact", impact_style: "heavy" },
+      ],
+      [
+        "web_app_trigger_haptic_feedback",
+        { type: "notification", notification_type: "success" },
+      ],
+      ["web_app_trigger_haptic_feedback", { type: "selection_change" }],
+    ])
+    c.swipes(false)
+    c.settings(true)
+    assert.deepEqual(sent.slice(3), [
+      ["web_app_setup_swipe_behavior", { allow_vertical_swipe: false }],
+      ["web_app_setup_settings_button", { is_visible: true }],
+    ])
+  })
+
+  it("asks with Telegram's popup and answers true for the button, false for cancel", async () => {
+    for (const [id, want] of [
+      ["ok", true],
+      ["cancel", false],
+      [undefined, false],
+    ]) {
+      const { sent, win } = rig()
+      const w = {
+        ...win,
+        document: { documentElement: { style: { setProperty() {} } } },
+        addEventListener() {},
+      }
+      followTheme(w)
+      const answer = chrome(w, "8.0").confirm("Stop it?", {
+        ok: "Stop",
+        destructive: true,
+      })
+      assert.equal(sent.length, 1)
+      const [event, data] = sent[0]
+      assert.equal(event, "web_app_open_popup")
+      assert.equal(data.message, "Stop it?")
+      assert.deepEqual(data.buttons, [
+        { id: "ok", type: "destructive", text: "Stop" },
+        { id: "cancel", type: "cancel" },
+      ])
+      w.Telegram.WebView.receiveEvent(
+        "popup_closed",
+        id ? { button_id: id } : {},
+      )
+      assert.equal(await answer, want)
+    }
   })
 })

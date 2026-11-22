@@ -65,6 +65,8 @@ export type Summary = {
   model?: string
   variant?: string
   project?: string
+  /** The last part of the session's directory: all the phone gets of the path. */
+  folder?: string
   state: "working" | "idle" | "failed" | "suspended"
   watch: { mode: "on" | "off" | "auto"; channel?: string }
   chat: boolean
@@ -110,6 +112,12 @@ export type ViewsDeps = {
 }
 
 const TAIL = 20
+
+/** The last part of a path, whichever way it is written; undefined for none. */
+export function folderOf(dir: string | undefined): string | undefined {
+  const last = dir?.split(/[\\/]/).filter(Boolean).pop()
+  return last ? last.slice(0, 60) : undefined
+}
 const MAX_TAIL = 200
 
 export class Views {
@@ -129,9 +137,12 @@ export class Views {
     return snap.sessions.map((r) => {
       const st = states.get(r.id)
       const stuck = snap.stuck.some((s) => s.id === r.id)
+      const known = this.o.host.peek?.(r.id)
+      const title = r.title || known?.title
       return {
         id: r.id,
-        title: r.title === undefined ? undefined : this.text(r.title),
+        title: title ? this.text(title) : undefined,
+        folder: folderOf(known?.directory),
         agent: r.agent ?? st?.agent,
         model: st?.model,
         variant: st?.variant,
