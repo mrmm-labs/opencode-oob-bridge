@@ -7,6 +7,7 @@ import type { Bridge, Host } from "../bridge.ts"
 import type { Config } from "../config.ts"
 import type { Control } from "../control.ts"
 import { redact } from "../filter.ts"
+import type { Pending } from "../pending.ts"
 import type { Snapshot } from "../rpc.ts"
 
 export type Field<T> = { value: T; source: string } | { unavailable: string }
@@ -228,6 +229,33 @@ export class Views {
     }
   }
 
+  private items(p: Pending) {
+    return (p.questions ?? []).map((q) => ({
+      key: q.key,
+      header: this.text(q.header),
+      text: this.text(q.text),
+      options: q.options.map((o) => this.text(o)),
+      multiple: q.multiple,
+      custom: q.custom,
+    }))
+  }
+
+  /** One question or permission by its short id, for a link that opens it. */
+  prompt(id: string) {
+    const p = this.o.bridge.promptEntry(id)
+    return p
+      ? {
+          id: p.id,
+          kind: p.kind,
+          state: p.state,
+          session: p.rootSessionID,
+          title: this.text(p.title),
+          askedAt: p.askedAt,
+          items: p.kind === "question" ? this.items(p) : [],
+        }
+      : undefined
+  }
+
   async detail(id: string): Promise<Detail | undefined> {
     const s = await this.summary(id)
     if (!s) return undefined
@@ -265,14 +293,7 @@ export class Views {
           id: p.id,
           title: this.text(p.title),
           askedAt: p.askedAt,
-          items: (p.questions ?? []).map((q) => ({
-            key: q.key,
-            header: this.text(q.header),
-            text: this.text(q.text),
-            options: q.options.map((o) => this.text(o)),
-            multiple: q.multiple,
-            custom: q.custom,
-          })),
+          items: this.items(p),
         })),
       permissions: prompts
         .filter((p) => p.kind === "permission" && p.state === "pending")

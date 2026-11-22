@@ -104,6 +104,8 @@ describe("the start parameter", () => {
   it("names a session, an approval or an enrolment by its prefix", () => {
     assert.deepEqual(parseStart("s_ses_1"), { kind: "session", id: "ses_1" })
     assert.deepEqual(parseStart("a_01ARZ"), { kind: "approval", id: "01ARZ" })
+    assert.deepEqual(parseStart("f_p5gf"), { kind: "question", id: "p5gf" })
+    assert.equal(parseStart("f_"), undefined)
     assert.deepEqual(parseStart("enrol_ABCD2345"), {
       kind: "enrol",
       code: "ABCD2345",

@@ -3,6 +3,7 @@
 Taken without asking, because the operator was away; each can be changed in review.
 
 - **One-tap test.** A question is one-tap when it has exactly one field, that field is single-select, it has 2 to 4 options, and every option label is at most 24 characters. Typing allowed (`custom`) does not disqualify it: the options are buttons and a "📱 Open" row offers the app for another answer. Everything else is in-app. The test is one pure function, so the card, the keyboard and the log agree.
+- **No Mini App configured.** Then an in-app question has no button and its message says to reply with numbers or text; nothing else changes.
 - **Typed text fallback stays.** A reply to the message or `#id answer` still answers, for a form that is one-tap or not, because it needs no state. Only buttons, the stepper and the ✏️ force-reply are removed.
 - **Old buttons.** A tap on a stepper button (`s:`) or an approval `ap:` button of a message sent before the upgrade answers with a toast ("This moved to the app: tap 📱 Open") and applies nothing. The next restart or the message's own settlement removes them.
 - **Deep links.** `f_<id>` joins `s_<id>`, `a_<id>` and `enrol_<code>`. In a private chat the button is a web-app button with `?s=f_<id>`; in a group it is the direct link, which is the only form a group allows. The pending id is 4 characters, so the parameter stays under Telegram's 64.

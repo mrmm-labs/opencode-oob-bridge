@@ -111,6 +111,32 @@ describe("start", () => {
     assert.equal(r.ctl.state.detail.id, "s1")
   })
 
+  it("opens the session that asked the question named with f_, and says so when it is closed", async () => {
+    const asked = (state) => async () => ({
+      id: "p5gf",
+      kind: "question",
+      state,
+      session: "s1",
+      items: [],
+    })
+    const open = rig({ start: "f_p5gf", prompt: asked("pending") })
+    await open.ctl.boot()
+    assert.deepEqual(open.ctl.state.route, { name: "session", id: "s1" })
+
+    for (const prompt of [
+      asked("answered"),
+      asked("withdrawn"),
+      async () => {
+        throw new ApiError(404, "not found")
+      },
+    ]) {
+      const shut = rig({ start: "f_p5gf", prompt })
+      await shut.ctl.boot()
+      assert.equal(shut.ctl.state.route.name, "list")
+      assert.match(shut.ctl.state.toast.text, /no longer open/)
+    }
+  })
+
   it("opens a session named with the s_ prefix, and still a bare id", async () => {
     const a = rig({ start: "s_s1" })
     await a.ctl.boot()

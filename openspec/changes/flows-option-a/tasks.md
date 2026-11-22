@@ -1,10 +1,10 @@
 ## 1. Telegram: one tap or the app, no stepper (PR 1)
 
-- [ ] 1.1 `classify(questions)` returns one-tap or in-app. Verify: `src/classify.test.ts`.
-- [ ] 1.2 In-app questions get one "📱 Answer in app" button; one-tap questions keep their option buttons. Verify: `src/forms.test.ts`.
-- [ ] 1.3 `f_<id>` start parameter opens that question in the app. Verify: `miniapp/format.test.js`, `miniapp/controller.test.js`.
-- [ ] 1.4 Remove the stepper and its callbacks; old `s:` taps get a toast. Verify: `src/forms.test.ts`.
-- [ ] 1.5 "📱 Open" shares the style. Verify: `src/forms.test.ts`.
+- [x] 1.1 `classify(questions)` returns one-tap or in-app. Verify: `src/classify.test.ts`.
+- [x] 1.2 In-app questions get one "📱 Answer in app" button; one-tap questions keep their option buttons. Verify: `src/forms.test.ts`.
+- [x] 1.3 `f_<id>` start parameter opens that question in the app. Verify: `miniapp/format.test.js`, `miniapp/controller.test.js`.
+- [x] 1.4 Remove the stepper and its callbacks; old `s:` taps get a toast. Verify: `src/forms.test.ts`.
+- [x] 1.5 "📱 Open" shares the style. Verify: `src/forms.test.ts`.
 
 ## 2. Withdrawn forms (PR 2)
 

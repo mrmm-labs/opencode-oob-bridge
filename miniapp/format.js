@@ -127,7 +127,8 @@ export function parseStart(raw) {
   const enrol = /^enrol_([A-Za-z0-9]{1,16})$/.exec(raw)
   if (enrol) return { kind: "enrol", code: enrol[1] }
   if (raw.startsWith("enrol_")) return undefined
-  if (raw === "s_" || raw === "a_") return undefined
+  if (raw === "s_" || raw === "a_" || raw === "f_") return undefined
+  if (raw.startsWith("f_")) return { kind: "question", id: raw.slice(2) }
   if (raw.startsWith("s_")) return { kind: "session", id: raw.slice(2) }
   if (raw.startsWith("a_")) return { kind: "approval", id: raw.slice(2) }
   return { kind: "session", id: raw }

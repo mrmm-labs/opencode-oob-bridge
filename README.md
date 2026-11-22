@@ -211,7 +211,7 @@ degrades to match:
 | Capability      | Without it                                                               |
 | --------------- | ------------------------------------------------------------------------ |
 | `buttons`       | The question is numbered text, answered by number or `#id answer`.       |
-| `multiselect`   | A multiple-choice question gets no toggle buttons, only numbered text.   |
+| `multiselect`   | A multiple-choice question gets no buttons, only numbered text.          |
 | `edit`          | The outcome ("Answered from ...") is a follow-up message, not an edit.   |
 | `threads`       | The session is named in each message, not given its own thread or topic. |
 | `pairing`       | `/oob pair` refuses it.                                                  |
@@ -244,8 +244,11 @@ outgoing requests, and exposes no port or webhook.
 
 What you get in Telegram:
 
-- A **question** is a message with one button per option (up to 10), numbered with keycap emoji,
-  a star in place of "(Recommended)", and a ✏️ button when a typed answer is allowed:
+- A **question** that is one tap (one single-select field, two to four options of at most 24
+  characters) is a message with one button per option, numbered with keycap emoji, and a star in
+  place of "(Recommended)". Every other question has one button, **📱 Answer in app**, that opens
+  that question in the Mini App (`startapp=f_<id>`); with no Mini App it is numbered text. A
+  one-tap question that allows typing gets the app button under its options:
 
   ```
   ❓ build asks · shop
@@ -257,27 +260,21 @@ What you get in Telegram:
         Deploy to prod
   2️⃣ Wait
 
-  Tap a button, ✏️ to type, or reply.
+  Tap a button, or reply.
   ```
 
   Tap a button: the phone shows a toast with the outcome at once, and the message itself becomes
   `✅ Answered · Ship it` with a muted "via telegram · 14:02" line, the question quoted, and the
   buttons removed. The same happens when you answer in the TUI ("via TUI"). If Telegram refuses the
   edit, a follow-up message says it instead, and the log notes it.
-  **✏️ Type an answer** makes the bot ask "Type your answer for #id" in the same topic; reply to
-  that message and your text is the answer (a number is text there, not an option).
-  **Multiple choice** shows toggle buttons (a tick marks the chosen ones) and a Done button.
-  You can also answer by replying to the question message with a number or text, or with
+  You can also answer any question by replying to its message with a number or text, or with
   `#id answer` as on ntfy.
 
-- **Several questions in one prompt** are answered one field at a time in a single message that is
-  edited as you go: the field and its options as buttons (eight to a page, with Prev and Next),
-  Back, ✓ ticks and Done on a multiple-choice field, ✏️ to type an answer where that is allowed,
-  and `n/N` for progress. After the last field you review every answer and tap Submit, Edit or
-  Cancel. Nothing reaches OpenCode before Submit, so an abandoned form changes nothing; the
-  first answer still wins, from the phone or the TUI. You can still reply with one answer per
-  question, separated by `|` (for example `1 | yes | 2,3`), as on ntfy.
-- A question with more than 10 options gets no buttons: reply by number or text.
+- **Several questions in one prompt**, a multiple-choice or free-text question, and one with more
+  than four options or a long option, are answered in the app. You can still reply with one
+  answer per question, separated by `|` (for example `1 | yes | 2,3`), as on ntfy. Buttons of a
+  message sent before this change (the field-by-field form, ticks, Done, ✏️) only say that the
+  question moved to the app.
 - A question or permission the bridge waits on is checked against OpenCode when the plugin starts and
   every 60 seconds. One OpenCode no longer holds (answered at the Mac while the plugin restarted,
   say) is closed: its message reads `✅ Already answered at the Mac` with no buttons, and a message

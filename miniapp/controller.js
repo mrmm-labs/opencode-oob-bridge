@@ -157,6 +157,7 @@ export function createController({
       ])
       const target = parseStart(start)
       if (target?.kind === "approval") await self.openApproval(target.id)
+      else if (target?.kind === "question") await self.openPrompt(target.id)
       else if (target?.kind === "session") await self.open(target.id)
       else if (target?.kind === "enrol") {
         set({ enrolCode: target.code })
@@ -230,6 +231,18 @@ export function createController({
     },
 
     /** The second factor of an L2 request: the first one this phone can use, then the others on demand. */
+    /** A link to a question opens the session that asked it, or says it is no longer open. */
+    async openPrompt(id) {
+      try {
+        const p = await guard(() => api.prompt(id))
+        if (p?.state === "pending" && p.session)
+          return await self.open(p.session)
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 404)) throw err
+      }
+      toast("That question is no longer open.", false)
+    },
+
     async openApproval(id) {
       set({
         route: { name: "approval", id },

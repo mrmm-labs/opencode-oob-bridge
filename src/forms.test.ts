@@ -116,15 +116,6 @@ const threeFields = {
   },
 }
 
-const asked = async (r: Awaited<ReturnType<typeof rig>>) => {
-  await r.ev("form.created", threeFields)
-  const m = await r.tg.waitFor(() =>
-    r.sends().find((b) => /Which db/.test(b.text)),
-  )
-  const id = r.store.list()[0].id
-  return { m, id }
-}
-
 const twoFields = {
   form: {
     id: "frm_2",
@@ -151,15 +142,6 @@ const twoFields = {
   },
 }
 
-const forget = (r: Awaited<ReturnType<typeof rig>>) => {
-  const c = r.channel as unknown as {
-    steppers: Map<string, unknown>
-    prompts: Map<string, unknown>
-  }
-  c.steppers.clear()
-  c.prompts.clear()
-}
-
 const logged = async <T>(run: (lines: () => Promise<any[]>) => Promise<T>) => {
   const dir = await mkdtemp(join(tmpdir(), "oobb-formlog-"))
   const file = join(dir, "bridge.log")
@@ -181,23 +163,96 @@ const logged = async <T>(run: (lines: () => Promise<any[]>) => Promise<T>) => {
   }
 }
 
-describe("forms: two fields, and a restart in between", () => {
-  it("answers a two-field form: pick, pick, Send", async () => {
+const yesNoForm = {
+  form: {
+    id: "frm_3",
+    sessionID: "root",
+    metadata: { kind: "question" },
+    fields: [
+      {
+        key: "go",
+        type: "string",
+        title: "Merge",
+        description: "Merge now?",
+        options: [{ label: "Yes" }, { label: "No" }],
+        custom: false,
+      },
+    ],
+  },
+}
+
+const withApp = (r: Awaited<ReturnType<typeof rig>>) =>
+  r.channel.launch({ url: "https://app.example.com/app/" })
+
+const appButton = (m: { reply_markup?: any }) => {
+  const rows = m.reply_markup?.inline_keyboard ?? []
+  return { rows, b: rows[0]?.[0] }
+}
+
+describe("forms: one tap in the chat, the rest in the app", () => {
+  it("a yes or no keeps its buttons, and a tap answers it", async () => {
+    const r = await rig()
+    await r.ev("form.created", yesNoForm)
+    const m = await r.tg.waitFor(() =>
+      r.sends().find((b) => /Merge now/.test(b.text)),
+    )
+    const id = r.store.list()[0].id
+    assert.deepEqual(
+      m.reply_markup.inline_keyboard.map((x: any[]) => x[0].callback_data),
+      [`${id}:1`, `${id}:2`],
+    )
+    r.tap(`${id}:2`)
+    await r.tg.waitFor(() => r.seen.forms[0])
+    assert.deepEqual(r.seen.forms, [{ formID: "frm_3", answer: { go: "No" } }])
+    await r.done()
+  })
+
+  it("two fields get one 📱 Answer in app button to that question, and no option buttons", async () => {
+    const r = await rig()
+    withApp(r)
+    await r.ev("form.created", twoFields)
+    const m = await r.tg.waitFor(() =>
+      r.sends().find((b) => /How do we land/.test(b.text)),
+    )
+    const id = r.store.list()[0].id
+    const { rows, b } = appButton(m)
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].length, 1)
+    assert.equal(b.text, "📱 Answer in app")
+    assert.equal(b.web_app.url, `https://app.example.com/app/?s=f_${id}`)
+    await r.done()
+  })
+
+  it("three fields, and a multi-select, get the same single button", async () => {
+    const r = await rig()
+    withApp(r)
+    await r.ev("form.created", threeFields)
+    const m = await r.tg.waitFor(() =>
+      r.sends().find((b) => /Which db/.test(b.text)),
+    )
+    assert.equal(appButton(m).b.text, "📱 Answer in app")
+    assert.equal(appButton(m).rows.length, 1)
+    await r.done()
+  })
+
+  it("with no app configured a multi-field form has no buttons and says to reply", async () => {
+    const r = await rig()
+    await r.ev("form.created", twoFields)
+    const m = await r.tg.waitFor(() =>
+      r.sends().find((b) => /How do we land/.test(b.text)),
+    )
+    assert.equal(m.reply_markup, undefined)
+    assert.match(m.text, /Reply to this message with one answer per question/)
+    await r.done()
+  })
+
+  it("a reply with one answer per question still answers a two-field form", async () => {
     const r = await rig()
     await r.ev("form.created", twoFields)
     await r.tg.waitFor(() =>
       r.sends().find((b) => /How do we land/.test(b.text)),
     )
-    const id = r.store.list()[0].id
-    r.tap(`s:${id}:o2`)
-    await r.tg.waitFor(() => r.edits().find((e) => /2\/2/.test(e.text)))
-    r.tap(`s:${id}:o1`)
-    const review = await r.tg.waitFor(() =>
-      r.edits().find((e) => /Review your answers/.test(e.text)),
-    )
-    assert.match(review.text, /re-record/)
-    assert.equal(r.seen.forms.length, 0)
-    r.tap(`s:${id}:ok`)
+    r.tg.message(CHAT, "2 | 1", r.tg.lastMessageId, THREAD)
     await r.tg.waitFor(() => r.seen.forms[0])
     assert.deepEqual(r.seen.forms, [
       { formID: "frm_2", answer: { q0: "re-record", q1: "me" } },
@@ -205,131 +260,50 @@ describe("forms: two fields, and a restart in between", () => {
     await r.done()
   })
 
-  it("after a restart a tap starts the form again from question 1 and is not applied; then it can be answered", async () => {
+  it("the stepper buttons of an earlier version do nothing and say where the question went", async () => {
     const r = await rig()
     await r.ev("form.created", twoFields)
     await r.tg.waitFor(() =>
       r.sends().find((b) => /How do we land/.test(b.text)),
     )
     const id = r.store.list()[0].id
-    r.tap(`s:${id}:o2`)
-    await r.tg.waitFor(() => r.edits().find((e) => /2\/2/.test(e.text)))
-    forget(r)
-    const before = r.edits().length
     r.tap(`s:${id}:o1`)
-    const redrawn = await r.tg.waitFor(() =>
-      r
-        .edits()
-        .slice(before)
-        .find((e) => /1\/2/.test(e.text)),
-    )
-    assert.ok(redrawn)
-    const toast = r.tg
-      .of("answerCallbackQuery")
-      .map((c) => String(c.body.text ?? ""))
-      .find((t) => /restarted/.test(t))
-    assert.ok(toast, "the person is told")
-    assert.equal(r.seen.forms.length, 0, "the stale tap is not applied")
-    assert.equal(r.store.list()[0].state, "pending")
-    r.tap(`s:${id}:o2`)
-    await r.tg.waitFor(() =>
-      r
-        .edits()
-        .slice(before)
-        .find((e) => /2\/2/.test(e.text)),
-    )
-    r.tap(`s:${id}:o2`)
-    await r.tg.waitFor(() =>
-      r
-        .edits()
-        .slice(before)
-        .find((e) => /Review your answers/.test(e.text)),
-    )
-    r.tap(`s:${id}:ok`)
-    await r.tg.waitFor(() => r.seen.forms[0])
-    assert.deepEqual(r.seen.forms[0].answer, { q0: "re-record", q1: "you" })
-    await r.done()
-  })
-
-  it("a tap on a form that is no longer open says so and changes nothing", async () => {
-    const r = await rig()
-    await r.ev("form.created", twoFields)
-    await r.tg.waitFor(() =>
-      r.sends().find((b) => /How do we land/.test(b.text)),
-    )
-    const id = r.store.list()[0].id
-    await r.ev("form.replied", { id: "frm_2", sessionID: "root" })
-    await r.tg.waitFor(() => r.edits().find((x) => /Answered/.test(x.text)))
-    forget(r)
-    r.tap(`s:${id}:o1`)
-    const t = await r.tg.waitFor(() =>
-      r.tg
-        .of("answerCallbackQuery")
-        .find((c) => /No longer active/.test(String(c.body.text))),
-    )
-    assert.ok(t)
-    assert.equal(r.seen.forms.length, 0)
-    await r.done()
-  })
-
-  it("a ticked single question also starts again after a restart", async () => {
-    const r = await rig()
-    await r.ev("form.created", {
-      form: {
-        id: "frm_3",
-        sessionID: "root",
-        metadata: { kind: "question" },
-        fields: [
-          {
-            key: "t",
-            type: "multiselect",
-            title: "Tools",
-            description: "Which tools?",
-            options: [{ label: "a" }, { label: "b" }],
-          },
-        ],
-      },
-    })
-    await r.tg.waitFor(() => r.sends().find((b) => /Which tools/.test(b.text)))
-    const id = r.store.list()[0].id
-    forget(r)
     r.tap(`${id}:t1`)
-    await r.tg.waitFor(() =>
-      r.tg
-        .of("answerCallbackQuery")
-        .find((c) => /restarted/.test(String(c.body.text))),
-    )
-    r.tap(`${id}:t2`)
-    await sleep(100)
     r.tap(`${id}:d`)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[2])
+    for (const t of r.tg.of("answerCallbackQuery"))
+      assert.match(String(t.body.text), /moved to the app/)
+    assert.equal(r.seen.forms.length, 0)
+    assert.equal(r.store.list()[0].state, "pending")
+    await r.done()
+  })
+
+  it("a tap on a one-tap question that is already answered is refused", async () => {
+    const r = await rig()
+    await r.ev("form.created", yesNoForm)
+    await r.tg.waitFor(() => r.sends().find((b) => /Merge now/.test(b.text)))
+    const id = r.store.list()[0].id
+    r.tap(`${id}:1`)
     await r.tg.waitFor(() => r.seen.forms[0])
-    assert.deepEqual(r.seen.forms[0].answer, { t: ["b"] })
+    r.tap(`${id}:2`)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[1])
+    assert.equal(r.seen.forms.length, 1)
     await r.done()
   })
 
   it("every tap and the reply are logged, without the answer text", async () => {
     await logged(async (lines) => {
       const r = await rig()
-      await r.ev("form.created", twoFields)
-      await r.tg.waitFor(() =>
-        r.sends().find((b) => /How do we land/.test(b.text)),
-      )
+      await r.ev("form.created", yesNoForm)
+      await r.tg.waitFor(() => r.sends().find((b) => /Merge now/.test(b.text)))
       const id = r.store.list()[0].id
-      r.tap(`s:${id}:o2`)
-      await r.tg.waitFor(() => r.edits().find((e) => /2\/2/.test(e.text)))
-      r.tap(`s:${id}:o1`)
-      await r.tg.waitFor(() =>
-        r.edits().find((e) => /Review your answers/.test(e.text)),
-      )
-      r.tap(`s:${id}:ok`)
+      r.tap(`${id}:2`)
       await r.tg.waitFor(() => r.seen.forms[0])
       const l = await lines()
       const ev = (e: string) => l.filter((x) => x.event === e)
-      assert.equal(ev("form_select").length, 2)
       assert.equal(ev("form_select")[0].outcome, "ok")
-      assert.equal(ev("form_submit")[0].fields, 2)
-      assert.equal(ev("form_reply_ok")[0].fields, 2)
-      assert.ok(!JSON.stringify(l).includes("re-record"))
+      assert.equal(ev("form_reply_ok")[0].fields, 1)
+      assert.ok(!JSON.stringify(l).includes('"No"'))
       await r.done()
     })
   })
@@ -337,18 +311,10 @@ describe("forms: two fields, and a restart in between", () => {
   it("a reply the host refuses logs the reason", async () => {
     await logged(async (lines) => {
       const r = await rig({ formGone: true })
-      await r.ev("form.created", twoFields)
-      await r.tg.waitFor(() =>
-        r.sends().find((b) => /How do we land/.test(b.text)),
-      )
+      await r.ev("form.created", yesNoForm)
+      await r.tg.waitFor(() => r.sends().find((b) => /Merge now/.test(b.text)))
       const id = r.store.list()[0].id
-      r.tap(`s:${id}:o1`)
-      await r.tg.waitFor(() => r.edits().find((e) => /2\/2/.test(e.text)))
-      r.tap(`s:${id}:o1`)
-      await r.tg.waitFor(() =>
-        r.edits().find((e) => /Review your answers/.test(e.text)),
-      )
-      r.tap(`s:${id}:ok`)
+      r.tap(`${id}:1`)
       await sleep(300)
       try {
         const f = (await lines()).find((x) => x.event === "form_reply_failed")
@@ -357,102 +323,6 @@ describe("forms: two fields, and a restart in between", () => {
         await r.done()
       }
     })
-  })
-})
-
-describe("forms: the stepper", () => {
-  it("shows field 1 of 3 and answers all three with one reply after Submit", async () => {
-    const r = await rig()
-    const { m, id } = await asked(r)
-    assert.match(m.text, /1\/3 · DB/)
-    r.tap(`s:${id}:o2`)
-    await r.tg.waitFor(() => r.edits().find((e) => /2\/3/.test(e.text)))
-    r.tap(`s:${id}:t1`)
-    r.tap(`s:${id}:t3`)
-    await sleep(100)
-    r.tap(`s:${id}:d`)
-    await r.tg.waitFor(() => r.edits().find((e) => /3\/3/.test(e.text)))
-    assert.equal(r.seen.forms.length, 0, "nothing before Submit")
-    r.tap(`s:${id}:o1`)
-    const review = await r.tg.waitFor(() =>
-      r.edits().find((e) => /Review your answers/.test(e.text)),
-    )
-    assert.match(review.text, /mysql/)
-    assert.equal(r.seen.forms.length, 0)
-    r.tap(`s:${id}:ok`)
-    await r.tg.waitFor(() => r.seen.forms[0])
-    assert.deepEqual(r.seen.forms, [
-      {
-        formID: "frm_1",
-        answer: { db: "mysql", tools: ["a", "c"], note: "none" },
-      },
-    ])
-    await r.done()
-  })
-
-  it("an abandoned stepper sends nothing, and Cancel says so", async () => {
-    const r = await rig()
-    const { id } = await asked(r)
-    r.tap(`s:${id}:o1`)
-    await r.tg.waitFor(() => r.edits()[0])
-    assert.equal(r.seen.forms.length, 0)
-    r.tap(`s:${id}:x`)
-    const c = await r.tg.waitFor(() =>
-      r.edits().find((e) => /Cancelled here/.test(e.text)),
-    )
-    assert.deepEqual(c.reply_markup, { inline_keyboard: [] })
-    assert.equal(r.seen.forms.length, 0)
-    assert.equal(r.store.list()[0].state, "pending")
-    await r.done()
-  })
-
-  it("✏️ asks for text, and the typed reply fills the field", async () => {
-    const r = await rig()
-    const { id } = await asked(r)
-    const stepMsg = r.tg.lastMessageId
-    r.tap(`s:${id}:o1`)
-    r.tap(`s:${id}:t1`)
-    await sleep(100)
-    r.tap(`s:${id}:d`)
-    await r.tg.waitFor(() => r.edits().find((e) => /3\/3/.test(e.text)))
-    r.tap(`s:${id}:w`)
-    await r.tg.waitFor(() =>
-      r.sends().find((b) => /Type your answer for question 3/.test(b.text)),
-    )
-    r.tg.message(CHAT, "careful now", r.tg.lastMessageId, THREAD)
-    await r.tg.waitFor(() =>
-      r
-        .edits()
-        .find(
-          (e) =>
-            /Review your answers/.test(e.text) && /careful now/.test(e.text),
-        ),
-    )
-    void stepMsg
-    await r.done()
-  })
-
-  it("a form answered at the Mac while the stepper is open ends it, buttons gone", async () => {
-    const r = await rig()
-    await asked(r)
-    await r.ev("form.replied", { id: "frm_1", sessionID: "root" })
-    const e = await r.tg.waitFor(() =>
-      r.edits().find((x) => /Answered/.test(x.text)),
-    )
-    assert.match(e.text, /Answered at the Mac/)
-    assert.deepEqual(e.reply_markup, { inline_keyboard: [] })
-    await r.done()
-  })
-
-  it("with no window open the card says to answer at the Mac and has no buttons", async () => {
-    const r = await rig({ window: false })
-    await r.ev("form.created", threeFields)
-    const m = await r.tg.waitFor(() =>
-      r.sends().find((b) => /Which db/.test(b.text)),
-    )
-    assert.match(m.text, /Answer this at the Mac/)
-    assert.equal(m.reply_markup, undefined)
-    await r.done()
   })
 })
 
