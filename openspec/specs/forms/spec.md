@@ -6,48 +6,6 @@ Forms lets the operator answer a multi-field form, and approve a permission when
 
 ## Requirements
 
-### Requirement: A multi-field form is answered one field at a time
-
-A form with several fields SHALL be shown as one message that is edited per field, with the field title, its options as buttons, a progress marker, a Back button, and a ✏️ button when the field allows a typed answer. Choices SHALL be kept in the bridge until Submit, and nothing SHALL reach the host before it.
-
-#### Scenario: Three fields
-
-- **WHEN** a form with three fields is sent
-- **THEN** the message shows field 1 of 3 and moves to field 2 after a choice
-
-#### Scenario: Abandoned
-
-- **WHEN** the person answers two fields and stops
-- **THEN** the host receives nothing
-
-### Requirement: Each field type has its own control
-
-A single-select field SHALL take one tap. A multi-select field SHALL show toggle buttons with a tick on chosen options and a Done button. A field that allows free text SHALL take the person's reply to the bot's prompt. More than eight options SHALL be paged with Prev and Next, and a multi-select choice SHALL survive paging.
-
-#### Scenario: Multi-select across pages
-
-- **WHEN** the person ticks an option on page 1, goes to page 2 and back
-- **THEN** the option is still ticked
-
-#### Scenario: Free text
-
-- **WHEN** the person taps ✏️ and replies with text
-- **THEN** the text is the answer to that field
-
-### Requirement: The answers are reviewed before the reply
-
-After the last field the message SHALL list every answer with Submit, Edit and Cancel. Submit SHALL send one form reply. Cancel SHALL send none. The first answer SHALL win, whether it comes from the phone or the TUI.
-
-#### Scenario: Submit
-
-- **WHEN** the person taps Submit
-- **THEN** one form reply is made with all answers
-
-#### Scenario: Answered at the Mac first
-
-- **WHEN** the form is answered in the TUI while the stepper is open
-- **THEN** the message says it was answered in the TUI and has no buttons
-
 ### Requirement: A form that cannot be sent shows no buttons
 
 Because only a TUI can make a form reply, with no TUI attached the card SHALL say to answer at the Mac and SHALL show no buttons.
@@ -84,3 +42,45 @@ Every permission answer from a channel SHALL be logged with the session, the act
 
 - **WHEN** the person taps Deny
 - **THEN** one log line records the deny with the channel
+
+### Requirement: Only a one-tap question has answer buttons in a chat
+
+A question SHALL show answer buttons in a chat only when it has one field, the field is single-select, it has two to four options, and every option label is at most 24 characters. Any other question SHALL show one button, "📱 Answer in app", that opens that question in the Mini App with the start parameter `f_<pending id>`. A reply to the message or `#<id> <answer>` SHALL still answer either kind.
+
+#### Scenario: Yes or no
+
+- **WHEN** a question has one single-select field with the options Yes and No
+- **THEN** the message has a Yes and a No button
+
+#### Scenario: Two fields
+
+- **WHEN** a form has two fields
+- **THEN** the message has one button, "📱 Answer in app", and no option buttons
+
+#### Scenario: Multi-select, long option or free text only
+
+- **WHEN** a single field is multi-select, or has an option longer than 24 characters, or has more than four options, or has no options
+- **THEN** the message has one button, "📱 Answer in app"
+
+### Requirement: Buttons of a message sent before an upgrade do nothing
+
+A tap on a stepper button of an earlier version SHALL apply nothing and SHALL answer with a toast that the question moved to the app.
+
+#### Scenario: Old stepper button
+
+- **WHEN** a stepper button of an earlier version is tapped
+- **THEN** nothing reaches the host and the toast says to open the app
+
+### Requirement: A form OpenCode drops is withdrawn, not answered
+
+When a form OpenCode no longer holds was not answered through the bridge and not seen answered at the Mac, reconcile SHALL mark it `withdrawn` and edit its message to "⚪ Withdrawn: the session stopped asking" with no buttons. A form found answered or cancelled SHALL keep that state. A permission request OpenCode no longer holds SHALL still be closed as answered at the Mac.
+
+#### Scenario: Tool interrupted
+
+- **WHEN** a session is interrupted while a question is open and OpenCode drops the form
+- **THEN** the pending entry is `withdrawn` and the message reads "Withdrawn: the session stopped asking"
+
+#### Scenario: Reply to a form that is gone
+
+- **WHEN** an app answer finds the form gone
+- **THEN** the entry is `withdrawn` and the person is told the session no longer asks it
