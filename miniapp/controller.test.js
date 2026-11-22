@@ -527,6 +527,35 @@ describe("enrolling this phone", () => {
     assert.equal(r.ctl.state.enrol.text, "No Face ID.")
   })
 
+  it("success is a state of its own: text, device, toast, and a second tap does nothing", async () => {
+    let calls = 0
+    const r = rig({
+      enrol: async () => (calls++, { ok: true, device: "dD", token: "dD.s" }),
+      device: dev(),
+    })
+    await r.ctl.enroll("biometric", "X")
+    const e = r.ctl.state.enrol
+    assert.equal(e.ok, true)
+    assert.equal(e.busy, false)
+    assert.equal(e.device, "dD")
+    assert.match(e.text, /set up for Face ID/)
+    assert.equal(r.ctl.state.toast.ok, true)
+    await r.ctl.enroll("biometric", "X")
+    await r.ctl.enroll("passkey", "X")
+    assert.equal(calls, 1, "the spent code is not sent again")
+    assert.equal(r.ctl.state.enrol.ok, true)
+  })
+
+  it("opening the screen again starts clean", async () => {
+    const r = rig({
+      enrol: async () => ({ ok: true, device: "dD", token: "dD.s" }),
+      device: dev(),
+    })
+    await r.ctl.enroll("biometric", "X")
+    await r.ctl.go("enroll")
+    assert.equal(r.ctl.state.enrol, undefined)
+  })
+
   it("keeps no token when the bridge refuses, and a retry stores the new one", async () => {
     const saved = []
     let n = 0

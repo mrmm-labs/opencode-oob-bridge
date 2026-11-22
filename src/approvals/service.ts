@@ -339,7 +339,10 @@ export class ApprovalService implements AppApprovals {
       reason: this.enrolReason,
       instance: this.id,
       opened_by: this.enrolOpenedBy,
-      step: body.ok && b.credential === undefined ? "begin" : "done",
+      step:
+        body.ok && b.kind === "passkey" && b.credential === undefined
+          ? "begin"
+          : "done",
     })
     return res
   }
