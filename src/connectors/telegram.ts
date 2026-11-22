@@ -114,6 +114,9 @@ const QUIET_MS = 30_000
 const DRAFT_REFRESH_MS = 20_000
 /** After a refused draft, edits are used for this long. */
 const DRAFT_BACKOFF_MS = 10 * 60_000
+const FINAL_RETRY_MS = 20_000
+/** What a person reads of a message: its HTML without the tags. */
+const plain = (html: string) => html.replace(/<[^>]*>/g, "").trimEnd()
 // Streamed text moves to a new message past this many characters of HTML.
 const STREAM_CHARS = 3800
 const MAX_REPLY_MESSAGES = 3
@@ -148,6 +151,8 @@ export type TelegramOptions = {
   handleMs?: number
   /** Least time between two reaction calls; tests shorten it. */
   reactGapMs?: number
+  /** How long a reply that could not be posted waits before it is tried once more. */
+  finalRetryMs?: number
   /** Where session topics of a forum chat are remembered across restarts. */
   topicsFile?: string
   /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
@@ -255,6 +260,8 @@ const buttonable = (qs: Question[]) =>
 
 type Stream = {
   session: NonNullable<Push["session"]>
+  /** The assistant message the text belongs to. */
+  step?: string
   /** The reply so far, in markdown. */
   text: string
   /** HTML last shown in each message, and its message id. */
@@ -2550,12 +2557,17 @@ export class TelegramConnector implements Connector {
     text: string,
     gapMs = STREAM_GAP_MS,
     budget = STREAM_BUDGET,
+    step?: string,
   ): void {
     if (!this.chatId || !text.trim()) return
     let st = this.streams.get(session.id)
+    // A later step: what was shown of the earlier one stays, and this text goes in new messages.
+    if (st && step !== undefined && st.step !== undefined && st.step !== step)
+      st = this.seal(st)
     if (!st) {
       st = {
         session,
+        step,
         text,
         shown: [],
         nextAt: 0,
@@ -2567,9 +2579,58 @@ export class TelegramConnector implements Connector {
       this.streams.set(session.id, st)
     }
     st.text = text
+    st.step ??= step
     st.gapMs = gapMs
     st.budget = budget
     this.pump(st)
+  }
+
+  /** Ends a stream without touching its messages, and starts the next one after it. */
+  private seal(old: Stream): Stream {
+    clearTimeout(old.timer)
+    clearTimeout(old.refresh)
+    old.timer = undefined
+    const next: Stream = {
+      session: old.session,
+      text: "",
+      shown: [],
+      nextAt: 0,
+      gapMs: old.gapMs,
+      budget: old.budget,
+      chain: old.chain
+        .then(() => this.settleSealed(old))
+        .catch((err) => this.fail(err)),
+      running: false,
+    }
+    this.streams.set(old.session.id, next)
+    return next
+  }
+
+  /** Shows the last text of a sealed stream, so what the person reads of that step is all of it. */
+  private async settleSealed(old: Stream): Promise<void> {
+    if (old.draftId !== undefined) {
+      // A draft is a preview, not a message: its text is posted so that it stays.
+      const thread = await this.thread(old.session)
+      for (const html of this.shownText(old)) {
+        if (!html.trim()) continue
+        const m = await this.call<{ message_id: number }>("sendMessage", {
+          chat_id: this.chatId,
+          message_thread_id: thread,
+          text: html,
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          disable_notification: true,
+        })
+        this.remember(m.message_id, old.session.id)
+      }
+      return
+    }
+    for (let i = 0; i < 3 && this.dirty(old); i++) {
+      old.nextAt = 0
+      await this.paint(old, true)
+      const wait = old.nextAt - this.now()
+      if (this.dirty(old) && wait > 0) await sleep(Math.min(wait, 5000))
+    }
   }
 
   private pump(st: Stream, refresh = false): void {
@@ -2689,9 +2750,9 @@ export class TelegramConnector implements Connector {
   }
 
   /** Sends or edits the messages of a stream so they show its text. */
-  private async paint(st: Stream): Promise<void> {
-    if (this.draftable() && (await this.paintDraft(st))) return
-    const wait = this.budgetWait(st)
+  private async paint(st: Stream, force = false): Promise<void> {
+    if (!force && this.draftable() && (await this.paintDraft(st))) return
+    const wait = force ? 0 : this.budgetWait(st)
     if (wait > 0) {
       st.nextAt = this.now() + wait
       this.opts.tel?.count("oob.stream.throttled", {
@@ -2762,12 +2823,17 @@ export class TelegramConnector implements Connector {
 
   /**
    * Posts the final text of a turn: up to three messages split between
-   * blocks, the rest as a markdown document. A stream's messages are edited
-   * into place, so nothing appears twice.
+   * blocks, the rest as a markdown document. A streamed message is edited
+   * into place only when the final text extends what it showed. Text a person
+   * has read is never rewritten or deleted: anything else goes in a new message.
+   * A reply that could not be posted is tried once more after a while.
    */
   async reply(
     session: NonNullable<Push["session"]>,
     text: string,
+    retry = true,
+    kept?: Stream["shown"],
+    waiting?: number[],
   ): Promise<{ parts: number; documents: number } | undefined> {
     if (!this.chatId) return undefined
     const st = this.streams.get(session.id)
@@ -2777,14 +2843,15 @@ export class TelegramConnector implements Connector {
       clearTimeout(st.refresh)
       await st.chain.catch(() => {})
     }
+    const shown = kept ?? st?.shown ?? []
+    const ids = waiting ?? [...(this.awaiting.get(session.id) ?? [])]
     try {
       const thread = await this.thread(session)
       const { messages, rest } = splitReply(text, MAX_REPLY_MESSAGES)
-      const shown = st?.shown ?? []
       for (const [i, html] of messages.entries()) {
         const had = shown[i]
         if (had?.html === html) continue
-        if (had) {
+        if (had && plain(html).startsWith(plain(had.html))) {
           try {
             await this.call("editMessageText", {
               chat_id: this.chatId,
@@ -2793,9 +2860,13 @@ export class TelegramConnector implements Connector {
               parse_mode: "HTML",
               link_preview_options: { is_disabled: true },
             })
+            had.html = html
             continue
           } catch (err) {
-            if (/not modified/i.test((err as Error).message)) continue
+            if (/not modified/i.test((err as Error).message)) {
+              had.html = html
+              continue
+            }
             this.fail(err)
           }
         }
@@ -2806,14 +2877,9 @@ export class TelegramConnector implements Connector {
           parse_mode: "HTML",
           link_preview_options: { is_disabled: true },
         })
+        shown[i] = { id: m.message_id, html }
         this.remember(m.message_id, session.id)
       }
-      // Streamed text of an earlier step that the final text no longer needs.
-      for (const extra of shown.slice(messages.length))
-        await this.call("deleteMessage", {
-          chat_id: this.chatId,
-          message_id: extra.id,
-        }).catch((err) => this.fail(err))
       if (rest)
         await this.upload(
           "sendDocument",
@@ -2824,11 +2890,18 @@ export class TelegramConnector implements Connector {
           },
           { field: "document", name: "reply.md", data: text },
         )
-      this.replied(session.id)
+      if (kept) for (const id of ids) void this.react(id, "done")
+      else this.replied(session.id)
       return { parts: messages.length, documents: rest ? 1 : 0 }
     } catch (err) {
       this.fail(err)
-      this.replied(session.id, "failed")
+      if (!kept) this.replied(session.id, "failed")
+      if (retry) {
+        const timer = setTimeout(() => {
+          void this.reply(session, text, false, shown, ids)
+        }, this.opts.finalRetryMs ?? FINAL_RETRY_MS)
+        timer.unref?.()
+      }
       return undefined
     }
   }

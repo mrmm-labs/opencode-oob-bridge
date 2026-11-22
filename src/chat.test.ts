@@ -783,6 +783,87 @@ describe("chat from Telegram: streaming", () => {
     await r.done()
   })
 
+  it("text shown for an earlier step stays: the final reply never deletes or rewrites it", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    await r.ev("session.execution.started")
+    for (const [msg, text] of [
+      ["m1", "Let me look at the files"],
+      ["m2", "All done."],
+    ]) {
+      await r.ev("session.text.ended", {
+        assistantMessageID: msg,
+        ordinal: 0,
+        text,
+      })
+      await r.tg.waitFor(() => r.sends().find((b) => b.text === text))
+    }
+    await r.ev("session.execution.succeeded")
+    await r.tg.waitFor(() => r.tg.of("sendMessageReaction")[0] ?? true)
+    await sleep(300)
+    assert.equal(r.tg.of("deleteMessage").length, 0)
+    assert.equal(
+      r.tg
+        .of("editMessageText")
+        .filter((e) => /Let me look/.test(String(e.body.text))).length,
+      0,
+    )
+    assert.equal(
+      r.sends().filter((b) => /Let me look|All done/.test(b.text)).length,
+      2,
+      "one message per step",
+    )
+    await r.done()
+  })
+
+  it("a final that extends the streamed text edits that one message; one that differs is a new message", async () => {
+    const { tg, c } = await rigWithClock()
+    c.stream(session, "Hello")
+    await settle(tg)
+    await c.reply(session, "Hello world")
+    assert.equal(tg.of("sendMessage").length, 1)
+    assert.equal(tg.of("editMessageText")[0].body.text, "Hello world")
+    assert.equal(tg.of("deleteMessage").length, 0)
+
+    c.stream(session, "Draft of the plan")
+    await settle(tg)
+    await c.reply(session, "Something else entirely")
+    assert.equal(tg.of("editMessageText").length, 1, "the shown text is kept")
+    assert.equal(tg.of("deleteMessage").length, 0)
+    const sent = tg.of("sendMessage").map((s) => s.body.text)
+    assert.deepEqual(sent, [
+      "Hello",
+      "Draft of the plan",
+      "Something else entirely",
+    ])
+    await tg.close()
+  })
+
+  it("a final that could not be posted leaves the stream and is posted as a new message later", async () => {
+    const tg = await fakeTelegram()
+    tg.forum = true
+    const c = new TelegramConnector({
+      token: async () => tg.token,
+      chatId: String(CHAT),
+      apiBase: tg.url,
+      finalRetryMs: 50,
+    })
+    c.stream(session, "Draft of the plan")
+    await settle(tg)
+    tg.fail("sendMessage", 500)
+    assert.equal(await c.reply(session, "Something else entirely"), undefined)
+    assert.equal(tg.of("deleteMessage").length, 0)
+    const late = await tg.waitFor(() =>
+      tg
+        .of("sendMessage")
+        .find((s) => s.body.text === "Something else entirely"),
+    )
+    assert.ok(late)
+    assert.equal(tg.of("deleteMessage").length, 0)
+    assert.equal(tg.of("editMessageText").length, 0)
+    await tg.close()
+  })
+
   it("chat.stream false: only the final reply, once", async () => {
     const r = await chatRig({ chat: { stream: false } })
     await chatOn(r)
