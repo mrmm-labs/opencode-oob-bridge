@@ -9,6 +9,7 @@ import { access, readFile, realpath } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 
 import { configPath, legacy, legacyConfigPath } from "./paths.ts"
+import type { Drain } from "./rpc.ts"
 
 /** The install directory: the package root, one level above src/ and dist/. */
 export const INSTALL_DIR = fileURLToPath(new URL("..", import.meta.url))
@@ -139,7 +140,16 @@ export type VersionReport = {
   /** The version each attached TUI reported. */
   tuis: string[]
   warnings: string[]
+  /** What is still pending, for a restart to wait on. */
+  drain?: Drain
 }
+
+const drainLines = (d?: Drain): string[] =>
+  d && d.open > 0
+    ? [
+        `Open: ${d.open} (questions ${d.questions}, approvals ${d.approvals}, permissions ${d.permissions})`,
+      ]
+    : []
 
 const when = (ms: number) =>
   new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC"
@@ -166,6 +176,7 @@ export function chatLines(r: VersionReport, now: number): string[] {
     `Installed: ${r.installed ?? "unknown"}${r.describe ? ` (git ${r.describe})` : ""}`,
     `TUI runs: ${tuis.length ? tuis.join(", ") : "no TUI attached"}`,
     `Up: ${span(now - r.startedAt)}`,
+    ...drainLines(r.drain),
     ...(r.warnings.length ? r.warnings : ["All versions match."]),
   ]
 }
@@ -195,6 +206,7 @@ export function reportLines(
   lines.push(
     `Config: ${r.config}`,
     `Core API: ${r.core.api}, ${r.core.state === "listening" ? `listening on ${r.core.address}` : r.core.state}`,
+    ...drainLines(r.drain),
   )
   const warn = tui
     ? mismatches({

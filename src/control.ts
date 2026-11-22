@@ -16,7 +16,7 @@ import type { Config } from "./config.ts"
 import type { Pairing } from "./connectors/types.ts"
 import { log } from "./logger.ts"
 import type { Owner } from "./lock.ts"
-import type { OpResult, SessionRow, Snapshot, StuckRow } from "./rpc.ts"
+import type { Drain, OpResult, SessionRow, Snapshot, StuckRow } from "./rpc.ts"
 import type { Router } from "./routing.ts"
 import {
   Overnight,
@@ -291,6 +291,19 @@ export class Control {
         server: version,
         tuis: this.tuiList(),
       }),
+      drain: this.drain(),
+    }
+  }
+
+  /** What is still pending, as counts. */
+  drain(): Drain {
+    const { questions, permissions } = this.o.bridge.drain()
+    const approvals = this.approvals?.pending() ?? 0
+    return {
+      open: questions + approvals + permissions,
+      questions,
+      approvals,
+      permissions,
     }
   }
 
@@ -590,6 +603,7 @@ export class Control {
         silentMs: c.silentMs,
       })),
       pending: st.pending,
+      drain: this.drain(),
       waiting: st.waiting,
       core: this.core && {
         state: this.core.status().state,

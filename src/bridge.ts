@@ -698,6 +698,15 @@ export class Bridge {
     this.waitingSource = fn
   }
 
+  /** How many questions and permission requests are still pending. */
+  drain(): { questions: number; permissions: number } {
+    const open = this.store.list().filter((p) => p.state === "pending")
+    return {
+      questions: open.filter((p) => p.kind === "question").length,
+      permissions: open.filter((p) => p.kind === "permission").length,
+    }
+  }
+
   /** What `/version` answers in a chat. */
   onVersion(fn: () => Promise<string>): void {
     this.versionSource = fn

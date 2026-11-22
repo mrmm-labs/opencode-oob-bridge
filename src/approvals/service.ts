@@ -573,6 +573,11 @@ export class ApprovalService implements AppApprovals {
     return { signing, totp }
   }
 
+  /** Requests still waiting for an answer. */
+  pending(): number {
+    return this.engine.pending()
+  }
+
   async status(): Promise<ServiceStatus> {
     const ready = await this.signingReady()
     const en = await this.enrolled()

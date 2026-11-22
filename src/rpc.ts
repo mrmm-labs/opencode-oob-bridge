@@ -80,6 +80,13 @@ export type ChannelRow = {
   silentMs?: number
 }
 
+export type Drain = {
+  open: number
+  questions: number
+  approvals: number
+  permissions: number
+}
+
 export type Snapshot = {
   /** Grows with every change, so a view can tell a new snapshot from the one it has. */
   v: number
@@ -102,6 +109,8 @@ export type Snapshot = {
   back?: { id: number; text: string; at: number }
   channels: ChannelRow[]
   pending: number
+  /** What is still pending: counts only, so a restart can wait for them. */
+  drain: Drain
   /** Permissions waiting at the Mac, one line per session. */
   waiting?: string[]
   sessions: SessionRow[]

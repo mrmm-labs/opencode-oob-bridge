@@ -120,6 +120,24 @@ describe("reportLines", () => {
     ],
   }
 
+  it("adds a line with the open counts only when something is open", () => {
+    const open = { open: 2, questions: 1, approvals: 1, permissions: 0 }
+    const none = { ...open, open: 0, questions: 0, approvals: 0 }
+    assert.match(
+      reportLines({ ...report, drain: open }).join("\n"),
+      /Open: 2 \(questions 1, approvals 1, permissions 0\)/,
+    )
+    assert.doesNotMatch(
+      reportLines({ ...report, drain: none }).join("\n"),
+      /Open:/,
+    )
+    assert.doesNotMatch(reportLines(report).join("\n"), /Open:/)
+    assert.match(
+      chatLines({ ...report, drain: open }, Date.now()).join("\n"),
+      /Open: 2/,
+    )
+  })
+
   it("shows every field, and the server's warnings in a chat", () => {
     const text = reportLines(report).join("\n")
     assert.match(text, /Installed: 0\.23\.0 \(git v0\.23\.0-0-gabc1234\)/)

@@ -25,4 +25,4 @@
 
 ## 5. Drain (PR 5)
 
-- [ ] 5.1 `drain` in the control snapshot, `/oob version` and the core status. Verify: `src/control.test.ts`, `src/core/core.test.ts`.
+- [x] 5.1 `drain` in the control snapshot, `/oob version` and the core status. Verify: `src/control.test.ts`, `src/core/core.test.ts`.
