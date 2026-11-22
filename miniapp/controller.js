@@ -15,6 +15,8 @@ const REFRESH_MS = 300
 const initial = () => ({
   /** loading | ready | nolaunch | expired | forbidden | offline */
   phase: "loading",
+  /** The code the bridge gave when it refused: the screen says why. */
+  reason: undefined,
   /** connecting | live | down */
   conn: "connecting",
   updatedAt: 0,
@@ -71,8 +73,14 @@ export function createController({
     } catch (err) {
       if (!(err instanceof ApiError)) throw err
       if (err.kind === "forbidden")
-        set({ ...initial(), phase: "forbidden", conn: "down" })
-      else if (err.kind === "expired") set({ phase: "expired", conn: "down" })
+        set({
+          ...initial(),
+          phase: "forbidden",
+          conn: "down",
+          reason: err.reason,
+        })
+      else if (err.kind === "expired")
+        set({ phase: "expired", conn: "down", reason: err.reason })
       else if (err.kind === "offline") set({ conn: "down" })
       throw err
     }
@@ -114,9 +122,13 @@ export function createController({
       return () => subs.delete(fn)
     },
 
-    /** Actions need a live stream: without one the screen may be out of date. */
+    /**
+     * Session actions need a live stream: without one the screen may be out of date. Approvals and
+     * enrolment read nothing from it, so a stream that is down must not stop them.
+     */
     canAct() {
-      return s.phase === "ready" && s.conn === "live" && !s.busy
+      const alone = s.route.name === "approval" || s.route.name === "enroll"
+      return s.phase === "ready" && !s.busy && (s.conn === "live" || alone)
     },
 
     async boot() {
@@ -137,10 +149,16 @@ export function createController({
       if (start.startsWith("a_")) await self.openApproval(start.slice(2))
       else if (start) await self.open(start)
       stream = makeStream({
-        onState: (state, why) => {
-          if (why === "expired") return set({ phase: "expired", conn: "down" })
+        onState: (state, why, reason) => {
+          if (why === "expired")
+            return set({ phase: "expired", conn: "down", reason })
           if (why === "forbidden")
-            return set({ ...initial(), phase: "forbidden", conn: "down" })
+            return set({
+              ...initial(),
+              phase: "forbidden",
+              conn: "down",
+              reason,
+            })
           set({ conn: state })
           if (state === "live" && wasLive) later()
           if (state === "live") wasLive = true

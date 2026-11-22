@@ -110,6 +110,7 @@ describe("parseConfig channels", () => {
     assert.deepEqual(opts(c, "telegram"), {
       token: { env: "TG" },
       chatId: "-100123",
+      operator: undefined,
       apiBase: "https://api.telegram.org",
       statusCard: true,
       draft: false,
@@ -126,6 +127,26 @@ describe("parseConfig channels", () => {
     assert.equal(opts(d, "telegram").chatId, "42")
   })
 
+  it("reads telegram's operator as a user id, and refuses anything else", () => {
+    const ok = (operator: unknown) =>
+      parseConfig({
+        channels: { telegram: { token: { env: "TG" }, operator } },
+      })
+    assert.equal(
+      opts(ok("7632612635") as Config, "telegram").operator,
+      "7632612635",
+    )
+    assert.equal(
+      opts(ok(7632612635) as Config, "telegram").operator,
+      "7632612635",
+    )
+    for (const bad of ["abc", "-5", "1.5", true, {}])
+      assert.match(
+        (ok(bad) as { error: string }).error,
+        /operator must be a numeric Telegram user id/,
+      )
+  })
+
   it("reads telegram's statusCard, notify and icons, and refuses bad ones", () => {
     const c = parseConfig({
       channels: {
@@ -140,6 +161,7 @@ describe("parseConfig channels", () => {
     assert.deepEqual(opts(c, "telegram"), {
       token: { env: "TG" },
       chatId: undefined,
+      operator: undefined,
       apiBase: "https://api.telegram.org",
       statusCard: false,
       draft: false,

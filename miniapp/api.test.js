@@ -202,3 +202,155 @@ describe("Stream", () => {
     assert.deepEqual(log, ["down:expired"])
   })
 })
+
+describe("a WebView without async iteration on a body", () => {
+  /** A response whose body has getReader and nothing else, like an older iOS WebView. */
+  const readerOnly = (chunks, { error } = {}) => {
+    const spy = { cancelled: false }
+    const queue = chunks.map((c) => enc.encode(c))
+    const body = {
+      getReader: () => ({
+        read: async () => {
+          if (queue.length > 0) return { done: false, value: queue.shift() }
+          if (error) throw error
+          return { done: true }
+        },
+        cancel: async () => void (spy.cancelled = true),
+      }),
+    }
+    return { spy, res: { ok: true, status: 200, body } }
+  }
+
+  it("yields events and cancels the request when the loop ends", async () => {
+    const { spy, res } = readerOnly([
+      ": ok\n\n",
+      "id: 1\nevent: a\ndata: {}\n\n",
+    ])
+    assert.equal(res.body[Symbol.asyncIterator], undefined)
+    const api = new Api({ initData: "x", fetch: async () => res })
+    const got = []
+    for await (const e of api.events()) got.push(e.type)
+    assert.deepEqual(got, ["open", "beat", "a"])
+    assert.equal(spy.cancelled, true)
+  })
+
+  it("cancels the request when the reader fails, so none is left open", async () => {
+    const { spy, res } = readerOnly([": ok\n\n"], {
+      error: new TypeError("terminated"),
+    })
+    const api = new Api({ initData: "x", fetch: async () => res })
+    await assert.rejects(async () => {
+      for await (const _ of api.events());
+    }, /terminated/)
+    assert.equal(spy.cancelled, true)
+  })
+
+  it("is live on the first bytes and delivers events through the Stream", async () => {
+    const { res } = readerOnly([": ok\n\n", "id: 4\nevent: a\ndata: {}\n\n"])
+    const log = []
+    const s = new Stream({
+      api: new Api({ initData: "x", fetch: async () => res }),
+      onState: (st) => log.push(st),
+      onEvent: (e) => log.push("event:" + e.id),
+      sleep: async () => s.stop(),
+    })
+    await s.loop()
+    assert.deepEqual(log, ["live", "event:4", "down"])
+  })
+})
+
+describe("Stream attempts", () => {
+  const rig = (fetches, extra = {}) => {
+    const log = []
+    const notes = []
+    let n = 0
+    const api = new Api({
+      initData: "x",
+      fetch: async (...a) => fetches[Math.min(n++, fetches.length - 1)](...a),
+    })
+    const s = new Stream({
+      api,
+      onState: (st) => log.push(st),
+      onEvent: () => {},
+      note: (e, d) => notes.push([e, d]),
+      sleep: async (ms) => void log.push("sleep:" + ms),
+      ...extra,
+    })
+    return { s, log, notes }
+  }
+
+  it("backs off from the first failure: an attempt that opens and then fails is not a good one", async () => {
+    const failing = async () => ({
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            throw new TypeError("terminated")
+          },
+          cancel: async () => {},
+        }),
+      },
+    })
+    const { s, log } = rig([failing])
+    let n = 0
+    s.sleep = async (ms) => {
+      log.push("sleep:" + ms)
+      if (++n === 4) s.stop()
+    }
+    await s.loop()
+    assert.deepEqual(
+      log.filter((x) => x.startsWith("sleep")),
+      ["sleep:1000", "sleep:2000", "sleep:5000", "sleep:10000"],
+    )
+    assert.ok(!log.includes("live"), "no byte came, so it was never live")
+  })
+
+  it("aborts the request of an attempt that ends on its own", async () => {
+    const signals = []
+    const ends = async (_u, o) => (signals.push(o.signal), sse(": ok\n\n"))
+    const { s } = rig([ends])
+    s.sleep = async () => s.stop()
+    await s.loop()
+    assert.equal(signals[0].aborted, true)
+  })
+
+  it("drops an attempt whose headers came and whose bytes did not", async () => {
+    const mute = async (_u, o) =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            o.signal.addEventListener("abort", () =>
+              c.error(new Error("aborted")),
+            )
+          },
+        }),
+      )
+    const { s, log } = rig([mute], { firstByteMs: 20 })
+    s.sleep = async (ms) => {
+      log.push("sleep:" + ms)
+      s.stop()
+    }
+    await s.loop()
+    assert.deepEqual(log, ["down", "sleep:1000"])
+  })
+
+  it("reports each step with the error name, never a credential", async () => {
+    const { s, notes } = rig([async () => reply(401, { error: "no_operator" })])
+    await s.loop()
+    assert.deepEqual(
+      notes.map(([e]) => e),
+      ["stream_error"],
+    )
+    assert.equal(notes[0][1].reason, "no_operator")
+    assert.equal(notes[0][1].status, 401)
+    assert.ok(!JSON.stringify(notes).includes("hash"))
+    const ok = rig([async () => sse(": ok\n\n")])
+    ok.s.sleep = async () => ok.s.stop()
+    await ok.s.loop()
+    assert.deepEqual(
+      ok.notes.map(([e]) => e),
+      ["stream_open", "stream_live", "stream_end"],
+    )
+  })
+})

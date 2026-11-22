@@ -9,7 +9,7 @@ import type { Host } from "../bridge.ts"
 import type { Config } from "../config.ts"
 import { signInitData } from "../link/initdata.ts"
 import { Actions } from "./actions.ts"
-import { CSP } from "./app.ts"
+import { CSP, TELEGRAM_SDK } from "./app.ts"
 import { EventRing, handler, startApi, type ApiDeps } from "./api.ts"
 import { TokenStore } from "./auth.ts"
 import { Views } from "./views.ts"
@@ -153,19 +153,19 @@ describe("init data through the relay link", () => {
     }
   })
 
-  it("refuses a tampered hash, a stale date and a wrong bot with 401 and no body", async () => {
+  it("refuses a tampered hash, a stale date and a wrong bot with 401 and a reason", async () => {
     const r = await rig()
     try {
       const bad = [
-        init().replace(/hash=[0-9a-f]{4}/, "hash=0000"),
-        init({ age: 7200 }),
-        init({ token: "999:other" }),
-        "user=1",
+        [init().replace(/hash=[0-9a-f]{4}/, "hash=0000"), "bad_signature"],
+        [init({ age: 7200 }), "too_old"],
+        [init({ token: "999:other" }), "bad_signature"],
+        ["user=1", "malformed"],
       ]
-      for (const s of bad) {
+      for (const [s, reason] of bad) {
         const res = await fetch(r.url + "/v1/meta", { headers: tma(s) })
         assert.equal(res.status, 401)
-        assert.equal(await res.text(), "")
+        assert.deepEqual(await res.json(), { error: reason })
       }
     } finally {
       await r.close()
@@ -230,7 +230,7 @@ describe("init data through the relay link", () => {
 })
 
 describe("the app files", () => {
-  it("serves the page without credentials, with a policy that allows no outside script", async () => {
+  it("serves the page without credentials, with a policy that allows Telegram's script and no other outside one", async () => {
     const r = await rig()
     try {
       const res = await fetch(r.url + "/app/")
@@ -238,8 +238,9 @@ describe("the app files", () => {
       assert.match(res.headers.get("content-type") ?? "", /text\/html/)
       const csp = res.headers.get("content-security-policy") ?? ""
       assert.equal(csp, CSP)
-      assert.match(csp, /script-src 'self'(;|$)/)
-      assert.doesNotMatch(csp, /https?:\/\/(?!web|webk|webz)/)
+      assert.match(csp, /script-src 'self' https:\/\/telegram\.org(;|$)/)
+      assert.doesNotMatch(csp, /https?:\/\/(?!web|webk|webz|telegram\.org)/)
+      assert.doesNotMatch(csp, /unsafe|\*/)
       assert.match(csp, /frame-ancestors https:\/\/web\.telegram\.org/)
       assert.equal(res.headers.get("x-content-type-options"), "nosniff")
       assert.equal((await fetch(r.url + "/app/app.js")).status, 200)
@@ -284,7 +285,14 @@ describe("the app files", () => {
     for (const f of await readdir(dir)) {
       if (!/\.(html|js|css)$/.test(f) || /\.test\./.test(f)) continue
       const text = await readFile(new URL(f, dir), "utf8")
-      assert.doesNotMatch(text, /(src|href)=["']https?:/, f)
+      const outside = [
+        ...text.matchAll(/(?:src|href)=["'](https?:[^"']*)/g),
+      ].map((m) => m[1])
+      assert.deepEqual(
+        outside,
+        f === "index.html" ? [TELEGRAM_SDK] : [],
+        "the only outside file is Telegram's script, in the page",
+      )
       assert.doesNotMatch(text, /@import|url\(\s*["']?https?:/, f)
       assert.doesNotMatch(text, /import\(?\s*["']https?:/, f)
     }
@@ -344,3 +352,82 @@ describe("what the app reads", () => {
     }
   })
 })
+
+describe("the app's diagnostic lines", () => {
+  const post = (
+    r: Awaited<ReturnType<typeof rig>>,
+    body: unknown,
+    headers = tma(init()),
+  ) =>
+    fetch(r.url + "/v1/log", {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+  it("takes a line with credentials, writes it as app_<event> with its data, and nothing else", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "oob-log-"))
+    const file = join(dir, "bridge.log")
+    const was = process.env.OPENCODE_OOB_BRIDGE_LOG
+    process.env.OPENCODE_OOB_BRIDGE_LOG = file
+    const r = await rig()
+    try {
+      const res = await post(r, {
+        event: "stream_error",
+        data: {
+          name: "TypeError",
+          bytes: false,
+          leak: "hash=" + "0".repeat(64),
+        },
+      })
+      assert.equal(res.status, 200)
+      const text = await waitFor(async () => {
+        const s = await readFile(file, "utf8").catch(() => "")
+        return s.includes("app_stream_error") ? s : undefined
+      })
+      const line = JSON.parse(text.trim().split("\n").pop() ?? "{}")
+      assert.equal(line.event, "app_stream_error")
+      assert.deepEqual(line.data, { name: "TypeError", bytes: false })
+      assert.ok(!text.includes("hash="))
+    } finally {
+      if (was === undefined) delete process.env.OPENCODE_OOB_BRIDGE_LOG
+      else process.env.OPENCODE_OOB_BRIDGE_LOG = was
+      await r.close()
+    }
+  })
+
+  it("refuses a line without credentials, and a body that is not a line", async () => {
+    const r = await rig()
+    try {
+      assert.equal((await post(r, { event: "x" }, {})).status, 401)
+      assert.equal((await post(r, { event: "Bad Name" })).status, 400)
+      assert.equal((await post(r, { nope: 1 })).status, 400)
+    } finally {
+      await r.close()
+    }
+  })
+
+  it("answers 429 after thirty lines in a minute", async () => {
+    const r = await rig()
+    try {
+      for (let i = 0; i < 30; i++)
+        assert.equal((await post(r, { event: "x" })).status, 200)
+      assert.equal((await post(r, { event: "x" })).status, 429)
+    } finally {
+      await r.close()
+    }
+  })
+})
+
+async function waitFor<T>(
+  fn: () => Promise<T | undefined>,
+  ms = 2000,
+): Promise<T> {
+  const end = Date.now() + ms
+  for (;;) {
+    const v = await fn()
+    if (v !== undefined) return v
+    if (Date.now() > end) throw new Error("timed out")
+    await new Promise((ok) => setTimeout(ok, 20))
+  }
+}

@@ -31,6 +31,8 @@
     // "telegram": {
     //   "token": { "command": ["pass", "show", "telegram/opencode-bot"] },
     //   // "chatId": 123456789,
+    //   // Your Telegram user id, if pairing stored none (a group paired long ago).
+    //   // "operator": 123456789,
     //   // In a forum group: one pinned status card per session topic.
     //   // "statusCard": true,
     //   // Session-end pushes. "finished" is true only when statusCard is false.

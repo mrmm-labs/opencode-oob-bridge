@@ -6,6 +6,7 @@ import {
   hhmm,
   nameOf,
   permissionChoices,
+  refusalText,
   stateLabel,
 } from "./format.js"
 import * as F from "./form.js"
@@ -51,7 +52,10 @@ const unavailable = (f) =>
 
 export function render(state, ctl, now) {
   const { phase } = state
-  const body = phase === "ready" ? screen(state, ctl, now) : notice(phase, ctl)
+  const body =
+    phase === "ready"
+      ? screen(state, ctl, now)
+      : notice(phase, ctl, state.reason)
   return h(
     "div",
     { class: "app" },
@@ -94,16 +98,19 @@ const banner = (state) =>
     state.updatedAt ? " Last update " + hhmm(state.updatedAt) + "." : "",
   )
 
-function notice(phase, ctl) {
-  const text = {
-    loading: "Loading…",
-    nolaunch:
-      "Open this app from Telegram: it has no way to know who you are here.",
-    expired:
-      "This view has expired. Close it and open the app again from Telegram.",
-    forbidden: "Not authorised. This app is for the person who set up the bot.",
-    offline: "The Mac cannot be reached. Check that it is awake and online.",
-  }[phase]
+function notice(phase, ctl, reason) {
+  const text =
+    refusalText(reason) ??
+    {
+      loading: "Loading…",
+      nolaunch:
+        "Open this app from Telegram: it has no way to know who you are here.",
+      expired:
+        "This view has expired. Close it and open the app again from Telegram.",
+      forbidden:
+        "Not authorised. This app is for the person who set up the bot.",
+      offline: "The Mac cannot be reached. Check that it is awake and online.",
+    }[phase]
   return h(
     "section",
     { class: "card center" },

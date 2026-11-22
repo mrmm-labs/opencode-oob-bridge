@@ -182,17 +182,18 @@ say who answered ("Answered from telegram: Yes", "Answered in the TUI").
 | `actionAuth`                | `true`     | Put the token in each button so buttons work on an auth-protected server.             |
 | `enabled`                   | `true`     | Set `false` to configure it without using it.                                         |
 
-| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                                                                   |
-| ------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                                                               |
-| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                                                                   |
-| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                                                             |
-| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                                                                  |
-| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                                                             |
-| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                                                                       |
-| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                                                                   |
-| `reactions`                     | built-in map                           | The reaction of each stage: `{ received, queued, sent, steered, done, failed, ignored, held, default, agents: { "<agent>": "<emoji>" } }`. See [Chat from Telegram](#chat-from-telegram). |
-| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                                                                     |
+| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                                                                           |
+| ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                                                                       |
+| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                                                                           |
+| `operator`                      | none                                   | Your Telegram user id, for a bridge paired to a group before the id was stored. Pairing stores it, and the stored id wins. Without either, the Mini App refuses every request with `no_operator`. |
+| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                                                                     |
+| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                                                                          |
+| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                                                                     |
+| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                                                                               |
+| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                                                                           |
+| `reactions`                     | built-in map                           | The reaction of each stage: `{ received, queued, sent, steered, done, failed, ignored, held, default, agents: { "<agent>": "<emoji>" } }`. See [Chat from Telegram](#chat-from-telegram).         |
+| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                                                                             |
 
 Which channels are on is also a TUI setting (`/oob channel <name> on|off`). The choice is stored in
 `settings.json` in the state directory and layered over the config file, which the plugin never
@@ -787,20 +788,21 @@ in the data directory (mode 0600), and replaced with `/oob core rotate`: the old
 at once. A request without a valid token gets `401` with no body. Being on the tailnet is a
 network path, not a login.
 
-| Route                                   | Purpose                                                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `GET /v1/meta`                          | API version, bridge version, which actions and fields work now                               |
-| `GET /v1/status`                        | Owner, away state, channels, open prompts                                                    |
-| `GET /v1/sessions`                      | Session summaries, newest first (`limit`, `offset`)                                          |
-| `GET /v1/sessions/{id}`                 | Summary, conversation tail, diff summary, questions, permissions                             |
-| `GET /v1/sessions/{id}/messages`        | Conversation tail (`limit`, `before`)                                                        |
-| `GET /v1/sessions/{id}/diff`            | Diff summary; the patch with `Accept: text/x-diff`                                           |
-| `POST /v1/sessions`                     | Start a session in a `chat.projects` folder                                                  |
-| `POST /v1/sessions/{id}/actions/{name}` | `answer`, `resume`, `stop`, `prompt`, `rename`, `compact`, `model`, `agent`, `watch`, `chat` |
-| `GET /v1/events`                        | Server-sent events, with `Last-Event-ID` resume                                              |
-| `GET /v1/options`                       | Models with variants, agents and the names of `chat.projects` (never a folder)               |
-| `GET /v1/digest`                        | The digest text now, without marking its period as covered                                   |
-| `POST /v1/overnight/end`                | End the overnight plan                                                                       |
+| Route                                   | Purpose                                                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `GET /v1/meta`                          | API version, bridge version, which actions and fields work now                                             |
+| `GET /v1/status`                        | Owner, away state, channels, open prompts                                                                  |
+| `GET /v1/sessions`                      | Session summaries, newest first (`limit`, `offset`)                                                        |
+| `GET /v1/sessions/{id}`                 | Summary, conversation tail, diff summary, questions, permissions                                           |
+| `GET /v1/sessions/{id}/messages`        | Conversation tail (`limit`, `before`)                                                                      |
+| `GET /v1/sessions/{id}/diff`            | Diff summary; the patch with `Accept: text/x-diff`                                                         |
+| `POST /v1/sessions`                     | Start a session in a `chat.projects` folder                                                                |
+| `POST /v1/sessions/{id}/actions/{name}` | `answer`, `resume`, `stop`, `prompt`, `rename`, `compact`, `model`, `agent`, `watch`, `chat`               |
+| `GET /v1/events`                        | Server-sent events, with `Last-Event-ID` resume                                                            |
+| `GET /v1/options`                       | Models with variants, agents and the names of `chat.projects` (never a folder)                             |
+| `GET /v1/digest`                        | The digest text now, without marking its period as covered                                                 |
+| `POST /v1/log`                          | One diagnostic line from the app, `{ event, data }`: logged as `app_<event>`, 30 a minute, never init data |
+| `POST /v1/overnight/end`                | End the overnight plan                                                                                     |
 
 A field the bridge cannot fill is returned as `{"unavailable": "<why>"}`, never as an empty value;
 a field that is filled says which `source` it came from. Text passes the secret filter and
@@ -821,7 +823,7 @@ A page that opens inside Telegram, for what a chat does badly: browsing sessions
 - **Through the relay link:** a request that arrives on the relay link is accepted with init data only: a bearer token sent that way is refused, and a direct client on the tailnet uses the bearer token only. After 10 failed authentications a minute from one client address it gets `429` for five minutes.
 - **Permissions:** the buttons follow `permissions.remote`; with it off the app shows the permission without buttons.
 - **Offline:** the page follows the event stream and shows a banner with the time of the last update when it drops. Every action is disabled until it is back.
-- **No third party:** no script, style or font from another origin; the policy allows framing by Telegram's web clients only.
+- **One outside script:** Telegram's own `telegram-web-app.js`, which the app uses for Face ID (its biometric manager) and falls back from when it does not load. No other script, style or font from another origin; the policy allows framing by Telegram's web clients only.
 
 Setup, with a public hostname that serves `/app/` and `/v1/` to the bridge (a relay, or any reverse proxy), is in [`miniapp/README.md`](miniapp/README.md).
 

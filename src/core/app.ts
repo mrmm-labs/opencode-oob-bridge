@@ -17,10 +17,13 @@ const TELEGRAM = [
   "https://webz.telegram.org",
 ]
 
-/** No script, style or font from another origin; framing only by Telegram's web clients. */
+/** Telegram's own script, the only one from another origin: it is what a Mini App uses to reach the client. */
+export const TELEGRAM_SDK = "https://telegram.org/js/telegram-web-app.js"
+
+/** No style or font from another origin, no script but Telegram's; framing only by Telegram's web clients. */
 export const CSP = [
   "default-src 'none'",
-  "script-src 'self'",
+  "script-src 'self' https://telegram.org",
   "style-src 'self'",
   "img-src 'self' data:",
   "connect-src 'self'",

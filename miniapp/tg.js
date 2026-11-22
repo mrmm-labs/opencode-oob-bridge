@@ -1,5 +1,7 @@
-// Launch parameters, theme and the two events the app sends to Telegram. Telegram's own script is
-// not loaded: it would be a third-party script, and everything it gives the app is in the URL hash.
+// Launch parameters, theme and the events the app sends to Telegram. Telegram's own script
+// (telegram-web-app.js) is loaded by the page, and used where it is there: the biometric manager is
+// the one thing the page cannot do reliably by hand. Without it the page speaks the event protocol
+// itself, and everything it needs at launch is in the URL hash.
 
 const START = /^[A-Za-z0-9_-]{1,64}$/
 
@@ -17,7 +19,23 @@ export function launch(loc = globalThis.location) {
     initData: hash.get("tgWebAppData") || "",
     theme,
     start: START.test(start) ? start : "",
+    version: hash.get("tgWebAppVersion") || "",
+    platform: hash.get("tgWebAppPlatform") || "",
   }
+}
+
+let reporter = () => {}
+
+/** Where diagnostic lines go: the page sets it to the bridge's log. It must never be given a credential. */
+export function setReporter(fn) {
+  reporter = fn
+}
+
+/** One short diagnostic line. */
+export function note(event, data = {}) {
+  try {
+    reporter(event, data)
+  } catch {}
 }
 
 /** Tells Telegram the app is ready and may use the whole sheet. */
@@ -105,7 +123,13 @@ export function applyTheme(t, root = globalThis.document.documentElement) {
  * `Telegram.WebView.receiveEvent` in the native ones, which this defines.
  */
 export function followTheme(win = globalThis) {
-  const on = (type, data) => {
+  const on = (type, raw) => {
+    let data = raw
+    if (typeof raw === "string") {
+      try {
+        data = JSON.parse(raw)
+      } catch {}
+    }
     if (type === "theme_changed" && data?.theme_params)
       applyTheme(data.theme_params, win.document.documentElement)
     for (const f of listeners) f(type, data)
@@ -116,7 +140,33 @@ export function followTheme(win = globalThis) {
       on(m?.eventType, m?.eventData)
     } catch {}
   })
-  win.Telegram = { ...win.Telegram, WebView: { receiveEvent: on } }
+  if (sdk(win)) {
+    // Telegram's script owns the receive hooks: ask it for the events instead of replacing them.
+    win.Telegram.WebApp.onEvent?.("themeChanged", () =>
+      applyTheme(
+        win.Telegram.WebApp.themeParams ?? {},
+        win.document.documentElement,
+      ),
+    )
+    return
+  }
+  hooks(win, on)
+}
+
+/** Telegram's script, when the page loaded it. */
+const sdk = (win) => (win.Telegram?.WebApp ? win.Telegram.WebApp : undefined)
+
+/**
+ * The native clients answer by calling one of these. Telegram's own script defines all three, so
+ * the page does the same: a reply that arrives on a name nobody defined is lost.
+ */
+function hooks(win, on) {
+  win.Telegram = {
+    ...win.Telegram,
+    WebView: { ...win.Telegram?.WebView, receiveEvent: on },
+  }
+  win.TelegramGameProxy = { ...win.TelegramGameProxy, receiveEvent: on }
+  win.TelegramGameProxy_receiveEvent = on
 }
 
 const biometryInfo = (d) => ({
@@ -136,21 +186,24 @@ export function biometric(
   win = globalThis,
   { timeoutMs = 3000, authMs = 60_000 } = {},
 ) {
+  const manager = () => sdk(win)?.BiometricManager
   const ask = (event, data, reply, ms = timeoutMs) =>
     new Promise((resolve) => {
       const off = onEvent((type, d) => {
         if (type !== reply) return
         clearTimeout(timer)
         off()
+        note("biometric_reply", { event: reply })
         resolve(d ?? {})
       })
       const timer = setTimeout(() => {
         off()
+        note("biometric_timeout", { event, via: "events" })
         resolve(undefined)
       }, ms)
       post(win, event, data)
     })
-  return {
+  const byEvents = {
     async info() {
       return biometryInfo(
         await ask("web_app_biometry_get_info", {}, "biometry_info_received"),
@@ -187,6 +240,101 @@ export function biometric(
         "biometry_token_updated",
       )
       return d?.status === "updated"
+    },
+  }
+  // Each call picks at the time it is made, so a page that loads the script late still uses it.
+  const pick = () => {
+    const bm = manager()
+    return bm ? viaManager(bm, { timeoutMs, authMs }) : byEvents
+  }
+  return {
+    info: () => pick().info(),
+    requestAccess: (reason) => pick().requestAccess(reason),
+    authenticate: (reason) => pick().authenticate(reason),
+    saveToken: (token) => pick().saveToken(token),
+  }
+}
+
+/** Telegram's own biometric manager: the same four calls, each with a limit, none able to throw. */
+function viaManager(bm, { timeoutMs, authMs }) {
+  const call = (name, start, ms) =>
+    new Promise((resolve) => {
+      let settled = false
+      const end = (v) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(v)
+      }
+      const timer = setTimeout(() => {
+        note("biometric_timeout", { call: name, via: "sdk" })
+        end(undefined)
+      }, ms)
+      try {
+        start((...args) => end(args))
+      } catch (err) {
+        note("biometric_error", {
+          call: name,
+          error: String(err?.message ?? err).slice(0, 100),
+        })
+        end(undefined)
+      }
+    })
+  const init = async () => {
+    if (bm.isInited !== true)
+      await call("init", (done) => bm.init(() => done()), timeoutMs)
+  }
+  const view = () => ({
+    available: bm.isBiometricAvailable === true,
+    type: bm.biometricType,
+    accessGranted: bm.isAccessGranted === true,
+    tokenSaved: bm.isBiometricTokenSaved === true,
+  })
+  return {
+    async info() {
+      await init()
+      const i = view()
+      note("biometric_info", {
+        via: "sdk",
+        inited: bm.isInited === true,
+        available: i.available,
+        type: i.type ?? "",
+        granted: i.accessGranted,
+        saved: i.tokenSaved,
+      })
+      return i
+    },
+    async requestAccess(reason) {
+      await init()
+      const r = await call(
+        "access",
+        (done) => bm.requestAccess({ reason }, (granted) => done(granted)),
+        authMs,
+      )
+      const i = view()
+      note("biometric_access", { granted: i.accessGranted || r?.[0] === true })
+      return { ...i, accessGranted: i.accessGranted || r?.[0] === true }
+    },
+    async authenticate(reason) {
+      await init()
+      const r = await call(
+        "auth",
+        (done) => bm.authenticate({ reason }, (ok, token) => done(ok, token)),
+        authMs,
+      )
+      const token = r?.[0] === true && typeof r[1] === "string" ? r[1] : ""
+      note("biometric_auth", { ok: r?.[0] === true, token: token !== "" })
+      return token || undefined
+    },
+    async saveToken(token) {
+      await init()
+      const r = await call(
+        "token",
+        (done) => bm.updateBiometricToken(token, (applied) => done(applied)),
+        timeoutMs,
+      )
+      note("biometric_token", { applied: r?.[0] === true })
+      return r?.[0] === true
     },
   }
 }

@@ -12,13 +12,17 @@ const APP = {
   link: "https://t.me/examplebot/app",
 }
 
-async function rig(chatId: string, launch = true) {
+async function rig(
+  chatId: string,
+  launch = true,
+  who: { operator?: string; operatorFallback?: string } = { operator: "42" },
+) {
   const tg = await fakeTelegram()
   const dir = await mkdtemp(join(tmpdir(), "oob-tgapp-"))
   const channel = new TelegramConnector({
     token: async () => tg.token,
     chatId,
-    operator: "42",
+    ...who,
     apiBase: tg.url,
     offsetFile: join(dir, "offset.json"),
     backoff: { min: 10, max: 40 },
@@ -109,7 +113,7 @@ describe("Telegram Mini App launch", () => {
     await r.done()
   })
 
-  it("sets the menu button in a private chat only, once", async () => {
+  it("sets the menu button in the private chat, once", async () => {
     const r = await rig("42")
     const call = await r.tg.waitFor(() => r.tg.of("setChatMenuButton")[0])
     assert.deepEqual(call.body.menu_button, {
@@ -121,8 +125,44 @@ describe("Telegram Mini App launch", () => {
     await r.channel.send(ask())
     assert.equal(r.tg.of("setChatMenuButton").length, 1)
     await r.done()
+  })
+
+  it("sets the menu button in the operator's own chat when paired to a group, once", async () => {
     const g = await rig("-100777")
-    await new Promise((ok) => setTimeout(ok, 100))
+    const call = await g.tg.waitFor(() => g.tg.of("setChatMenuButton")[0])
+    assert.equal(call.body.chat_id, 42)
+    assert.deepEqual(call.body.menu_button, {
+      type: "web_app",
+      text: "Open",
+      web_app: { url: APP.url },
+    })
+    await g.channel.send(ask())
+    await g.channel.send(ask("ses_2"))
+    assert.equal(g.tg.of("setChatMenuButton").length, 1)
+    await g.done()
+  })
+
+  it("takes the operator from the config file when pairing stored none", async () => {
+    const g = await rig("-100777", true, { operatorFallback: "77" })
+    const call = await g.tg.waitFor(() => g.tg.of("setChatMenuButton")[0])
+    assert.equal(call.body.chat_id, 77)
+    assert.equal(g.channel.operator(), "77")
+    await g.done()
+  })
+
+  it("prefers the id stored at pairing over the config file", async () => {
+    const g = await rig("-100777", true, {
+      operator: "42",
+      operatorFallback: "77",
+    })
+    const call = await g.tg.waitFor(() => g.tg.of("setChatMenuButton")[0])
+    assert.equal(call.body.chat_id, 42)
+    await g.done()
+  })
+
+  it("sets no menu button for a group when the operator is unknown", async () => {
+    const g = await rig("-100777", true, {})
+    await new Promise((ok) => setTimeout(ok, 150))
     assert.equal(g.tg.of("setChatMenuButton").length, 0)
     await g.done()
   })

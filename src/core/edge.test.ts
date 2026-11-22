@@ -77,7 +77,7 @@ describe("a request through the relay link", () => {
       headers: { ...via(), authorization: "Bearer " + BEARER },
     })
     assert.equal(res.status, 401)
-    assert.equal(await res.text(), "")
+    assert.deepEqual(await res.json(), { error: "missing" })
     const direct = await fetch(r.url + "/v1/meta", {
       headers: { authorization: "Bearer " + BEARER },
     })
@@ -119,15 +119,60 @@ describe("a request through the relay link", () => {
     await r.done()
   })
 
-  it("refuses everything while the operator or the bot token is not known", async () => {
-    for (const o of [{ operator: undefined }, { token: undefined }]) {
+  it("refuses everything while the operator or the bot token is not known, and says which", async () => {
+    for (const [o, reason] of [
+      [{ operator: undefined }, "no_operator"],
+      [{ token: undefined }, "no_bot_token"],
+    ] as const) {
       const r = await rig(o)
       const res = await fetch(r.url + "/v1/meta", {
         headers: { ...via(), authorization: init(r.now()) },
       })
       assert.equal(res.status, 401)
+      assert.deepEqual(await res.json(), { error: reason })
       await r.done()
     }
+  })
+
+  it("does not count a refusal the bridge's own set-up causes towards the block", async () => {
+    const r = await rig({ operator: undefined })
+    for (let i = 0; i < 15; i++) {
+      const res = await fetch(r.url + "/v1/meta", {
+        headers: { ...via(), authorization: init(r.now()) },
+      })
+      assert.equal(res.status, 401)
+      await res.arrayBuffer()
+    }
+    await r.done()
+  })
+
+  it("names the reason of each refusal in the body, never the credential", async () => {
+    const r = await rig()
+    const why = async (authorization: string) => {
+      const res = await fetch(r.url + "/v1/meta", {
+        headers: { ...via(), authorization },
+      })
+      const text = await res.text()
+      assert.ok(!text.includes("hash"), "no credential in the body")
+      return [res.status, (JSON.parse(text) as { error: string }).error]
+    }
+    assert.deepEqual(
+      await why(init(r.now(), { user: JSON.stringify({ id: 7 }) })),
+      [403, "not_operator"],
+    )
+    assert.deepEqual(
+      await why(
+        init(r.now(), { auth_date: String(Math.floor(r.now() / 1000) - 7200) }),
+      ),
+      [401, "too_old"],
+    )
+    assert.deepEqual(await why(init(r.now(), {}, "999:OTHER")), [
+      401,
+      "bad_signature",
+    ])
+    assert.deepEqual(await why("tma nonsense"), [401, "malformed"])
+    assert.deepEqual(await why(""), [401, "missing"])
+    await r.done()
   })
 
   it("serves only /v1 and GET /healthz: /admin and the rest are 404", async () => {

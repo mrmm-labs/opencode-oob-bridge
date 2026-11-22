@@ -1,6 +1,6 @@
 # Telegram Mini App
 
-The static page the bridge serves under `/app/`. No build step: plain ES modules and one stylesheet. No dependency, no third-party script.
+The static page the bridge serves under `/app/`. No build step: plain ES modules and one stylesheet. No dependency. One script from another origin: Telegram's own `telegram-web-app.js`, for Face ID; the page works without it.
 
 ```
 index.html   the shell
