@@ -4,8 +4,15 @@
  * Everything that creates, replaces or deletes a key is a method here that only
  * the TUI reaches; neither the socket nor a chat can call them.
  */
-import { randomBytes } from "node:crypto"
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
+import { createHash, randomBytes } from "node:crypto"
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises"
 import { join } from "node:path"
 
 import { filterSecrets } from "../filter.ts"
@@ -119,13 +126,19 @@ const fail = (status: number, text: string): Res => ({
   body: { ok: false, text },
 })
 
+/** Kept in a file of the data directory, so the instance that serves the phone sees what the TUI's instance opened. The code is stored salted and hashed. */
 type Enrolment = {
   kind: "biometric" | "passkey"
-  code: string
+  salt: string
+  hash: string
   expiresAt: number
   tries: number
   challenge?: string
+  by: string
 }
+
+const codeHash = (salt: string, code: string) =>
+  createHash("sha256").update(salt).update(code).digest("hex")
 
 export class ApprovalService implements AppApprovals {
   readonly engine: Approvals
@@ -140,7 +153,8 @@ export class ApprovalService implements AppApprovals {
     reason: "approvals.enabled is not true",
   }
   private keychain: string | undefined
-  private enrolment: Enrolment | undefined
+  private enrolQueue: Promise<unknown> = Promise.resolve()
+  private readonly id = randomBytes(3).toString("hex")
 
   constructor(o: ServiceOptions) {
     this.o = o
@@ -258,27 +272,101 @@ export class ApprovalService implements AppApprovals {
   }
 
   /** Opens an enrolment of a phone: a code for 5 minutes, shown at the Mac. Only the TUI reaches it. */
-  openEnrolment(kind: Enrolment["kind"]): { code: string; expiresAt: number } {
+  async openEnrolment(
+    kind: Enrolment["kind"],
+  ): Promise<{ code: string; expiresAt: number }> {
     const code = base32(randomBytes(5))
     const expiresAt = (this.o.now?.() ?? Date.now()) + ENROL_MS
-    this.enrolment = { kind, code, expiresAt, tries: 0 }
+    const salt = randomBytes(8).toString("hex")
+    await this.saveEnrolment({
+      kind,
+      salt,
+      hash: codeHash(salt, code),
+      expiresAt,
+      tries: 0,
+      by: this.id,
+    })
+    log("enrol_opened", { kind, instance: this.id })
     return { code, expiresAt }
   }
 
+  private enrolFile(): string {
+    return join(this.o.dir, "approvals-enrolment.json")
+  }
+
+  private async loadEnrolment(): Promise<Enrolment | undefined> {
+    try {
+      const v = JSON.parse(
+        await readFile(this.enrolFile(), "utf8"),
+      ) as Enrolment
+      return (v.kind === "biometric" || v.kind === "passkey") &&
+        typeof v.salt === "string" &&
+        typeof v.hash === "string" &&
+        typeof v.expiresAt === "number" &&
+        typeof v.tries === "number"
+        ? v
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private async saveEnrolment(e: Enrolment | undefined): Promise<void> {
+    if (!e) {
+      await unlink(this.enrolFile()).catch(() => {})
+      return
+    }
+    await mkdir(this.o.dir, { recursive: true, mode: 0o700 })
+    const tmp = this.enrolFile() + "." + this.id + ".tmp"
+    await writeFile(tmp, JSON.stringify(e), { mode: 0o600 })
+    await rename(tmp, this.enrolFile())
+  }
+
   /** What the Mini App sends to enrol: the code from the Mac, and for a passkey the credential in a second call. */
-  async enrol(b: Record<string, unknown>): Promise<Res> {
-    const e = this.enrolment
+  enrol(b: Record<string, unknown>): Promise<Res> {
+    const run = this.enrolQueue.then(() => this.enrolNow(b))
+    this.enrolQueue = run.catch(() => {})
+    return run
+  }
+
+  private async enrolNow(b: Record<string, unknown>): Promise<Res> {
+    const res = await this.enrolStep(b)
+    const body = res.body as { ok?: boolean }
+    log("enrol_result", {
+      kind: typeof b.kind === "string" ? b.kind : "",
+      outcome: res.status === 200 ? "ok" : "refused",
+      status: res.status,
+      reason: this.enrolReason,
+      instance: this.id,
+      opened_by: this.enrolOpenedBy,
+      step: body.ok && b.credential === undefined ? "begin" : "done",
+    })
+    return res
+  }
+
+  private enrolReason = ""
+  private enrolOpenedBy = ""
+
+  private async enrolStep(b: Record<string, unknown>): Promise<Res> {
+    const e = await this.loadEnrolment()
     const now = this.o.now?.() ?? Date.now()
+    this.enrolOpenedBy = e?.by ?? ""
     if (!e || now >= e.expiresAt) {
-      this.enrolment = undefined
+      this.enrolReason = e ? "expired" : "none-open"
+      if (e) await this.saveEnrolment(undefined)
       return fail(409, "Nothing to enrol: open it at the Mac first.")
     }
+    this.enrolReason = "ok"
     const typed =
       typeof b.code === "string"
         ? b.code.toUpperCase().replace(/[^A-Z2-7]/g, "")
         : ""
-    if (b.kind !== e.kind || !same(typed, e.code)) {
-      if (++e.tries >= ENROL_TRIES) this.enrolment = undefined
+    if (b.kind !== e.kind || !same(codeHash(e.salt, typed), e.hash)) {
+      this.enrolReason = b.kind !== e.kind ? "wrong-kind" : "wrong-code"
+      if (++e.tries >= ENROL_TRIES) {
+        this.enrolReason = "too-many-tries"
+        await this.saveEnrolment(undefined)
+      } else await this.saveEnrolment(e)
       return fail(403, "That code is not right.")
     }
     const en = await this.enrolled()
@@ -288,22 +376,26 @@ export class ApprovalService implements AppApprovals {
       try {
         await this.saveEnrolled(en)
       } catch {
+        this.enrolReason = "keychain-refused"
         return fail(
           503,
           "The Keychain refused: answer its prompt at the Mac and try again.",
         )
       }
-      this.enrolment = undefined
+      await this.saveEnrolment(undefined)
       return {
         status: 200,
         body: { ok: true, device: d.id, token: d.id + "." + d.secret },
       }
     }
     const rp = this.rp()
-    if (!rp)
+    if (!rp) {
+      this.enrolReason = "no-miniapp-url"
       return fail(409, "miniApp.url is not set: a passkey needs its address.")
+    }
     if (b.credential === undefined) {
       e.challenge ??= newNonce()
+      await this.saveEnrolment(e)
       return {
         status: 200,
         body: {
@@ -321,17 +413,21 @@ export class ApprovalService implements AppApprovals {
           credential: b.credential,
         })
       : undefined
-    if (!c) return fail(422, "The passkey was not accepted.")
+    if (!c) {
+      this.enrolReason = "passkey-rejected"
+      return fail(422, "The passkey was not accepted.")
+    }
     en.passkeys[c.id] = c.publicKey
     try {
       await this.saveEnrolled(en)
     } catch {
+      this.enrolReason = "keychain-refused"
       return fail(
         503,
         "The Keychain refused: answer its prompt at the Mac and try again.",
       )
     }
-    this.enrolment = undefined
+    await this.saveEnrolment(undefined)
     return { status: 200, body: { ok: true } }
   }
 

@@ -685,7 +685,7 @@ export class Control {
             "Set miniApp.url first: Face ID and passkeys are asked in the Mini App",
           )
         const kind = action === "enroll-biometric" ? "biometric" : "passkey"
-        const r = svc.openEnrolment(kind)
+        const r = await svc.openEnrolment(kind)
         return this.done({
           ok: true,
           text: `Enrolment open for 5 minutes: ${r.code}`,
