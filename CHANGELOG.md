@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.3...v0.40.0) (2026-11-22)
+
+
+### Features
+
+* a form OpenCode drops is withdrawn, not answered ([#145](https://github.com/mrmm-labs/opencode-oob-bridge/issues/145)) ([f3cd272](https://github.com/mrmm-labs/opencode-oob-bridge/commit/f3cd272763eac9077b55b6a8b55d8440d470eb18))
+* one-tap questions in chats, the rest in the app; remove the stepper ([#143](https://github.com/mrmm-labs/opencode-oob-bridge/issues/143)) ([94ea294](https://github.com/mrmm-labs/opencode-oob-bridge/commit/94ea294562b44645acc3c428d5213b7ec9f205e1))
+
 ## [0.39.3](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.2...v0.39.3) (2026-11-22)
 
 
