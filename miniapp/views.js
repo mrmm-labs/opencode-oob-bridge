@@ -1169,6 +1169,22 @@ function approval(state, ctl) {
 
 function enroll(state, ctl) {
   const e = state.enrol
+  if (e?.ok)
+    return h(
+      "section",
+      null,
+      card(
+        "This phone is set up",
+        h("p", { class: "hint", role: "status" }, e.text),
+        e.device && h("p", { class: "hint" }, "Enrolled device: " + e.device),
+        h(
+          "p",
+          { class: "hint" },
+          "The code is used up. To add another phone, open a new one at the Mac.",
+        ),
+        button("Done", () => void ctl.go("list"), { kind: "primary" }),
+      ),
+    )
   const scanned = state.enrolCode
   if (scanned && drafts["enrol-code"] === undefined)
     drafts["enrol-code"] = scanned.replace(/^(.{4})(.+)$/, "$1-$2")

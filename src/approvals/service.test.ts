@@ -169,6 +169,36 @@ describe("enrolling across plugin instances", () => {
     assert.equal(again.challenge, first.challenge)
   })
 
+  it("Face ID is one call: the device is stored and its token returned, step done", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "oobb-log-"))
+    const was = process.env.OPENCODE_OOB_BRIDGE_LOG
+    process.env.OPENCODE_OOB_BRIDGE_LOG = join(dir, "bridge.log")
+    try {
+      const r = await rig()
+      const { code } = await r.svc.openEnrolment("biometric")
+      const out = await r.svc.enrol({ kind: "biometric", code })
+      assert.equal(out.status, 200)
+      const b = body(out)
+      assert.equal(Object.keys(r.held().biometric)[0], b.device)
+      assert.match(b.token, /^[^.]+\./)
+      let text = ""
+      for (let i = 0; i < 40 && !text.includes("enrol_result"); i++) {
+        await new Promise((ok) => setTimeout(ok, 50))
+        text = await readFile(join(dir, "bridge.log"), "utf8").catch(() => "")
+      }
+      const res = text
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l))
+        .find((l) => l.event === "enrol_result")
+      assert.equal(res.step, "done")
+      assert.equal((await r.svc.enrol({ kind: "biometric", code })).status, 409)
+    } finally {
+      if (was === undefined) delete process.env.OPENCODE_OOB_BRIDGE_LOG
+      else process.env.OPENCODE_OOB_BRIDGE_LOG = was
+    }
+  })
+
   it("logs the opening and the result with no code", async () => {
     const dir = await mkdtemp(join(tmpdir(), "oobb-log-"))
     const was = process.env.OPENCODE_OOB_BRIDGE_LOG

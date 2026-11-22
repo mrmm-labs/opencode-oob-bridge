@@ -322,9 +322,11 @@ export function createController({
 
     /** Enrols this phone with the code shown at the Mac. */
     async enroll(kind, code) {
-      if (s.enrol?.busy) return
-      const say2 = (text, ok = false) =>
-        set({ enrol: { busy: false, text, ok } })
+      if (s.enrol?.busy || s.enrol?.ok) return
+      const say2 = (text, ok = false, device) => {
+        set({ enrol: { busy: false, text, ok, kind, device } })
+        if (ok) toast(text)
+      }
       set({ enrol: { busy: true } })
       try {
         if (kind === "biometric") {
@@ -338,7 +340,7 @@ export function createController({
                 r.device +
                 " at the Mac and start again.",
             )
-          return say2("Face ID is set up on this phone.", true)
+          return say2("✅ This phone is set up for Face ID", true, r.device)
         }
         const begun = await guard(() => api.enrol({ kind, code }))
         if (!begun?.ok) return say2(begun?.text ?? "Not enrolled.")
@@ -348,7 +350,7 @@ export function createController({
           api.enrol({ kind, code, credential: made.credential }),
         )
         return done?.ok
-          ? say2("The passkey is set up.", true)
+          ? say2("✅ This phone is set up with a passkey", true)
           : say2(done?.text ?? "Not enrolled.")
       } catch (err) {
         say2(err instanceof ApiError ? say(err) : "The request failed.")
