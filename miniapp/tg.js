@@ -176,10 +176,13 @@ function hooks(win, on) {
 }
 
 const biometryInfo = (d) => ({
+  answered: d !== undefined,
   available: d?.available === true,
   type: d?.type,
+  accessRequested: d?.access_requested === true,
   accessGranted: d?.access_granted === true,
   tokenSaved: d?.token_saved === true,
+  deviceId: typeof d?.device_id === "string" && d.device_id !== "",
 })
 
 /**
@@ -291,10 +294,14 @@ function viaManager(bm, { timeoutMs, authMs }) {
       await call("init", (done) => bm.init(() => done()), timeoutMs)
   }
   const view = () => ({
+    answered: bm.isInited === true,
+    inited: bm.isInited === true,
     available: bm.isBiometricAvailable === true,
     type: bm.biometricType,
+    accessRequested: bm.isAccessRequested === true,
     accessGranted: bm.isAccessGranted === true,
     tokenSaved: bm.isBiometricTokenSaved === true,
+    deviceId: typeof bm.deviceId === "string" && bm.deviceId !== "",
   })
   return {
     async info() {
@@ -302,11 +309,13 @@ function viaManager(bm, { timeoutMs, authMs }) {
       const i = view()
       note("biometric_info", {
         via: "sdk",
-        inited: bm.isInited === true,
+        inited: i.inited,
         available: i.available,
         type: i.type ?? "",
+        requested: i.accessRequested,
         granted: i.accessGranted,
         saved: i.tokenSaved,
+        device: i.deviceId,
       })
       return i
     },

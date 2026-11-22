@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+  aboutLine,
+  isStale,
   ago,
   connection,
   diffClass,
@@ -9,6 +11,7 @@ import {
   parseStart,
   refusalText,
   stateLabel,
+  uptime,
 } from "./format.js"
 
 describe("format", () => {
@@ -117,5 +120,41 @@ describe("the start parameter", () => {
       "a_",
     ])
       assert.equal(parseStart(bad), undefined, String(bad))
+  })
+})
+
+describe("the version footer", () => {
+  const T = Date.UTC(2026, 10, 22, 12, 0, 0)
+
+  it("counts uptime in the two largest units", () => {
+    assert.equal(uptime(T - 40_000, T), "40s")
+    assert.equal(uptime(T - 5 * 60_000, T), "5m")
+    assert.equal(uptime(T - (3 * 3600 + 12 * 60) * 1000, T), "3h 12m")
+    assert.equal(uptime(T - (3 * 86_400 + 4 * 3600) * 1000, T), "3d 4h")
+    assert.equal(uptime(T + 5000, T), "0s")
+    assert.equal(uptime(undefined, T), "")
+  })
+
+  it("says the version and the uptime, and only the version when the start is unknown", () => {
+    assert.equal(
+      aboutLine("0.37.0", T - 90 * 60_000, T, "0.37.0-ab12cd34"),
+      "opencode-oob-bridge 0.37.0 · up 1h 30m · page 0.37.0-ab12cd34",
+    )
+    assert.equal(
+      aboutLine("0.37.0", undefined, T, "x"),
+      "opencode-oob-bridge 0.37.0 · page x",
+    )
+    assert.equal(
+      aboutLine(undefined, undefined, T, ""),
+      "opencode-oob-bridge unknown · page unstamped",
+    )
+  })
+
+  it("knows a page that is not the build the bridge serves", () => {
+    assert.equal(isStale("0.36.0-aaaa1111", "0.37.0-bbbb2222"), true)
+    assert.equal(isStale("", "0.37.0-bbbb2222"), true)
+    assert.equal(isStale("0.37.0-bbbb2222", "0.37.0-bbbb2222"), false)
+    assert.equal(isStale("x", undefined), false)
+    assert.equal(isStale("x", ""), false)
   })
 })

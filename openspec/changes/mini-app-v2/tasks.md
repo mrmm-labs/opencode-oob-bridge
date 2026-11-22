@@ -14,6 +14,17 @@
 - [x] 3.2 `channels.telegram.operator` and the menu button for a group. Verify: config and connector tests.
 - [x] 3.3 The app shows a sentence for each reason. Verify: a view test.
 
-## 4. The redesign
+## 4. The version, from the phone
 
-- [ ] 4.1 Titles, native-style list and detail, native controls, markdown (phase 2).
+- [x] 4.1 The Info screen ends with the bridge version and uptime. Verify: format tests, and a screenshot of the Info screen.
+- [x] 4.2 `/version` in Telegram answers with versions and uptime, without a path, pid, instance id or address. Verify: tests of `chatLines` and of the chat answer.
+
+## 5. A stale copy, and why Face ID is not available
+
+- [x] 5.1 Stamp every file URL with the build; `no-store` for the page; immutable only for the current stamp; the build in the meta. Verify: core tests through the link and the direct port.
+- [x] 5.2 Say which reason keeps Face ID from being used, and log it with the manager's state. Verify: factors and tg tests.
+- [x] 5.3 The footer names the page's build, and an old copy is said. Verify: format tests.
+
+## 6. The redesign
+
+- [ ] 6.1 Titles, native-style list and detail, native controls, markdown (phase 2).

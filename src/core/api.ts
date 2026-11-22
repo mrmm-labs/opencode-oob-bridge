@@ -16,7 +16,7 @@ import { redact } from "../filter.ts"
 import { log } from "../logger.ts"
 import { ACTIONS, type Actions } from "./actions.ts"
 import { appLine, LineGate } from "./applog.ts"
-import { serveApp } from "./app.ts"
+import { appStamp, serveApp } from "./app.ts"
 import { checkInitData, fromHeader } from "../link/initdata.ts"
 import { FailLimiter, type TokenStore } from "./auth.ts"
 import type { Views } from "./views.ts"
@@ -217,7 +217,8 @@ export function handler(d: ApiDeps) {
     const get = req.method === "GET"
     const post = req.method === "POST"
     if (!get && !post) return send(res, 405, { error: "method not allowed" })
-    if (get && p[0] === "app") return serveApp(url.pathname, res)
+    if (get && p[0] === "app")
+      return serveApp(url.pathname, res, d.version, url.searchParams.get("v"))
     if (p[0] !== "v1") return send(res, 404, { error: "not found" })
     const [, a, id, b, c] = p
 
@@ -235,6 +236,7 @@ export function handler(d: ApiDeps) {
       return send(res, 200, {
         api: API_VERSION,
         version: d.version,
+        app: await appStamp(d.version),
         actions: d.actions.available(),
         permissions: d.cfg.permissions.remote,
         approvals: d.approvals?.() !== undefined && d.cfg.approvals.enabled,
@@ -386,7 +388,12 @@ export function handler(d: ApiDeps) {
     if (req.method === "GET" && p === "/healthz")
       return send(res, 200, { ok: true })
     if (req.method === "GET" && (p === "/app" || p.startsWith("/app/")))
-      return void serveApp(p, res)
+      return void serveApp(
+        p,
+        res,
+        d.version,
+        new URL(req.url ?? "/", "http://core").searchParams.get("v"),
+      )
     if (p !== "/v1" && !p.startsWith("/v1/"))
       return send(res, 404, { error: "not found" })
     const operator = d.edge?.operator()

@@ -71,3 +71,64 @@ The app SHALL show a sentence for each reason the bridge gives for a refusal: no
 
 - **WHEN** the bridge answers 401 with `no_operator`
 - **THEN** the app says the bridge has no operator configured, not that the view expired
+
+### Requirement: Every file of the app carries the build
+
+The bridge SHALL give the app a build stamp made of its version and a hash of the app files, and SHALL put it in the URL of every file the page and its modules load (`?v=<stamp>`). The meta SHALL carry the stamp as `app`.
+
+#### Scenario: The page
+
+- **WHEN** `/app/` is requested, directly or through the relay link
+- **THEN** its stylesheet and script URLs carry the stamp
+
+#### Scenario: A module
+
+- **WHEN** `app.js?v=<stamp>` is requested
+- **THEN** each relative import in it carries the stamp
+
+### Requirement: A stale copy of the app is not kept
+
+The page SHALL be answered `Cache-Control: no-store`. A file asked for with the current stamp SHALL be answered `public, max-age=31536000, immutable`. A file asked for without the stamp, or with another one, SHALL be answered with the current content and `no-store`.
+
+#### Scenario: The page
+
+- **WHEN** `/app/` is requested
+- **THEN** it is answered `no-store`
+
+#### Scenario: A module without the stamp
+
+- **WHEN** `app.js` or `app.js?v=old` is requested
+- **THEN** it is answered `no-store`
+
+#### Scenario: A module with the stamp
+
+- **WHEN** `app.js?v=<current stamp>` is requested
+- **THEN** it is answered `immutable`
+
+### Requirement: The Info screen says which bridge version runs and for how long
+
+The Info screen SHALL end with a line that names the bridge version the server runs, from the API's `version` field, how long the server has been up, from the start time in the status, and the build the page was loaded from. When the page's build is not the one the meta names, it SHALL say the page is an old copy and offer a reload. When the start time is not known it SHALL leave the uptime out, and when the version is not known it SHALL say so.
+
+#### Scenario: Version, uptime and build
+
+- **WHEN** the server runs 0.37.0 and started 90 minutes ago
+- **THEN** the footer reads "opencode-oob-bridge 0.37.0 · up 1h 30m · page" followed by the build
+
+#### Scenario: An old copy
+
+- **WHEN** the page's build differs from the build in the meta
+- **THEN** a card says the page is an old copy, with a Reload button, and the app reports it to the bridge log
+
+### Requirement: Face ID says why it cannot be used
+
+When Face ID cannot be used, the app SHALL say which of these it is: Telegram too old (below 7.2), no answer from Telegram in time, Face ID not available on the phone, Telegram refused the permission, or Telegram did not ask. It SHALL send the bridge a `biometric_unavailable` line with the reason and the manager's state (initialised, available, type, requested, granted, saved, whether it has a device id, the client version and platform), and SHALL NOT send a token or the device id.
+
+#### Scenario: Telegram too old
+
+- **WHEN** the manager does not answer and Telegram is version 7.0
+- **THEN** the app says Telegram needs 7.2 or later, and logs `too_old`
+
+#### Scenario: Permission refused
+
+- **WHEN** access was requested and is not granted
+- **THEN** the app says to allow Face ID for Telegram in iOS Settings and in the app's menu, and logs `refused`

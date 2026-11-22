@@ -144,6 +144,32 @@ export type VersionReport = {
 const when = (ms: number) =>
   new Date(ms).toISOString().replace("T", " ").slice(0, 19) + " UTC"
 
+/** How long, as "3d 4h", "3h 12m", "5m" or "40s". */
+export function span(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const d = Math.floor(s / 86_400)
+  const h = Math.floor((s % 86_400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return m > 0 ? `${m}m` : `${s}s`
+}
+
+/**
+ * What `/version` says in a chat: versions and uptime. A chat is not a private place, so it holds no
+ * path, pid, instance id or address; `/oob version` in the TUI has those.
+ */
+export function chatLines(r: VersionReport, now: number): string[] {
+  const tuis = [...new Set(r.tuis)]
+  return [
+    `Running: ${r.running}`,
+    `Installed: ${r.installed ?? "unknown"}${r.describe ? ` (git ${r.describe})` : ""}`,
+    `TUI runs: ${tuis.length ? tuis.join(", ") : "no TUI attached"}`,
+    `Up: ${span(now - r.startedAt)}`,
+    ...(r.warnings.length ? r.warnings : ["All versions match."]),
+  ]
+}
+
 /** The report as lines of text. `tui` is the half that is asking, when it is a TUI. */
 export function reportLines(
   r: VersionReport,

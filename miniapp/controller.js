@@ -14,6 +14,7 @@ export const CONFIRM = {
 const REFRESH_MS = 300
 
 const initial = () => ({
+  build: "",
   /** loading | ready | nolaunch | expired | forbidden | offline */
   phase: "loading",
   /** The code the bridge gave when it refused: the screen says why. */
@@ -48,6 +49,7 @@ export function createController({
   now = Date.now,
   start = "",
   device,
+  build = "",
 }) {
   let s = initial()
   const subs = new Set()
@@ -117,6 +119,8 @@ export function createController({
   }
 
   const self = {
+    /** The build of the files this page was loaded from. */
+    build,
     get state() {
       return s
     },

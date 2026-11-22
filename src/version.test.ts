@@ -10,7 +10,9 @@ import {
   INSTALL_DIR,
   mismatches,
   readInstalled,
+  chatLines,
   reportLines,
+  span,
   RUNNING,
   type VersionReport,
 } from "./version.ts"
@@ -234,5 +236,72 @@ describe("what is loaded and what is on disk", () => {
       }),
       "/x/y.jsonc",
     )
+  })
+})
+
+describe("the version in a chat", () => {
+  const report: VersionReport = {
+    running: "0.37.0",
+    installed: "0.37.0",
+    describe: "v0.37.0-0-gabc1234",
+    dir: "/opt/plugin",
+    pid: 4242,
+    startedAt: Date.UTC(2026, 10, 22, 8, 30, 0),
+    ownerId: "ab12cd34",
+    config: "/home/u/.config/opencode/oob-bridge.jsonc",
+    core: { api: "v1", state: "listening", address: "127.0.0.1:7842" },
+    tuis: ["0.37.0", "0.37.0"],
+    warnings: [],
+  }
+  const now = Date.UTC(2026, 10, 22, 11, 42, 0)
+
+  it("says what runs, what is installed and for how long", () => {
+    assert.deepEqual(chatLines(report, now), [
+      "Running: 0.37.0",
+      "Installed: 0.37.0 (git v0.37.0-0-gabc1234)",
+      "TUI runs: 0.37.0",
+      "Up: 3h 12m",
+      "All versions match.",
+    ])
+  })
+
+  it("holds no path, pid, instance id or address", () => {
+    const text = chatLines(report, now).join("\n")
+    for (const secret of [
+      "/opt",
+      "/home",
+      "4242",
+      "ab12cd34",
+      "127.0.0.1",
+      "7842",
+    ])
+      assert.ok(!text.includes(secret), secret)
+  })
+
+  it("carries the warnings, and says when no TUI is attached", () => {
+    const text = chatLines(
+      {
+        ...report,
+        tuis: [],
+        warnings: [
+          "⚠ the server runs 0.36.0 but 0.37.0 is installed: restart OpenCode",
+        ],
+      },
+      now,
+    ).join("\n")
+    assert.match(text, /TUI runs: no TUI attached/)
+    assert.match(text, /⚠ the server runs 0\.36\.0/)
+    assert.doesNotMatch(text, /All versions match/)
+  })
+})
+
+describe("span", () => {
+  it("is the two largest units", () => {
+    assert.equal(span(0), "0s")
+    assert.equal(span(59_000), "59s")
+    assert.equal(span(61_000), "1m")
+    assert.equal(span(3_720_000), "1h 2m")
+    assert.equal(span(90_000_000), "1d 1h")
+    assert.equal(span(-5), "0s")
   })
 })

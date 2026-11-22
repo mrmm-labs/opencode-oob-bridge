@@ -32,7 +32,7 @@ import {
   activeConfigPath,
   mismatches,
   readInstalled,
-  reportLines,
+  chatLines,
   type Installed,
   type VersionReport,
 } from "./version.ts"
@@ -296,7 +296,7 @@ export class Control {
 
   /** The text of `/version` in a chat. */
   async versionText(): Promise<string> {
-    return reportLines(await this.versionReport()).join("\n")
+    return chatLines(await this.versionReport(), this.now()).join("\n")
   }
 
   /** The attached TUI that reported most recently: the one to hand a form reply to. */

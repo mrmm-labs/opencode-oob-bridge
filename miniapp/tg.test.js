@@ -136,19 +136,30 @@ describe("biometric manager", () => {
         {
           available: true,
           type: "face",
+          access_requested: true,
           access_granted: true,
           token_saved: true,
+          device_id: "abc",
         },
       ],
     })
     const info = await biometric(win).info()
     assert.deepEqual(info, {
+      answered: true,
       available: true,
       type: "face",
+      accessRequested: true,
       accessGranted: true,
       tokenSaved: true,
+      deviceId: true,
     })
     assert.deepEqual(win.sent[0], ["web_app_biometry_get_info", {}])
+  })
+
+  it("says it was not answered when the client sends nothing back", async () => {
+    const info = await biometric(fake({}), { timeoutMs: 5 }).info()
+    assert.equal(info.answered, false)
+    assert.equal(info.available, false)
   })
 
   it("returns the token only when Face ID authorised", async () => {
@@ -292,10 +303,14 @@ describe("biometric manager of Telegram's script", () => {
     const b = biometric(win(bm))
     const info = await b.info()
     assert.deepEqual(info, {
+      answered: true,
+      inited: true,
       available: true,
       type: "face",
+      accessRequested: false,
       accessGranted: false,
       tokenSaved: false,
+      deviceId: false,
     })
     await b.info()
     assert.deepEqual(bm.calls, ["init"])

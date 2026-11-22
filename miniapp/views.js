@@ -1,9 +1,11 @@
 // Drawing. Every string from the API goes in as text, never as markup.
 import {
+  aboutLine,
   ago,
   connection,
   diffClass,
   hhmm,
+  isStale,
   nameOf,
   permissionChoices,
   refusalText,
@@ -171,7 +173,7 @@ function screen(state, ctl, now) {
     case "night":
       return night(state, ctl)
     case "info":
-      return info(state, ctl)
+      return info(state, ctl, now)
     case "approval":
       return approval(state, ctl)
     case "enroll":
@@ -876,12 +878,24 @@ function enroll(state, ctl) {
   )
 }
 
-function info(state, ctl) {
+function info(state, ctl, now) {
   const m = state.meta
   const s = state.status
   return h(
     "section",
     null,
+    isStale(ctl.build, m?.app) &&
+      card(
+        "Old copy of the app",
+        h(
+          "p",
+          { class: "hint" },
+          "This page is not the build the bridge serves now. Reload it to get the new one.",
+        ),
+        button("Reload", () => globalThis.location.reload(), {
+          kind: "primary",
+        }),
+      ),
     card(
       "Bridge",
       h(
@@ -952,6 +966,11 @@ function info(state, ctl) {
           ),
         ),
       ),
+    ),
+    h(
+      "p",
+      { class: "hint foot" },
+      aboutLine(m?.version, s?.owner?.startedAt, now, ctl.build),
     ),
   )
 }
