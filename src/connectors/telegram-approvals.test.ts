@@ -10,11 +10,15 @@ import { filterSecrets } from "../filter.ts"
 import { newSigningKey, signAnswer } from "../approvals/sign.ts"
 import { RecordStore } from "../approvals/store.ts"
 import { code, step } from "../approvals/totp.ts"
-import type { ApprovalHandler, ApprovalView } from "../approvals/types.ts"
+import type { ApprovalView } from "../approvals/types.ts"
 import { fakeTelegram } from "./fake-telegram.test-util.ts"
 import { TelegramConnector, type TelegramOptions } from "./telegram.ts"
 import type { Inbound } from "./types.ts"
 
+const LAUNCH = {
+  url: "https://app.example.com/app/",
+  link: "https://t.me/examplebot/app",
+}
 const GROUP = -100777
 const OPERATOR = 42
 const SEED = Buffer.from("12345678901234567890")
@@ -74,11 +78,13 @@ describe("Telegram approvals: messages", () => {
     })
   })
 
-  it("posts the request with Approve and Deny, escaped, then rewrites it and drops the buttons", async () => {
+  it("posts the request to the operator's private chat with one Review & approve button, then rewrites it", async () => {
     const r = await rig()
+    r.channel.launch(LAUNCH)
     const ref = await r.channel.approvalRequest(view())
-    assert.ok(ref)
+    assert.equal(ref, `${OPERATOR}:${r.tg.lastMessageId}`)
     const m = r.tg.of("sendMessage")[0].body
+    assert.equal(m.chat_id, String(OPERATOR))
     assert.equal(m.parse_mode, "HTML")
     assert.match(m.text, /Approval #zzzz<\/b> · L2/)
     assert.match(
@@ -86,26 +92,90 @@ describe("Telegram approvals: messages", () => {
       /secrets-tool<\/b> asks for <code>secrets.write<\/code>/,
     )
     assert.match(m.text, /item &lt;4f2a&gt; &amp; co/)
-    assert.match(m.text, /Tap Approve, then type the 6-digit code/)
-    const row = m.reply_markup.inline_keyboard[0]
-    assert.deepEqual(
-      row.map((b: { text: string }) => b.text),
-      ["Approve", "Deny"],
-    )
-    assert.equal(
-      row[0].callback_data,
-      "ap:01HZZZZZZZZZZZZZZZZZZZZZZZ:abcdefgh:y",
-    )
-    assert.ok(Buffer.byteLength(row[0].callback_data) <= 64)
+    assert.match(m.text, /never goes to Telegram or the AI/)
+    const buttons = m.reply_markup.inline_keyboard.flat()
+    assert.equal(buttons.length, 1)
+    assert.equal(buttons[0].text, "📱 Review & approve")
+    assert.equal(buttons[0].web_app.url, LAUNCH.url + "?s=a_" + view().id)
+    assert.equal(buttons[0].callback_data, undefined)
     await r.channel.approvalSettle(ref!, view(), {
       decision: "approve",
       level: 2,
       by: "42",
     })
     const e = r.tg.of("editMessageText")[0].body
+    assert.equal(e.chat_id, String(OPERATOR))
+    assert.equal(e.message_id, r.tg.lastMessageId)
     assert.match(e.text, /✅ Approved · L2/)
     assert.deepEqual(e.reply_markup.inline_keyboard, [])
-    assert.doesNotMatch(e.text, /Tap Approve/)
+    await r.done()
+  })
+
+  it("still edits a message whose ref is the bare id of the paired chat", async () => {
+    const r = await rig()
+    await r.channel.approvalSettle("77", view(), { decision: "deny", level: 1 })
+    const e = r.tg.of("editMessageText")[0].body
+    assert.equal(e.chat_id, String(GROUP))
+    assert.equal(e.message_id, 77)
+    await r.done()
+  })
+
+  it("goes to an Approvals topic when the private chat refuses, and leaves the private chat alone for ten minutes", async () => {
+    const clock = { now: 1_000 }
+    const r = await rig({ now: () => clock.now })
+    r.tg.forum = true
+    r.channel.launch(LAUNCH)
+    r.tg.fail("sendMessage", 403, {
+      description: "Forbidden: bot can't initiate conversation with a user",
+    })
+    const ref = await r.channel.approvalRequest(view())
+    const sent = () => r.tg.of("sendMessage").map((c) => c.body)
+    assert.equal(sent().length, 2)
+    assert.equal(sent()[0].chat_id, String(OPERATOR))
+    const topics = r.tg.of("createForumTopic")
+    assert.equal(topics.length, 1)
+    assert.equal(topics[0].body.name, "Approvals")
+    assert.equal(sent()[1].chat_id, String(GROUP))
+    assert.ok(sent()[1].message_thread_id > 0, "never General")
+    assert.ok(ref!.startsWith(GROUP + ":"))
+    assert.equal(
+      sent()[1].reply_markup.inline_keyboard[0][0].url,
+      LAUNCH.link + "?startapp=a_" + view().id,
+    )
+
+    await r.channel.approvalRequest(view({ id: "01HYYYYYYYYYYYYYYYYYYYYYYY" }))
+    assert.equal(sent().length, 3)
+    assert.equal(
+      sent()[2].chat_id,
+      String(GROUP),
+      "no second try of the private chat",
+    )
+    assert.equal(sent()[2].message_thread_id, sent()[1].message_thread_id)
+    assert.equal(r.tg.of("createForumTopic").length, 1, "topic made once")
+
+    clock.now += 10 * 60_000 + 1
+    await r.channel.approvalRequest(view({ id: "01HXXXXXXXXXXXXXXXXXXXXXXX" }))
+    assert.equal(
+      sent()[3].chat_id,
+      String(OPERATOR),
+      "tried again after ten minutes",
+    )
+    await r.done()
+  })
+
+  it("posts nothing to General or a session topic when neither place works", async () => {
+    const r = await rig()
+    r.channel.launch(LAUNCH)
+    r.tg.fail("sendMessage", 403, { description: "Forbidden" })
+    assert.equal(await r.channel.approvalRequest(view()), undefined)
+    assert.equal(r.tg.of("sendMessage").length, 1, "only the private try")
+    await r.done()
+  })
+
+  it("has nothing to send when the app is not on offer", async () => {
+    const r = await rig()
+    assert.equal(await r.channel.approvalRequest(view()), undefined)
+    assert.equal(r.tg.of("sendMessage").length, 0)
     await r.done()
   })
 
@@ -182,51 +252,22 @@ describe("Telegram approvals: second factor prompt", () => {
 })
 
 describe("Telegram approvals: who answers", () => {
-  it("passes the user id of the tapper, not the chat id, to the handler", async () => {
+  it("an Approve or Deny button of an earlier message decides nothing and points to the app", async () => {
     const r = await rig()
-    const taps: Array<{
-      userId: string
-      id: string
-      nonce: string
-      action: string
-    }> = []
-    const handler: ApprovalHandler = {
-      tap: async (t) => (
-        taps.push(t),
-        { ok: false, text: "Only the paired operator can answer." }
-      ),
+    let taps = 0
+    r.channel.onApproval({
+      tap: async () => (taps++, { ok: true, text: "x" }),
       typed: async () => "ignored",
-    }
-    r.channel.onApproval(handler)
-    r.tg.callback(
-      GROUP,
-      5,
-      "ap:01HZZZZZZZZZZZZZZZZZZZZZZZ:abcdefgh:y",
-      undefined,
-      99,
+    })
+    const data = "ap:01HZZZZZZZZZZZZZZZZZZZZZZZ:abcdefgh:"
+    r.tg.callback(GROUP, 5, data + "y", undefined, 99)
+    r.tg.callback(GROUP, 6, data + "n", undefined, OPERATOR)
+    await r.tg.waitFor(() =>
+      r.tg.of("answerCallbackQuery").length === 2 ? true : undefined,
     )
-    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.deepEqual(taps, [
-      {
-        channel: "telegram",
-        userId: "99",
-        id: "01HZZZZZZZZZZZZZZZZZZZZZZZ",
-        nonce: "abcdefgh",
-        action: "approve",
-      },
-    ])
-    assert.equal(
-      r.tg.of("answerCallbackQuery")[0].body.text,
-      "Only the paired operator can answer.",
-    )
-    await r.done()
-  })
-
-  it("says approvals are off when nothing handles them", async () => {
-    const r = await rig()
-    r.tg.callback(GROUP, 5, "ap:01HZZZZZZZZZZZZZZZZZZZZZZZ:abcdefgh:n")
-    const t = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.equal(t.body.text, "Approvals are off.")
+    for (const c of r.tg.of("answerCallbackQuery"))
+      assert.equal(c.body.text, "This moved to the app: use the 📱 button.")
+    assert.equal(taps, 0)
     await r.done()
   })
 
@@ -299,8 +340,9 @@ describe("Telegram approvals: who answers", () => {
 })
 
 describe("Telegram approvals: with the engine", () => {
-  it("a second member pressing Approve changes nothing; the operator then answers with a code", async () => {
+  it("is answered only in the app: an old button decides nothing, the app approves with a factor or denies", async () => {
     const r = await rig()
+    r.channel.launch(LAUNCH)
     const key = newSigningKey()
     const port = (): ChannelPort => ({
       id: r.channel.id,
@@ -332,55 +374,48 @@ describe("Telegram approvals: with the engine", () => {
       mask: filterSecrets,
     })
     r.channel.onApproval(engine)
-    const made = await engine.create("secrets-tool", {
-      idempotency_key: "k",
-      action_class: "secrets.write",
-      scope_summary: "item 4f2a",
-    })
-    const id = (made.body as { id: string }).id
-    const sent = r.tg.of("sendMessage")[0].body
-    const data = sent.reply_markup.inline_keyboard[0][0].callback_data as string
-    const state = () =>
+    const ask = async (k: string) => {
+      const made = await engine.create("secrets-tool", {
+        idempotency_key: k,
+        action_class: "secrets.write",
+        scope_summary: "item 4f2a",
+      })
+      return (made.body as { id: string }).id
+    }
+    const state = (id: string) =>
       (engine.get("secrets-tool", id).body as { state: string }).state
 
-    r.tg.callback(GROUP, 501, data, undefined, 99)
-    const toast = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.equal(toast.body.text, "Only the paired operator can answer.")
-    assert.equal(state(), "pending")
-
-    r.tg.callback(GROUP, 501, data, undefined, OPERATOR)
-    await r.tg.waitFor(() => state() === "awaiting_code")
-    const prompt = await r.tg.waitFor(() => r.tg.of("sendMessage")[1])
-    assert.match(prompt.body.text, /Type the 6-digit code/)
-
-    r.tg.message(
-      GROUP,
-      code(SEED, step(Date.now())),
-      undefined,
-      undefined,
-      {},
-      99,
-    )
-    await new Promise((x) => setTimeout(x, 150))
+    const id = await ask("k1")
+    const sent = r.tg.of("sendMessage")[0].body
+    assert.equal(sent.chat_id, String(OPERATOR))
     assert.equal(
-      state(),
-      "awaiting_code",
-      "another member's digits are ignored",
+      sent.reply_markup.inline_keyboard[0][0].web_app.url,
+      LAUNCH.url + "?s=a_" + id,
     )
+    r.tg.callback(GROUP, 501, `ap:${id}:abcdefgh:y`, undefined, OPERATOR)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
+    assert.equal(state(id), "pending", "the old button decided nothing")
 
-    r.tg.message(
-      GROUP,
-      code(SEED, step(Date.now())),
-      undefined,
-      undefined,
-      {},
-      OPERATOR,
-    )
-    await r.tg.waitFor(() => state() === "approved")
-    const del = await r.tg.waitFor(() => r.tg.of("deleteMessage")[0])
-    assert.ok(del.body.message_id > 0)
+    const wrong = await engine.appProof(id, { factor: "totp", code: "000000" })
+    assert.equal(wrong.status, 422)
+    const ok = await engine.appProof(id, {
+      factor: "totp",
+      code: code(SEED, step(Date.now())),
+    })
+    assert.equal(ok.status, 200)
+    assert.equal(state(id), "approved")
     const edit = await r.tg.waitFor(() => r.tg.of("editMessageText")[0])
+    assert.equal(edit.body.chat_id, String(OPERATOR))
     assert.match(edit.body.text, /Approved · L2/)
+
+    const id2 = await ask("k2")
+    assert.equal(
+      (await engine.appDecide(id2, { action: "approve" })).status,
+      409,
+    )
+    assert.equal(state(id2), "pending", "level 2 needs a factor")
+    assert.equal((await engine.appDecide(id2, { action: "deny" })).status, 200)
+    assert.equal(state(id2), "denied")
     assert.equal(r.got.length, 0, "nothing reached a session")
     await r.done()
   })

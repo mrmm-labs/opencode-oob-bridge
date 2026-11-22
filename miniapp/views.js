@@ -1097,9 +1097,16 @@ function night(state, ctl) {
 }
 
 const FACTOR = {
-  biometric: ["Face ID", "Use Face ID"],
-  passkey: ["Passkey", "Use a passkey"],
-  totp: ["Code", "Send code"],
+  biometric: ["Face ID", "Approve with Face ID"],
+  passkey: ["Passkey", "Approve with a passkey"],
+  totp: ["Code", "Approve with code"],
+}
+
+const until = (iso) => {
+  const t = new Date(iso)
+  return Number.isNaN(t.getTime())
+    ? ""
+    : t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 }
 
 function approval(state, ctl) {
@@ -1127,25 +1134,37 @@ function approval(state, ctl) {
       h(
         "dl",
         { class: "kv" },
+        h("dt", null, "Who asks"),
+        h("dd", null, v.caller),
+        h("dt", null, "What"),
+        h("dd", null, v.scope),
         h("dt", null, "Class"),
         h("dd", null, v.action_class),
-        h("dt", null, "Caller"),
-        h("dd", null, v.caller),
-        h("dt", null, "Asks"),
-        h("dd", null, v.scope),
+        h("dt", null, "Level"),
+        h("dd", null, "L" + v.level),
+        h("dt", null, "Expires"),
+        h("dd", null, until(v.expires_at)),
         v.reason && h("dt", null, "Reason"),
         v.reason && h("dd", null, v.reason),
       ),
+      h("p", { class: "hint" }, "The value never goes to Telegram or the AI."),
     ),
     card(
-      f ? FACTOR[f][0] : "No method",
-      !f &&
+      v.level >= 2 ? (f ? FACTOR[f][0] : "No method") : "Decision",
+      v.level < 2 &&
+        button("Approve", () => void ctl.decide("approve"), {
+          kind: "primary",
+          disabled: a.busy,
+        }),
+      v.level >= 2 &&
+        !f &&
         h(
           "p",
           { class: "hint" },
           "Nothing on this phone can prove it. Answer at the Mac.",
         ),
-      f === "totp" &&
+      v.level >= 2 &&
+        f === "totp" &&
         field("approval-code", {
           inputmode: "numeric",
           autocomplete: "one-time-code",
@@ -1153,11 +1172,16 @@ function approval(state, ctl) {
           placeholder: "123456",
           "aria-label": "6-digit code",
         }),
-      f &&
+      v.level >= 2 &&
+        f &&
         button(FACTOR[f][1], () => void ctl.verify(drafts["approval-code"]), {
           kind: "primary",
           disabled: a.busy,
         }),
+      button("Deny", () => void ctl.decide("deny"), {
+        kind: "danger",
+        disabled: a.busy,
+      }),
       a.factors.length > 1 &&
         button("Use another method", () => ctl.useAnother(), {
           disabled: a.busy,

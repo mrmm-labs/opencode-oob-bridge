@@ -371,6 +371,8 @@ describe("second factor of an approval", () => {
     caller: "tool",
     action_class: "secrets.write",
     scope: "item 4f2a",
+    level: 2,
+    expires_at: "2026-11-22T12:00:00.000Z",
     request_hash: "h",
     challenge: "c1",
     factors: ["biometric", "passkey", "totp"],
@@ -420,6 +422,50 @@ describe("second factor of an approval", () => {
     })
     await r.ctl.openApproval("A1")
     assert.deepEqual(r.ctl.state.approval.factors, [])
+  })
+
+  it("denies, or approves a level 1 request, through the decision route", async () => {
+    const sent = []
+    const decision = async (id, b) => (
+      sent.push([id, b]),
+      { ok: true, text: b.action === "deny" ? "Denied." : "Approved." }
+    )
+    const deny = rig({
+      approval: async () => view(),
+      approvalDecision: decision,
+      device: device({ biometric: true }),
+    })
+    await deny.ctl.openApproval("A1")
+    await deny.ctl.decide("deny")
+    assert.equal(deny.ctl.state.approval.done, true)
+    assert.equal(deny.ctl.state.approval.text, "Denied.")
+    const l1 = rig({
+      approval: async () => view({ level: 1, factors: [] }),
+      approvalDecision: decision,
+    })
+    await l1.ctl.openApproval("A1")
+    await l1.ctl.decide("approve")
+    assert.deepEqual(sent, [
+      ["A1", { action: "deny" }],
+      ["A1", { action: "approve" }],
+    ])
+    assert.equal(l1.ctl.state.approval.ok, true)
+  })
+
+  it("keeps the screen and says why when the decision is refused", async () => {
+    const r = rig({
+      approval: async () => view(),
+      approvalDecision: async () => ({
+        ok: false,
+        text: "That needs a second factor.",
+      }),
+      device: device({ biometric: true }),
+    })
+    await r.ctl.openApproval("A1")
+    await r.ctl.decide("approve")
+    assert.equal(r.ctl.state.approval.done, undefined)
+    assert.equal(r.ctl.state.approval.busy, false)
+    assert.equal(r.ctl.state.approval.text, "That needs a second factor.")
   })
 
   it("sends the proof of the factor on screen and shows it done", async () => {

@@ -13,9 +13,9 @@
 
 ## 3. Approvals in the app only (PR 3)
 
-- [ ] 3.1 One "📱 Review & approve" button; `ap:` taps refused with a toast. Verify: `src/connectors/telegram-approvals.test.ts`.
-- [ ] 3.2 Route to the private chat, else an "Approvals" topic, never General. Verify: `src/connectors/telegram-approvals.test.ts`.
-- [ ] 3.3 The approval screen: who, what, level, expiry, note, Deny, Approve with Face ID and other factors. Verify: `miniapp/views.test.js`.
+- [x] 3.1 One "📱 Review & approve" button; `ap:` taps refused with a toast. Verify: `src/connectors/telegram-approvals.test.ts`, `src/approvals/engine.test.ts`.
+- [x] 3.2 Route to the private chat, else an "Approvals" topic, never General. Verify: `src/connectors/telegram-approvals.test.ts`, `src/approvals/engine.test.ts`.
+- [x] 3.3 The approval screen: who, what, level, expiry, note, Deny, Approve with Face ID and other factors. Verify: `miniapp/views.test.js`.
 
 ## 4. The question screen (PR 4)
 

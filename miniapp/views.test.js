@@ -85,3 +85,55 @@ describe("the enrol screen", () => {
     assert.equal(v.find("button", "Face ID").length, 1)
   })
 })
+describe("the approval screen", () => {
+  const screen = (level, factors) =>
+    render(
+      {
+        ...state(undefined),
+        route: { name: "approval", id: "A1" },
+        approval: {
+          id: "A1",
+          index: 0,
+          factors,
+          view: {
+            short: "ab12",
+            caller: "secrets-tool",
+            action_class: "secrets.write",
+            scope: "item 4f2a",
+            level,
+            expires_at: "2026-11-22T12:00:00.000Z",
+          },
+        },
+      },
+      { ...ctl, decide() {}, verify() {}, useAnother() {} },
+      1000,
+    )
+
+  it("shows who asks, what, the level, the expiry and where the value stays", () => {
+    const t = screen(2, ["biometric"]).text()
+    assert.match(t, /Who asks\s+secrets-tool/)
+    assert.match(t, /What\s+item 4f2a/)
+    assert.match(t, /Level\s+L2/)
+    assert.match(t, /Expires\s+\d/)
+    assert.match(t, /never goes to Telegram or the AI/)
+  })
+
+  it("a level 2 request is approved with the factor, and can be denied", () => {
+    const v = screen(2, ["biometric", "totp"])
+    assert.equal(v.find("button", "Approve with Face ID").length, 1)
+    assert.equal(v.find("button", "Approve").length, 0)
+    assert.equal(v.find("button", "Deny").length, 1)
+  })
+
+  it("a level 1 request is approved with one button, and can be denied", () => {
+    const v = screen(1, [])
+    assert.equal(v.find("button", "Approve").length, 1)
+    assert.equal(v.find("button", "Deny").length, 1)
+  })
+
+  it("a level 2 request nothing can prove can still be denied", () => {
+    const v = screen(2, [])
+    assert.match(v.text(), /Answer at the Mac/)
+    assert.equal(v.find("button", "Deny").length, 1)
+  })
+})

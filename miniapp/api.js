@@ -84,6 +84,13 @@ export class Api {
       body,
     )
   }
+  approvalDecision(id, body) {
+    return this.request(
+      "POST",
+      "/v1/approvals/" + encodeURIComponent(id) + "/decision",
+      body,
+    )
+  }
   enrol(body) {
     return this.request("POST", "/v1/approvals/enroll", body)
   }

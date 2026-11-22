@@ -462,6 +462,9 @@ export class ApprovalService implements AppApprovals {
     return this.engine.appView(id)
   }
 
+  appDecide(id: string, body: Record<string, unknown>): Promise<Res> {
+    return this.engine.appDecide(id, body)
+  }
   appProof(id: string, body: Record<string, unknown>): Promise<Res> {
     return this.engine.appProof(id, body)
   }

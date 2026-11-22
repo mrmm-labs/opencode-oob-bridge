@@ -711,7 +711,7 @@ export class Approvals {
 
   private waiting(id: string): Live | undefined {
     const l = this.live.get(id)
-    return l && l.rec.state === "awaiting_code" && !l.deciding ? l : undefined
+    return l && !terminal(l.rec.state) && !l.deciding ? l : undefined
   }
 
   private channelOf(l: Live): ChannelPort | undefined {
@@ -743,6 +743,7 @@ export class Approvals {
         reason: l.view.reason,
         expires_at: iso(r.expiresAt),
         request_hash: r.requestHash,
+        level: r.level,
         factors,
         challenge: nonce,
         ...(factors.includes("passkey") && rp
@@ -758,13 +759,7 @@ export class Approvals {
     }
   }
 
-  /** One proof of one factor from the Mini App. Three wrong ones deny the request. */
-  async appProof(id: string, b: Record<string, unknown>): Promise<Res> {
-    const l = this.waiting(id)
-    const ch = l && this.channelOf(l)
-    const op = ch?.operator()
-    if (!l || !ch || op === undefined)
-      return no(404, "Not waiting for a factor.")
+  private async stale(l: Live): Promise<Res | undefined> {
     if (this.d.now() >= l.rec.expiresAt) {
       await this.finish(l, "expired", 0, "bridge", "timeout")
       return no(409, "Expired.", "expired")
@@ -773,6 +768,42 @@ export class Approvals {
       await this.finish(l, "expired", 0, "bridge", "present")
       return no(409, "Withdrawn: you are at the Mac.", "withdrawn")
     }
+  }
+
+  /** Deny from the Mini App, or approve a level 1 request, which needs no factor. */
+  async appDecide(id: string, b: Record<string, unknown>): Promise<Res> {
+    const l = this.waiting(id)
+    const op = l && this.channelOf(l)?.operator()
+    if (!l || op === undefined) return no(404, "Not waiting for you.")
+    const stale = await this.stale(l)
+    if (stale) return stale
+    if (b.action === "deny") {
+      await this.finish(l, "deny", 1, op)
+      return {
+        status: 200,
+        body: { ok: true, text: "Denied.", state: "denied" },
+      }
+    }
+    if (b.action === "approve" && l.rec.level <= 1) {
+      await this.finish(l, "approve", 1, op)
+      return {
+        status: 200,
+        body: { ok: true, text: "Approved.", state: "approved" },
+      }
+    }
+    return no(409, "That needs a second factor.")
+  }
+
+  /** One proof of one factor from the Mini App. Three wrong ones deny the request. */
+  async appProof(id: string, b: Record<string, unknown>): Promise<Res> {
+    const l = this.waiting(id)
+    const ch = l && this.channelOf(l)
+    const op = ch?.operator()
+    if (!l || !ch || op === undefined)
+      return no(404, "Not waiting for a factor.")
+    const stale = await this.stale(l)
+    if (stale) return stale
+    if (l.rec.level < 2) return no(409, "This request needs no second factor.")
     const factor = b.factor
     if (!isFactor(factor) || !(await this.offered(ch)).includes(factor))
       return no(409, "That factor is not available.")

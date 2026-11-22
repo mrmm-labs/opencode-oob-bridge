@@ -232,7 +232,7 @@ without biometrics falls back to it with nothing more to do.
 | --- | --- | --- | --- |
 | `biometric` | Face ID (or a fingerprint) in the Mini App | An HMAC-SHA256 over `oob-l2-biometric-v1`, the request hash and a one-time challenge, keyed by the device secret that only the biometric prompt releases | A device is enrolled and the channel can open the app |
 | `passkey` | A WebAuthn prompt in the Mini App | A signature over the authenticator data and the client data, against the enrolled public key; the challenge is derived from the request hash and a one-time nonce; origin, relying party id hash and the user-verified flag are checked | A credential is enrolled, `miniApp.url` is set, and the webview supports WebAuthn |
-| `totp` | Types the 6-digit code in the chat, or in the app | RFC 6238 (SHA-1, 6 digits, 30 s step, one step of tolerance); a step is accepted once | A seed is enrolled |
+| `totp` | Types the 6-digit code in the app | RFC 6238 (SHA-1, 6 digits, 30 s step, one step of tolerance); a step is accepted once | A seed is enrolled |
 
 Three wrong proofs deny the request (`bad_code` for the code, `bad_proof` for the others). A request fails
 with `unavailable` when no factor is ready.
