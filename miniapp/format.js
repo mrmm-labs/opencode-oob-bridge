@@ -26,6 +26,23 @@ export function stateLabel(s) {
 
 export const nameOf = (s) => s.title || s.id
 
+const ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * What a launch asked for. The bridge sends "s_<session>", "a_<approval>" and "enrol_<code>"; a bare
+ * id is a session from a message sent before the prefixes. Anything else asks for nothing.
+ */
+export function parseStart(raw) {
+  if (typeof raw !== "string" || !ID.test(raw)) return undefined
+  const enrol = /^enrol_([A-Za-z0-9]{1,16})$/.exec(raw)
+  if (enrol) return { kind: "enrol", code: enrol[1] }
+  if (raw.startsWith("enrol_")) return undefined
+  if (raw === "s_" || raw === "a_") return undefined
+  if (raw.startsWith("s_")) return { kind: "session", id: raw.slice(2) }
+  if (raw.startsWith("a_")) return { kind: "approval", id: raw.slice(2) }
+  return { kind: "session", id: raw }
+}
+
 /** A sentence for each reason the bridge gives when it refuses a request; undefined for one it does not know. */
 export const refusalText = (reason) =>
   ({

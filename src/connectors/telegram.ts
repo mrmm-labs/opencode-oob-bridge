@@ -464,7 +464,9 @@ export class TelegramConnector implements Connector {
   private openButton(sessionID: string, text = "📱 Open"): Button | undefined {
     const app = this.app
     if (!app) return undefined
-    const id = /^[A-Za-z0-9_-]{1,64}$/.test(sessionID) ? sessionID : undefined
+    // An approval is already "a_<id>"; a session gets "s_", so neither can be taken for an enrolment code.
+    const arg = sessionID.startsWith("a_") ? sessionID : "s_" + sessionID
+    const id = /^[A-Za-z0-9_-]{1,64}$/.test(arg) ? arg : undefined
     if (this.chatId && Number(this.chatId) > 0)
       return {
         text,

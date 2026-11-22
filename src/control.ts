@@ -7,6 +7,7 @@
  */
 import { execFile } from "node:child_process"
 
+import { enrolLink } from "./approvals/link.ts"
 import type { ApprovalService } from "./approvals/service.ts"
 import type { Bridge, Host } from "./bridge.ts"
 import type { CoreHandle } from "./core/index.ts"
@@ -688,7 +689,11 @@ export class Control {
         return this.done({
           ok: true,
           text: `Enrolment open for 5 minutes: ${r.code}`,
-          data: { kind, ...r },
+          data: {
+            kind,
+            ...r,
+            link: enrolLink(this.o.cfg.miniApp.link, r.code),
+          },
         })
       }
       case "devices":

@@ -14,9 +14,15 @@ export function launch(loc = globalThis.location) {
     const t = JSON.parse(hash.get("tgWebAppThemeParams") || "{}")
     if (t && typeof t === "object") theme = t
   } catch {}
-  const start = hash.get("tgWebAppStartParam") || query.get("s") || ""
+  const initData = hash.get("tgWebAppData") || ""
+  // The same value is in the init data, for a client that leaves it out of the hash.
+  const start =
+    hash.get("tgWebAppStartParam") ||
+    new URLSearchParams(initData).get("start_param") ||
+    query.get("s") ||
+    ""
   return {
-    initData: hash.get("tgWebAppData") || "",
+    initData,
     theme,
     start: START.test(start) ? start : "",
     version: hash.get("tgWebAppVersion") || "",

@@ -37,6 +37,17 @@ describe("launch parameters", () => {
     assert.equal(launch(loc("#tgWebAppStartParam=" + "x".repeat(65))).start, "")
   })
 
+  it("reads the start parameter from the init data when the hash has none", () => {
+    const init = encodeURIComponent(
+      "user=%7B%7D&start_param=enrol_ABCD2345&hash=h",
+    )
+    assert.equal(launch(loc("#tgWebAppData=" + init)).start, "enrol_ABCD2345")
+    assert.equal(
+      launch(loc("#tgWebAppStartParam=s_a&tgWebAppData=" + init)).start,
+      "s_a",
+    )
+  })
+
   it("reads the client version and platform for the diagnostics", () => {
     const p = launch(loc("#tgWebAppVersion=8.0&tgWebAppPlatform=ios"))
     assert.equal(p.version, "8.0")

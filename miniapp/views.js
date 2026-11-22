@@ -827,6 +827,19 @@ function approval(state, ctl) {
 
 function enroll(state, ctl) {
   const e = state.enrol
+  const scanned = state.enrolCode
+  if (scanned && drafts["enrol-code"] === undefined)
+    drafts["enrol-code"] = scanned.replace(/^(.{4})(.+)$/, "$1-$2")
+  const face = button(
+    "Face ID",
+    () => void ctl.enroll("biometric", drafts["enrol-code"] ?? ""),
+    {
+      kind: "primary",
+      disabled: e?.busy,
+    },
+  )
+  // A scanned code needs one tap: the button that asks for Face ID has the focus.
+  if (scanned && !e) setTimeout(() => face.focus(), 0)
   return h(
     "section",
     null,
@@ -835,7 +848,9 @@ function enroll(state, ctl) {
       h(
         "p",
         { class: "hint" },
-        "At the Mac, run the Enrol Face ID or Enrol a passkey command in the approvals menu, then enter the code it shows.",
+        scanned
+          ? "The code from the Mac is filled in. Tap Face ID, or Passkey."
+          : "At the Mac, run the Enrol Face ID or Enrol a passkey command in the approvals menu, then enter the code it shows.",
       ),
       field("enrol-code", {
         autocomplete: "off",
@@ -847,14 +862,7 @@ function enroll(state, ctl) {
       h(
         "div",
         { class: "row" },
-        button(
-          "Face ID",
-          () => void ctl.enroll("biometric", drafts["enrol-code"] ?? ""),
-          {
-            kind: "primary",
-            disabled: e?.busy,
-          },
-        ),
+        face,
         button(
           "Passkey",
           () => void ctl.enroll("passkey", drafts["enrol-code"] ?? ""),

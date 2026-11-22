@@ -60,7 +60,7 @@ describe("Telegram Mini App launch", () => {
       (b) => b.text === "📱 Open",
     )
     assert.deepEqual(open?.web_app, {
-      url: "https://app.example.com/app/?s=ses_1",
+      url: "https://app.example.com/app/?s=s_ses_1",
     })
     await r.done()
   })
@@ -71,7 +71,7 @@ describe("Telegram Mini App launch", () => {
     const open = buttons(r.tg.of("sendMessage")[0]).find(
       (b) => b.text === "📱 Open",
     )
-    assert.equal(open?.url, "https://t.me/examplebot/app?startapp=ses_1")
+    assert.equal(open?.url, "https://t.me/examplebot/app?startapp=s_ses_1")
     assert.equal(open?.web_app, undefined)
     await r.done()
   })
