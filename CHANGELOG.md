@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.41.0...v0.42.0) (2026-11-22)
+
+
+### Features
+
+* answer every question on one screen in the app, with a draft kept on the phone ([#148](https://github.com/mrmm-labs/opencode-oob-bridge/issues/148)) ([6bec9dc](https://github.com/mrmm-labs/opencode-oob-bridge/commit/6bec9dcb63f3284242b5ce2b3562311eb58a8c6c))
+
 ## [0.41.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.40.0...v0.41.0) (2026-11-22)
 
 
