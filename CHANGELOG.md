@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.36.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.0...v0.36.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* keep the Mini App stream live on older iPhones, use Telegram's biometric manager, and say why a request is refused ([#122](https://github.com/mrmm-labs/opencode-oob-bridge/issues/122)) ([87ab28b](https://github.com/mrmm-labs/opencode-oob-bridge/commit/87ab28b68ac1e490907b345736d7ca844bb5cf3c))
+
 ## [0.36.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.35.0...v0.36.0) (2026-11-21)
 
 
