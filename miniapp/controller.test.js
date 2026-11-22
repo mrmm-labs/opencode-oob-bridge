@@ -527,6 +527,24 @@ describe("enrolling this phone", () => {
     assert.equal(r.ctl.state.enrol.text, "No Face ID.")
   })
 
+  it("keeps no token when the bridge refuses, and a retry stores the new one", async () => {
+    const saved = []
+    let n = 0
+    const r = rig({
+      enrol: async () =>
+        n++ === 0
+          ? { ok: false, text: "Nothing to enrol: open it at the Mac first." }
+          : { ok: true, device: "dD", token: "dD.s2" },
+      device: dev({ saveToken: async (t) => (saved.push(t), true) }),
+    })
+    await r.ctl.enroll("biometric", "X")
+    assert.deepEqual(saved, [])
+    assert.notEqual(r.ctl.state.enrol.ok, true)
+    await r.ctl.enroll("biometric", "X")
+    assert.deepEqual(saved, ["dD.s2"])
+    assert.equal(r.ctl.state.enrol.ok, true)
+  })
+
   it("names the device to revoke when Telegram did not keep the token", async () => {
     const r = rig({
       enrol: async () => ({ ok: true, device: "dD", token: "dD.s" }),
