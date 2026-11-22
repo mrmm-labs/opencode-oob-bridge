@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.38.0...v0.39.0) (2026-11-22)
+
+
+### Features
+
+* mask outbound text through a local secret scrub socket ([#134](https://github.com/mrmm-labs/opencode-oob-bridge/issues/134)) ([5f3c1ae](https://github.com/mrmm-labs/opencode-oob-bridge/commit/5f3c1aede19a59425fcf7f97f71c6b3e432e5601))
+
 ## [0.38.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.2...v0.38.0) (2026-11-22)
 
 
