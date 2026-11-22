@@ -94,6 +94,8 @@ export type CommandDeps = {
   remote(root: string): void
   /** Posts the session's oldest open question again, at the bottom of its topic. */
   repost(root: string): Promise<Outcome>
+  /** Whether the session still has an open question, checked with OpenCode first. */
+  open(root: string): Promise<boolean>
 }
 
 type Flow = {
@@ -188,14 +190,50 @@ export class Commands {
     )
   }
 
+  /** Takes the messages kept for a session that waited on a question, so they can be sent. */
+  takeHeld(
+    root: string,
+  ): Array<{ id: string; held: { text: string; files?: InboundFile[] } }> {
+    const out: Array<{
+      id: string
+      held: { text: string; files?: InboundFile[] }
+    }> = []
+    for (const [id, f] of this.flows)
+      if (f.kind === "held" && f.root === root && f.held) {
+        out.push({ id, held: f.held })
+        this.flows.delete(id)
+      }
+    return out
+  }
+
   private async applyHeld(
     f: Flow,
     value: string,
     info: Info,
   ): Promise<Outcome> {
     const root = f.root!
-    if (value === "answer")
-      return this.done(info, "applied", await this.d.repost(root))
+    if (value === "answer") {
+      if (await this.d.open(root))
+        return this.done(info, "applied", await this.d.repost(root))
+      // The question is gone, so nothing stands in the way of the message.
+      try {
+        await this.d.actions.prompt(root, f.held!.text, "queue", f.held!.files)
+      } catch (err) {
+        return this.done(
+          info,
+          "failed",
+          no(`Could not send that to the session: ${(err as Error).message}`),
+        )
+      }
+      this.d.remote(root)
+      return this.done(
+        info,
+        "applied",
+        yes(
+          "✅ That question was already answered at the Mac: your message was sent.",
+        ),
+      )
+    }
     if (value === "skip")
       return this.done(
         info,

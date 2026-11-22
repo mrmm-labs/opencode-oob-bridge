@@ -14,7 +14,7 @@ import { sleep } from "./util.ts"
 
 const CHAT = 4242
 
-async function rig() {
+async function rig(o: { stale?: boolean } = {}) {
   const tg = await fakeTelegram()
   tg.forum = true
   const dir = await mkdtemp(join(tmpdir(), "oobb-gate-"))
@@ -32,23 +32,50 @@ async function rig() {
     chat: {},
   }) as Config
   const prompts: Array<{ text: string; delivery: string }> = []
+  /** What OpenCode says of each request, and what its form reply does. */
+  const live = {
+    states: new Map<string, "open" | "answered" | "cancelled" | undefined>(),
+    asked: [] as string[],
+    replyError: undefined as string | undefined,
+  }
+  const skew = { ms: 0 }
   const host: Host = {
     session: async (id) => ({ id, agent: "coord", directory: "/w/shop" }),
     root: (id) => id,
-    replyForm: async () => {},
+    replyForm: async () => {
+      if (live.replyError) throw new Error(live.replyError)
+    },
+    requestState: async (kind, _sid, rid) => {
+      live.asked.push(kind + ":" + rid)
+      return live.states.has(rid) ? live.states.get(rid) : "open"
+    },
     replyPermission: async () => {},
     prompt: async (_id, text, delivery) => {
       prompts.push({ text, delivery })
     },
     busy: () => false,
   } as unknown as Host
+  const store = new PendingStore()
+  if (o.stale) {
+    store.put({
+      id: "old1",
+      kind: "question",
+      requestID: "frm_old",
+      sessionID: "root",
+      rootSessionID: "root",
+      title: "asked before the restart",
+      askedAt: Date.now() - 3_600_000,
+      state: "pending",
+    })
+    live.states.set("frm_old", "answered")
+  }
   const bridge = new Bridge(
     cfg,
     host,
     [channel],
-    new PendingStore(),
+    store,
     new Router(cfg, async () => true),
-    Date.now,
+    () => Date.now() + skew.ms,
   )
   bridge.start()
   const out = await bridge.setChat("root", true)
@@ -89,6 +116,9 @@ async function rig() {
   return {
     tg,
     bridge,
+    store,
+    live,
+    skew,
     prompts,
     sends,
     gate,
@@ -164,6 +194,126 @@ describe("a message for a session that waits on a question", () => {
     r.tg.message(CHAT, "!stop that", undefined, 9001)
     await r.tg.waitFor(() => r.prompts[0])
     assert.deepEqual(r.prompts, [{ text: "stop that", delivery: "steer" }])
+    await r.done()
+  })
+})
+
+describe("a question OpenCode no longer holds", () => {
+  const edits = (r: Awaited<ReturnType<typeof rig>>) =>
+    r.tg.of("editMessageText").map((c) => c.body)
+  const gone = (r: Awaited<ReturnType<typeof rig>>) => {
+    r.live.states.set("frm_1", "answered")
+    r.skew.ms = 60_000
+  }
+
+  it("is closed as already answered at the Mac, buttons gone", async () => {
+    const r = await rig()
+    gone(r)
+    assert.equal(await r.bridge.reconcile(), 1)
+    const p = r.store.list().find((x) => x.requestID === "frm_1")!
+    assert.equal(p.state, "answered")
+    assert.equal(p.answeredBy, "unknown (reconciled)")
+    const e = await r.tg.waitFor(() =>
+      edits(r).find((b) => /Already answered at the Mac/.test(b.text)),
+    )
+    assert.ok(!e.reply_markup?.inline_keyboard?.length, "no buttons")
+    assert.equal(await r.bridge.reconcile(), 0, "closed once")
+    await r.done()
+  })
+
+  it("is left alone while OpenCode holds it, when it cannot say, and while it is young", async () => {
+    const r = await rig()
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 0, "open")
+    r.live.states.set("frm_1", undefined)
+    assert.equal(await r.bridge.reconcile(), 0, "unknown")
+    r.skew.ms = 0
+    r.live.states.set("frm_1", "answered")
+    assert.equal(await r.bridge.reconcile(), 0, "too young to judge")
+    assert.equal(
+      r.store.list().find((x) => x.requestID === "frm_1")!.state,
+      "pending",
+    )
+    await r.done()
+  })
+
+  it("is closed when the bridge starts, before anything is asked of it", async () => {
+    const r = await rig({ stale: true })
+    await r.tg.waitFor(() =>
+      r.store.get("old1")?.state === "answered" ? true : undefined,
+    )
+    assert.equal(r.store.get("old1")!.answeredBy, "unknown (reconciled)")
+    await r.done()
+  })
+
+  it("a message held behind it is sent, and the topic shows it", async () => {
+    const r = await rig()
+    const menu = await r.gate()
+    assert.ok(menu)
+    gone(r)
+    assert.equal(await r.bridge.reconcile(), 1)
+    assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
+    await r.tg.waitFor(() =>
+      edits(r).find((b) =>
+        /already answered at the Mac: your message was sent/.test(b.text),
+      ),
+    )
+    const emojis = () =>
+      r.tg.of("setMessageReaction").map((c) => c.body.reaction[0].emoji)
+    await r.tg.waitFor(() => (emojis().includes("⚡") ? true : undefined))
+    assert.deepEqual(emojis().slice(0, 3), ["👀", "🤷", "⚡"])
+    await r.done()
+  })
+
+  it("a message sent after it is delivered at once, after OpenCode is asked", async () => {
+    const r = await rig()
+    r.live.states.set("frm_1", "answered")
+    r.tg.message(CHAT, "run the tests", undefined, 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
+    assert.ok(r.live.asked.includes("question:frm_1"))
+    assert.ok(
+      !r.sends().some((b) => /waiting on a question/.test(b.text)),
+      "no hold",
+    )
+    await r.done()
+  })
+
+  it("is still held when OpenCode holds it", async () => {
+    const r = await rig()
+    await r.gate()
+    assert.ok(r.live.asked.includes("question:frm_1"))
+    await sleep(100)
+    assert.deepEqual(r.prompts, [])
+    await r.done()
+  })
+
+  it("Answer sends the kept message when the question is gone, and posts nothing again", async () => {
+    const r = await rig()
+    const menu = await r.gate()
+    const before = r.sends().filter((b) => /Go?/.test(b.text)).length
+    r.live.states.set("frm_1", "answered")
+    r.tap(menu, /Answer/)
+    await r.tg.waitFor(() => r.prompts[0])
+    assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
+    await r.tg.waitFor(() =>
+      r.sends().find((b) => /already answered at the Mac/.test(b.text)),
+    )
+    assert.equal(r.sends().filter((b) => /Go?/.test(b.text)).length, before)
+    await r.done()
+  })
+
+  it("a tap whose reply OpenCode refuses as not found closes it instead of failing", async () => {
+    const r = await rig()
+    const q = r.sends().find((b) => /Go?/.test(b.text))!
+    r.live.replyError = "Form not found: frm_1"
+    r.tap(q, /Yes/)
+    await r.tg.waitFor(() =>
+      edits(r).find((b) => /Already answered at the Mac/.test(b.text)),
+    )
+    const p = r.store.list().find((x) => x.requestID === "frm_1")!
+    assert.equal(p.state, "answered")
+    assert.equal(p.answeredBy, "unknown (reconciled)")
     await r.done()
   })
 })

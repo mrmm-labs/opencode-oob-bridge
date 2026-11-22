@@ -25,7 +25,8 @@ export type Pending = {
   refs?: Record<string, string>
   askedAt: number
   state: PendingState
-  answeredBy?: "tui" | "phone"
+  /** `unknown (reconciled)`: OpenCode no longer held it, and nobody saw who answered. */
+  answeredBy?: "tui" | "phone" | "unknown (reconciled)"
   /** Channel id that carried the phone answer. */
   answeredVia?: string
   answeredAt?: number

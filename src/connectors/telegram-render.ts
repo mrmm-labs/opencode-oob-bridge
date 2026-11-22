@@ -123,7 +123,9 @@ function lines(card: Card, o: RenderOptions, st: Stage): string[] {
     case "closed": {
       const where =
         card.origin === "mac"
-          ? "Answered at the Mac"
+          ? card.reconciled
+            ? "Already answered at the Mac"
+            : "Answered at the Mac"
           : card.origin === "telegram"
             ? "Answered in Telegram"
             : undefined

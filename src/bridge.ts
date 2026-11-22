@@ -115,6 +115,15 @@ export interface Host {
   undo?(sessionID: string): Promise<boolean>
   /** Whether a form reply can be delivered now (the service answers, or a TUI is attached). Unset: assume it can. */
   canReplyForm?(): boolean | Promise<boolean>
+  /**
+   * What OpenCode says of a form or permission request the bridge is waiting on: still `open`, or
+   * already `answered` or `cancelled`. Undefined when it cannot say. Absent when the host cannot.
+   */
+  requestState?(
+    kind: "question" | "permission",
+    sessionID: string,
+    requestID: string,
+  ): Promise<"open" | "answered" | "cancelled" | undefined>
   /** Answers a permission request. Absent when the host cannot. */
   replyPermission?(
     sessionID: string,
@@ -348,6 +357,10 @@ const NO_WINDOW =
 const DIGEST_TICK_MS = 30_000
 const HINT_EVERY_MS = 60 * 60_000
 const FEED_MS = 100
+/** How often prompts the bridge waits on are checked against OpenCode. */
+export const RECONCILE_MS = 60_000
+/** A prompt this young is not checked: OpenCode may not list it yet. */
+const RECONCILE_GRACE_MS = 10_000
 const PERMISSION_LABEL = {
   once: "Allow once",
   always: "Always",
@@ -379,6 +392,8 @@ export class Bridge {
   private digestTimer: ReturnType<typeof setInterval> | undefined
   /** Shortest time between two edits of a permission digest; tests shorten it. */
   digestGapMs = PERM_DIGEST_GAP_MS
+  private reconcileTimer: ReturnType<typeof setInterval> | undefined
+  private reconcileChain: Promise<unknown> = Promise.resolve()
   private readonly permDigests = new Map<
     string,
     {
@@ -560,6 +575,10 @@ export class Bridge {
           : no("There is no overnight plan running."),
       remote: (root) => void this.remote.add(root),
       repost: (root) => this.repostQuestion(root),
+      open: async (root) => {
+        await this.reconcile(root, 0)
+        return this.openPromptList(root).some((p) => p.kind === "question")
+      },
     })
   }
 
@@ -712,6 +731,14 @@ export class Bridge {
       this.digestTimer.unref?.()
     }
     for (const ch of this.channels) if (ch.enabled) this.run(ch)
+    if (this.host.requestState && !this.reconcileTimer) {
+      this.reconcileTimer = setInterval(
+        () => void this.reconcile(),
+        RECONCILE_MS,
+      )
+      this.reconcileTimer.unref?.()
+      void this.reconcile()
+    }
   }
 
   private run(ch: Connector): void {
@@ -800,6 +827,8 @@ export class Bridge {
   }
 
   async stop(): Promise<void> {
+    clearInterval(this.reconcileTimer)
+    this.reconcileTimer = undefined
     for (const ac of this.controllers.values()) ac.abort()
     this.controllers.clear()
     // What waits here is handed to the session's own queue, never dropped.
@@ -1179,8 +1208,105 @@ export class Bridge {
     this.remember(p, sent.refs)
   }
 
+  /**
+   * Checks the prompts this bridge waits on against OpenCode, for one session or all. One OpenCode no
+   * longer holds (answered or cancelled while the bridge was away or not told) is closed here the way an
+   * answer at the Mac is, and what waited behind a question is sent. Returns how many it closed.
+   */
+  reconcile(root?: string, graceMs = RECONCILE_GRACE_MS): Promise<number> {
+    if (!this.host.requestState) return Promise.resolve(0)
+    const run = async (): Promise<number> => {
+      let closed = 0
+      const touched = new Set<string>()
+      try {
+        for (const p of this.store.list()) {
+          if (p.state !== "pending") continue
+          if (root !== undefined && p.rootSessionID !== root) continue
+          if (this.now() - p.askedAt < graceMs) continue
+          const s = await this.host.requestState!(
+            p.kind,
+            p.sessionID,
+            p.requestID,
+          ).catch(() => undefined)
+          if (s === undefined || s === "open") continue
+          // An answer may have arrived while OpenCode was asked.
+          const now = this.store.get(p.id)
+          if (now?.state !== "pending") continue
+          await this.settleStale(now, s)
+          touched.add(now.rootSessionID)
+          closed++
+        }
+        for (const r of touched)
+          if (!this.openPromptList(r).some((p) => p.kind === "question"))
+            await this.releaseHeld(r)
+      } catch (err) {
+        log("reconcile_error", { message: (err as Error).message })
+      }
+      return closed
+    }
+    const next = this.reconcileChain.then(run, run)
+    this.reconcileChain = next.catch(() => undefined)
+    return next
+  }
+
+  /** Closes a prompt OpenCode no longer holds, as if it had been answered at the Mac. */
+  private async settleStale(p: Pending, state: "answered" | "cancelled") {
+    this.store.update(p.id, {
+      state,
+      answeredBy: "unknown (reconciled)",
+      answeredAt: this.now(),
+    })
+    this.pendingGauge()
+    log("prompt_reconciled", {
+      id: p.id,
+      kind: p.kind,
+      session: p.rootSessionID,
+      state,
+    })
+    await this.markAnswered(p, {
+      outcome: state,
+      via: "TUI",
+      reconciled: true,
+    })
+  }
+
+  /** Sends what waited behind a question that is no longer open, and says so on its messages. */
+  private async releaseHeld(root: string): Promise<void> {
+    for (const { id, held } of this.commands.takeHeld(root)) {
+      const busy = this.host.busy(root)
+      const delivery: Delivery =
+        busy && this.delivery(root) === "steer" ? "steer" : "queue"
+      let shown: Parameters<NonNullable<Connector["heldReleased"]>>[1]
+      try {
+        await this.actions.prompt(root, held.text, delivery, held.files)
+        this.remote.add(root)
+        shown = {
+          how: !busy ? "sent" : delivery === "steer" ? "steered" : "queued",
+          agent: (await this.host.session(root))?.agent,
+          text: "✅ That question was already answered at the Mac: your message was sent.",
+        }
+      } catch (err) {
+        log("held_send_error", {
+          session: root,
+          message: (err as Error).message,
+        })
+        shown = {
+          how: "failed",
+          text:
+            "⚠ Could not send your waiting message: " +
+            truncate((err as Error).message || "unknown error", 120),
+        }
+      }
+      for (const ch of this.channels)
+        if (ch.heldReleased)
+          await this.safely(ch, () => ch.heldReleased!(id, shown))
+    }
+  }
+
   /** The oldest open question of a session, posted again with its buttons. */
   async repostQuestion(root: string): Promise<Outcome> {
+    // Only a question OpenCode still holds is posted again.
+    await this.reconcile(root, 0)
     const p = this.openPromptList(root).find((x) => x.kind === "question")
     if (!p)
       return no(
@@ -2130,14 +2256,21 @@ export class Bridge {
   /** Marks the prompt's message on every connector that carries it. */
   private async markAnswered(
     p: Pending,
-    o: { outcome: "answered" | "cancelled"; via: string; answer?: string },
+    o: {
+      outcome: "answered" | "cancelled"
+      via: string
+      answer?: string
+      reconciled?: boolean
+    },
   ) {
     const note =
       o.outcome === "cancelled"
         ? "Cancelled"
-        : o.via === "TUI"
-          ? "Answered in the TUI"
-          : `Answered from ${o.via}: ${o.answer}`
+        : o.reconciled
+          ? "Already answered at the Mac"
+          : o.via === "TUI"
+            ? "Answered in the TUI"
+            : `Answered from ${o.via}: ${o.answer}`
     if (p.kind === "permission" && this.cfg.permissions.notify === "digest")
       this.permDigestTouch(p.rootSessionID)
     const f = this.fmt("closed", { id: p.id, title: p.title, note })
@@ -2156,6 +2289,7 @@ export class Bridge {
           outcome: o.outcome,
           answer: o.answer,
           via: o.via,
+          reconciled: o.reconciled,
           origin:
             o.via === "TUI"
               ? "mac"
@@ -2308,9 +2442,12 @@ export class Bridge {
       return this.hint(root, "Chat is blocked for this session by chat.deny.")
     }
     // A session that waits on a question does not take a message behind it: keep it and ask.
-    const asking = this.openPromptList(root).filter(
-      (p) => p.kind === "question",
-    )
+    const open = () =>
+      this.openPromptList(root).filter((p) => p.kind === "question")
+    let asking = open()
+    // Ask OpenCode before holding: a question answered at the Mac while the bridge was away is not open.
+    if (asking.length && !bang && (await this.reconcile(root, 0)))
+      asking = open()
     if (asking.length && !bang) {
       info.outcome = "held"
       return this.commands.hold(root, { text, files: m.files }, asking.length)
@@ -2708,6 +2845,20 @@ export class Bridge {
       await this.actions.answerForm(p.sessionID, p.requestID, answer)
     } catch (err) {
       log("reply_error", { id: p.id, message: (err as Error).message })
+      if (/not found/i.test((err as Error).message)) {
+        // OpenCode no longer has it: it was answered at the Mac.
+        await this.settleStale(this.store.get(p.id)!, "answered")
+        if (
+          !this.openPromptList(p.rootSessionID).some(
+            (x) => x.kind === "question",
+          )
+        )
+          await this.releaseHeld(p.rootSessionID)
+        return {
+          outcome: "failed",
+          out: no(`#${p.id}: already answered at the Mac.`),
+        }
+      }
       this.store.update(p.id, { state: "failed" })
       this.pendingGauge()
       return {

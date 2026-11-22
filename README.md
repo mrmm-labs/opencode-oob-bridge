@@ -278,6 +278,10 @@ What you get in Telegram:
   first answer still wins, from the phone or the TUI. You can still reply with one answer per
   question, separated by `|` (for example `1 | yes | 2,3`), as on ntfy.
 - A question with more than 10 options gets no buttons: reply by number or text.
+- A question or permission the bridge waits on is checked against OpenCode when the plugin starts and
+  every 60 seconds. One OpenCode no longer holds (answered at the Mac while the plugin restarted,
+  say) is closed: its message reads `✅ Already answered at the Mac` with no buttons, and a message
+  held behind it is sent. The same check runs before a message is held or a question is posted again.
 - A form is answered through the local OpenCode service, so no window needs to be open. A
   window relays the reply only if the service refuses it. When neither can take it, the message
   says to answer at the Mac and has no buttons.
