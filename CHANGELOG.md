@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.42.0...v0.43.0) (2026-11-22)
+
+
+### Features
+
+* report what is still pending in the status and the version answer ([#150](https://github.com/mrmm-labs/opencode-oob-bridge/issues/150)) ([c752f14](https://github.com/mrmm-labs/opencode-oob-bridge/commit/c752f14990232ed716df21fbe955c72c5f4b8556))
+
 ## [0.42.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.41.0...v0.42.0) (2026-11-22)
 
 
