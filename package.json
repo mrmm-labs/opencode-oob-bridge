@@ -1,6 +1,6 @@
 {
   "name": "opencode-oob-bridge",
-  "version": "0.37.1",
+  "version": "0.37.2",
   "description": "OpenCode plugin that mirrors questions and permission prompts of selected sessions to ntfy and/or Telegram and lets you answer questions from your phone.",
   "keywords": [
     "notifications",
