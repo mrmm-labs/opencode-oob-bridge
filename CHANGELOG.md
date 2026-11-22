@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.37.0...v0.37.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* stop the Mini App running a cached copy, say why Face ID is unavailable, and show the build and uptime ([#128](https://github.com/mrmm-labs/opencode-oob-bridge/issues/128)) ([d18fa06](https://github.com/mrmm-labs/opencode-oob-bridge/commit/d18fa06f9158eccdbcef525e1e08c12202edb856))
+
 ## [0.37.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.36.2...v0.37.0) (2026-11-22)
 
 
