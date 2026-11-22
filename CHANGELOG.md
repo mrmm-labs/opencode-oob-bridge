@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.1...v0.39.2) (2026-11-22)
+
+
+### Bug Fixes
+
+* show a finished enrolment as done and ignore repeat taps ([#138](https://github.com/mrmm-labs/opencode-oob-bridge/issues/138)) ([57cb7bd](https://github.com/mrmm-labs/opencode-oob-bridge/commit/57cb7bddf98cc2fd455e103d03114ebc1b830292))
+
 ## [0.39.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.39.0...v0.39.1) (2026-11-22)
 
 
