@@ -1,6 +1,6 @@
 // The L2 factors on the phone: which ones this device can use, in the bridge's order, and the proofs.
 // The bridge checks every proof; nothing here decides whether an approval is granted.
-import { biometric } from "./tg.js"
+import { biometric, note } from "./tg.js"
 
 const TAG = "oob-l2-biometric-v1"
 
@@ -72,9 +72,73 @@ export async function passkeySupported(win = globalThis) {
   }
 }
 
-/** What the controller calls for the parts that need the phone. */
-export function createDevice(win = globalThis, bio = biometric(win)) {
+/** Whether a client version such as "7.10" is at least a needed one such as "7.2". */
+export function versionAtLeast(have, need) {
+  const n = (s) =>
+    String(s)
+      .split(".")
+      .map((x) => Number.parseInt(x, 10) || 0)
+  const [h, w] = [n(have), n(need)]
+  for (let i = 0; i < Math.max(h.length, w.length); i++) {
+    const [a, b] = [h[i] ?? 0, w[i] ?? 0]
+    if (a !== b) return a > b
+  }
+  return true
+}
+
+/** Telegram added the biometric manager in 7.2. */
+const FACE_ID_FROM = "7.2"
+
+/**
+ * Why Face ID cannot be used, in a sentence the person can act on. `why` is the short code that goes
+ * to the bridge's log with the manager's own state.
+ */
+export function biometricProblem(info, version, afterAccess = false) {
+  if (info?.answered === false)
+    return version && !versionAtLeast(version, FACE_ID_FROM)
+      ? {
+          why: "too_old",
+          text: `Telegram is too old for Face ID: it needs ${FACE_ID_FROM} or later, and this is ${version}. Update Telegram.`,
+        }
+      : {
+          why: "no_answer",
+          text: "Telegram did not answer in time. Close this app and open it again.",
+        }
+  if (!info?.available)
+    return {
+      why: "not_available",
+      text: "Face ID is not available on this phone: set it up in iOS Settings › Face ID & Passcode, and allow Telegram to use it.",
+    }
+  if (afterAccess && !info.accessGranted)
+    return info.accessRequested
+      ? {
+          why: "refused",
+          text: "Telegram has no Face ID permission for this app. Allow it in iOS Settings › Telegram › Face ID and in this app's ⋯ menu › Settings, then try again.",
+        }
+      : {
+          why: "not_asked",
+          text: "Telegram did not ask for Face ID. Close this app and open it again.",
+        }
+  return undefined
+}
+
+/** What the controller calls for the parts that need the phone. `env` is what Telegram said about itself. */
+export function createDevice(win = globalThis, bio = biometric(win), env = {}) {
   const REASON = "Approve this request"
+  const report = (why, i) =>
+    note("biometric_unavailable", {
+      why,
+      inited: i?.inited ?? "",
+      answered: i?.answered !== false,
+      available: i?.available === true,
+      type: i?.type ?? "",
+      requested: i?.accessRequested === true,
+      granted: i?.accessGranted === true,
+      saved: i?.tokenSaved === true,
+      device: i?.deviceId === true,
+      version: env.version ?? "",
+      platform: env.platform ?? "",
+    })
   return {
     async support(view) {
       const info = await bio.info()
@@ -132,12 +196,15 @@ export function createDevice(win = globalThis, bio = biometric(win)) {
     /** Asks Telegram for biometric access before the code is spent, so a refusal wastes nothing. */
     async prepareBiometric() {
       let info = await bio.info()
-      if (!info.available)
-        return { error: "Face ID is not available in this app." }
+      let bad = biometricProblem(info, env.version)
+      if (bad) {
+        report(bad.why, info)
+        return { error: bad.text }
+      }
       if (!info.accessGranted) info = await bio.requestAccess(REASON)
-      return info.accessGranted
-        ? {}
-        : { error: "Telegram was not allowed to use Face ID for this app." }
+      bad = biometricProblem(info, env.version, true)
+      if (bad) report(bad.why, info)
+      return bad ? { error: bad.text } : {}
     },
     saveToken: (token) => bio.saveToken(token),
 

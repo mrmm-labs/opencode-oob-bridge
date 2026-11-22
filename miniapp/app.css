@@ -110,6 +110,11 @@ h3 {
   margin-top: 24px;
 }
 
+.foot {
+  text-align: center;
+  padding: 8px 0 16px;
+}
+
 .hint {
   color: var(--hint);
   font-size: 14px;

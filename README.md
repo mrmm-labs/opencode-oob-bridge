@@ -58,7 +58,7 @@ over. The sidebar size now lives in `tui.json` in the state directory, seeded fr
 
 ### Checking which version is loaded
 
-After an upgrade the files on disk change at once, but the server and each TUI keep running the code they loaded. `/oob version` (or `/version` in Telegram) shows both sides: the version in `package.json` and `git describe` of the install directory, the version the server half and this TUI half have in memory, the server's pid, start time and owner instance id, the config file in use and the core API version. When any two differ it prints a `⚠` line such as `the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode`, and the sidebar shows the same line under its header. The running version is read once when the plugin is loaded, never from disk again.
+After an upgrade the files on disk change at once, but the server and each TUI keep running the code they loaded. `/oob version` shows both sides: the version in `package.json` and `git describe` of the install directory, the version the server half and this TUI half have in memory, the server's pid, start time and owner instance id, the config file in use and the core API version. `/version` in Telegram, and the footer of the Mini App's Info screen, say the version the server runs and how long it has been up; the Telegram answer also gives the installed and TUI versions, and neither shows a path, a pid or an address. When any two differ it prints a `⚠` line such as `the server runs 0.22.0 but 0.23.0 is installed: restart OpenCode`, and the sidebar shows the same line under its header. The running version is read once when the plugin is loaded, never from disk again.
 
 ## Install
 
@@ -515,7 +515,7 @@ In a session's topic (they act on that session, and need chat on):
 | `/undo`               | Asks, then reverts the last turn through an open OpenCode window (it says so when none is open).                                                 |
 | `/resume`             | Wakes this session when it is stuck with messages waiting.                                                                                       |
 | `/afk`                | Shows the away mode, whether you count as away, and the overnight state. Changes nothing.                                                        |
-| `/version`            | The installed version, what the server and each open TUI run, and a warning when they differ.                                                    |
+| `/version`            | The version the server runs and its uptime, the installed version, what each open TUI runs, and a warning when they differ. No path or pid.      |
 | `/night`              | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                                                            |
 | `/stop`               | Stops the running turn.                                                                                                                          |
 | `/compact`            | Compacts the session.                                                                                                                            |
@@ -532,7 +532,7 @@ In General, or a private chat:
 | `/sessions`               | The mirrored sessions, with a link to each topic.                                                                   |
 | `/resume`                 | Lists the stuck sessions with a button each, or says none is stuck.                                                 |
 | `/afk`                    | The same read-only away status as in a topic.                                                                       |
-| `/version`                | The same version report as in a topic.                                                                              |
+| `/version`                | The same version answer as in a topic.                                                                              |
 | `/night`                  | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                               |
 | `/digest`                 | Sends the digest on request; answers that it is not enabled until it is.                                            |
 | `/projects`               | The projects `/new` can use.                                                                                        |
@@ -828,6 +828,7 @@ A page that opens inside Telegram, for what a chat does badly: browsing sessions
 - **Permissions:** the buttons follow `permissions.remote`; with it off the app shows the permission without buttons.
 - **Offline:** the page follows the event stream and shows a banner with the time of the last update when it drops. Every action is disabled until it is back.
 - **One outside script:** Telegram's own `telegram-web-app.js`, which the app uses for Face ID (its biometric manager) and falls back from when it does not load. No other script, style or font from another origin; the policy allows framing by Telegram's web clients only.
+- **No stale copy:** the page is never cached, and every file URL carries a build stamp (`?v=<version>-<hash>`), so a phone, Telegram's WebView or a CDN that kept an older file asks for a new URL after an upgrade. The Info screen's footer shows the bridge version, its uptime and the page's build, and says when the page is an old copy.
 
 Setup, with a public hostname that serves `/app/` and `/v1/` to the bridge (a relay, or any reverse proxy), is in [`miniapp/README.md`](miniapp/README.md).
 

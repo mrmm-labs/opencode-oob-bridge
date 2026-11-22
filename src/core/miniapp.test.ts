@@ -9,7 +9,7 @@ import type { Host } from "../bridge.ts"
 import type { Config } from "../config.ts"
 import { signInitData } from "../link/initdata.ts"
 import { Actions } from "./actions.ts"
-import { CSP, TELEGRAM_SDK } from "./app.ts"
+import { appStamp, CSP, TELEGRAM_SDK } from "./app.ts"
 import { EventRing, handler, startApi, type ApiDeps } from "./api.ts"
 import { TokenStore } from "./auth.ts"
 import { Views } from "./views.ts"
@@ -58,7 +58,7 @@ async function rig(clock = { t: NOW }) {
     snapshot: () => ({
       v: 1,
       at: 1,
-      owner: {},
+      owner: { startedAt: 1700000000000, version: "9.9.9" },
       versions: { installed: "1.0.0", tuis: [] },
       afk: {},
       pending: 0,
@@ -279,6 +279,75 @@ describe("the app files", () => {
     }
   })
 
+  it("never lets the page be kept, and names every file with the build", async () => {
+    const r = await rig()
+    try {
+      const stamp = await appStamp("9.9.9")
+      assert.match(stamp, /^9\.9\.9-[0-9a-f]{8}$/)
+      const page = await fetch(r.url + "/app/")
+      assert.equal(page.headers.get("cache-control"), "no-store")
+      const html = await page.text()
+      assert.ok(html.includes(`href="app.css?v=${stamp}"`), html)
+      assert.ok(html.includes(`src="app.js?v=${stamp}"`), html)
+      assert.ok(
+        html.includes(`src="${TELEGRAM_SDK}"`),
+        "the outside script is left alone",
+      )
+      const direct = await fetch(r.direct + "/app/", {
+        headers: { authorization: "Bearer " + r.token },
+      })
+      assert.equal(direct.headers.get("cache-control"), "no-store")
+      assert.equal(await direct.text(), html, "the same page by both ports")
+    } finally {
+      await r.close()
+    }
+  })
+
+  it("keeps a file for good only when it was asked for with the current build, and stamps its imports", async () => {
+    const r = await rig()
+    try {
+      const stamp = await appStamp("9.9.9")
+      const kept = await fetch(`${r.url}/app/app.js?v=${stamp}`)
+      assert.equal(
+        kept.headers.get("cache-control"),
+        "public, max-age=31536000, immutable",
+      )
+      const js = await kept.text()
+      assert.match(js, new RegExp(`from "\\./api\\.js\\?v=${stamp}"`))
+      assert.doesNotMatch(
+        js,
+        /from "\.\/[a-z-]+\.js"/,
+        "no import without the build",
+      )
+      for (const url of [
+        "/app/app.js",
+        "/app/app.js?v=old",
+        "/app/app.css",
+        "/app/app.css?v=old",
+      ]) {
+        const res = await fetch(r.url + url)
+        assert.equal(res.status, 200, url)
+        assert.equal(res.headers.get("cache-control"), "no-store", url)
+      }
+    } finally {
+      await r.close()
+    }
+  })
+
+  it("gives the build in the meta, and another build for another version", async () => {
+    const r = await rig()
+    try {
+      const meta = await (
+        await fetch(r.url + "/v1/meta", { headers: tma(init()) })
+      ).json()
+      assert.equal(meta.app, await appStamp("9.9.9"))
+      assert.notEqual(await appStamp("9.9.8"), meta.app)
+      assert.equal((await appStamp("9.9.9")).slice(-8), meta.app.slice(-8))
+    } finally {
+      await r.close()
+    }
+  })
+
   it("loads nothing from another origin", async () => {
     const dir = new URL("../../miniapp/", import.meta.url)
     const { readdir } = await import("node:fs/promises")
@@ -324,6 +393,7 @@ describe("what the app reads", () => {
       assert.equal(s.night.sessions[0].tasks, 2)
       assert.doesNotMatch(s.night.sessions[0].title, /sk-abcdefghijklmnop/)
       assert.equal(s.versions.installed, "1.0.0")
+      assert.deepEqual(s.owner, { startedAt: 1700000000000, version: "9.9.9" })
     } finally {
       await r.close()
     }

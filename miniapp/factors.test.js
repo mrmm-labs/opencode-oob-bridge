@@ -10,7 +10,9 @@ import {
   parseToken,
   passkeySupported,
   unb64,
+  versionAtLeast,
 } from "./factors.js"
+import { setReporter } from "./tg.js"
 
 describe("factor order", () => {
   it("keeps the bridge's order and drops what the device cannot do", () => {
@@ -96,6 +98,7 @@ describe("the device", () => {
     authenticate: async () => o?.token,
     requestAccess: async () => ({
       available: true,
+      accessRequested: o?.accessRequested === true,
       accessGranted: o?.grant === true,
     }),
   })
@@ -165,14 +168,125 @@ describe("the device", () => {
       {},
     )
     assert.match(
-      (await createDevice({}, bio({ accessGranted: false })).prepareBiometric())
-        .error,
-      /not allowed/,
+      (
+        await createDevice(
+          {},
+          bio({ accessGranted: false, accessRequested: true }),
+        ).prepareBiometric()
+      ).error,
+      /no Face ID permission.*iOS Settings › Telegram › Face ID/,
     )
     assert.match(
       (await createDevice({}, bio({ available: false })).prepareBiometric())
         .error,
-      /not available/,
+      /not available on this phone/,
     )
+  })
+
+  const lines = []
+  const reporting = () => {
+    lines.length = 0
+    setReporter((e, d) => lines.push([e, d]))
+  }
+  const state = {
+    inited: true,
+    answered: true,
+    available: false,
+    type: "unknown",
+    accessRequested: false,
+    accessGranted: false,
+    tokenSaved: false,
+    deviceId: false,
+  }
+
+  it("tells a client that is too old from one that did not answer, and a refusal from a missing question", async () => {
+    const prep = (o, version, grant) =>
+      createDevice(
+        {},
+        {
+          info: async () => ({ ...state, ...o }),
+          requestAccess: async () => ({ ...state, available: true, ...grant }),
+        },
+        { version },
+      ).prepareBiometric()
+    assert.match(
+      (await prep({ answered: false }, "7.0")).error,
+      /too old.*needs 7\.2 or later, and this is 7\.0/,
+    )
+    assert.match(
+      (await prep({ answered: false }, "7.10")).error,
+      /did not answer in time/,
+    )
+    assert.match(
+      (await prep({ answered: false }, undefined)).error,
+      /did not answer in time/,
+    )
+    assert.match(
+      (await prep({ available: true }, "8.0", { accessRequested: true })).error,
+      /no Face ID permission/,
+    )
+    assert.match(
+      (await prep({ available: true }, "8.0", {})).error,
+      /did not ask for Face ID/,
+    )
+  })
+
+  it("reports why, with the manager's state and never a token, when Face ID cannot be used", async () => {
+    reporting()
+    const device = createDevice(
+      {},
+      {
+        info: async () => ({ ...state, available: true, deviceId: true }),
+        requestAccess: async () => ({
+          ...state,
+          available: true,
+          accessRequested: true,
+          deviceId: true,
+        }),
+      },
+      { version: "8.0", platform: "ios" },
+    )
+    await device.prepareBiometric()
+    assert.equal(lines.length, 1)
+    const [event, data] = lines[0]
+    assert.equal(event, "biometric_unavailable")
+    assert.deepEqual(data, {
+      why: "refused",
+      inited: true,
+      answered: true,
+      available: true,
+      type: "unknown",
+      requested: true,
+      granted: false,
+      saved: false,
+      device: true,
+      version: "8.0",
+      platform: "ios",
+    })
+    await createDevice(
+      {},
+      {
+        info: async () => ({ ...state, available: false }),
+      },
+    ).prepareBiometric()
+    assert.equal(lines[1][1].why, "not_available")
+    setReporter(() => {})
+  })
+
+  it("reports nothing when Face ID can be used", async () => {
+    reporting()
+    await createDevice({}, bio({ accessGranted: true })).prepareBiometric()
+    assert.deepEqual(lines, [])
+    setReporter(() => {})
+  })
+})
+
+describe("the client version", () => {
+  it("compares part by part, not as text", () => {
+    assert.equal(versionAtLeast("7.10", "7.2"), true)
+    assert.equal(versionAtLeast("7.2", "7.2"), true)
+    assert.equal(versionAtLeast("7.1", "7.2"), false)
+    assert.equal(versionAtLeast("6.9", "7.2"), false)
+    assert.equal(versionAtLeast("8", "7.2"), true)
   })
 })

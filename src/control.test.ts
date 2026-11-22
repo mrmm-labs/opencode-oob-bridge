@@ -614,7 +614,9 @@ describe("version", () => {
     ])
     const text = await r.control.versionText()
     assert.match(text, /Installed: 0\.23\.0 \(git v9\.9\.9-0-gdeadbee\)/)
-    assert.match(text, /Server runs: 0\.22\.0, pid 1, started /)
+    assert.match(text, /Running: 0\.22\.0/)
+    assert.match(text, /Up: /)
+    assert.doesNotMatch(text, /pid|Config|Owner instance|127\.0\.0\.1/)
     assert.match(
       text,
       /⚠ the server runs 0\.22\.0 but 0\.23\.0 is installed: restart OpenCode/,
@@ -658,7 +660,7 @@ describe("version", () => {
     assert.equal((out.data as { running: string }).running, "0.22.0")
     r.tg.message(CHAT, "/version")
     const sent = await r.tg.waitFor(() =>
-      r.sends().find((b) => /Server runs/.test(b.text)),
+      r.sends().find((b) => /Running: /.test(b.text)),
     )
     assert.match(sent.text, /restart OpenCode/)
     await r.done()

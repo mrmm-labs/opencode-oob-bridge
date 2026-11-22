@@ -9,6 +9,7 @@ import {
   ready,
   setReporter,
 } from "./tg.js"
+import { isStale } from "./format.js"
 import { render } from "./views.js"
 
 const params = launch()
@@ -24,6 +25,8 @@ setReporter((event, data) => {
   if (!params.initData || reported++ >= 40) return
   void api.log(event, data).catch(() => {})
 })
+// The server stamps every file URL with its build: this is the build the page was loaded from.
+const build = new URL(import.meta.url).searchParams.get("v") ?? ""
 note("boot", {
   ua: navigator.userAgent.slice(0, 150),
   ver: params.version,
@@ -34,11 +37,16 @@ note("boot", {
     typeof ReadableStream !== "undefined" &&
     typeof ReadableStream.prototype[Symbol.asyncIterator] === "function",
   proxy: !!window.TelegramWebviewProxy,
+  build,
 })
 const ctl = createController({
   api,
+  build,
   start: params.start,
-  device: createDevice(),
+  device: createDevice(undefined, undefined, {
+    version: params.version,
+    platform: params.platform,
+  }),
   makeStream: (h) => new Stream({ api, note, ...h }),
 })
 
@@ -65,6 +73,17 @@ function draw() {
   if (main) main.scrollTop = keep
 }
 
+let said = false
+ctl.subscribe((s) => {
+  if (!said && s.meta) {
+    said = true
+    note("app_build", {
+      page: build,
+      app: s.meta.app ?? "",
+      stale: isStale(build, s.meta.app),
+    })
+  }
+})
 ctl.subscribe(draw)
 root.addEventListener("focusout", () => setTimeout(() => later && draw(), 0))
 setInterval(draw, 10_000)

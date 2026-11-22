@@ -8,6 +8,32 @@ export function ago(at, now) {
   return Math.floor(s / 86_400) + "d ago"
 }
 
+/** How long since `at`: "3d 4h", "3h 12m", "5m" or "40s"; empty when the start is not known. */
+export function uptime(at, now) {
+  if (!Number.isFinite(at)) return ""
+  const s = Math.max(0, Math.floor((now - at) / 1000))
+  const d = Math.floor(s / 86_400)
+  const h = Math.floor((s % 86_400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return d + "d " + h + "h"
+  if (h > 0) return h + "h " + m + "m"
+  return m > 0 ? m + "m" : s + "s"
+}
+
+/** Whether this page is not the build the bridge serves now: a copy a phone or a CDN kept. */
+export const isStale = (page, app) =>
+  typeof app === "string" && app !== "" && page !== app
+
+/** The footer of the Info screen: the bridge version that runs, and for how long. */
+export const aboutLine = (version, startedAt, now, page) =>
+  [
+    "opencode-oob-bridge " + (version || "unknown"),
+    uptime(startedAt, now) && "up " + uptime(startedAt, now),
+    "page " + (page || "unstamped"),
+  ]
+    .filter(Boolean)
+    .join(" · ")
+
 export const hhmm = (at) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 
