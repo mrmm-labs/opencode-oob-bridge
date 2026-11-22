@@ -118,14 +118,15 @@ export interface Host {
   /** Whether a form reply can be delivered now (the service answers, or a TUI is attached). Unset: assume it can. */
   canReplyForm?(): boolean | Promise<boolean>
   /**
-   * What OpenCode says of a form or permission request the bridge is waiting on: still `open`, or
-   * already `answered` or `cancelled`. Undefined when it cannot say. Absent when the host cannot.
+   * What OpenCode says of a form or permission request the bridge is waiting on: still `open`,
+   * `answered` or `cancelled` when it says so, or `gone` when it no longer holds a form and
+   * does not say why. Undefined when it cannot say. Absent when the host cannot.
    */
   requestState?(
     kind: "question" | "permission",
     sessionID: string,
     requestID: string,
-  ): Promise<"open" | "answered" | "cancelled" | undefined>
+  ): Promise<"open" | "answered" | "cancelled" | "gone" | undefined>
   /** Answers a permission request. Absent when the host cannot. */
   replyPermission?(
     sessionID: string,
@@ -1234,7 +1235,7 @@ export class Bridge {
           // An answer may have arrived while OpenCode was asked.
           const now = this.store.get(p.id)
           if (now?.state !== "pending") continue
-          await this.settleStale(now, s)
+          await this.settleStale(now, s === "gone" ? "withdrawn" : s)
           touched.add(now.rootSessionID)
           closed++
         }
@@ -1251,11 +1252,17 @@ export class Bridge {
     return next
   }
 
-  /** Closes a prompt OpenCode no longer holds, as if it had been answered at the Mac. */
-  private async settleStale(p: Pending, state: "answered" | "cancelled") {
+  /**
+   * Closes a prompt OpenCode no longer holds. One it says was answered or cancelled is closed as an
+   * answer at the Mac; a form it dropped without saying is withdrawn.
+   */
+  private async settleStale(
+    p: Pending,
+    state: "answered" | "cancelled" | "withdrawn",
+  ) {
     this.store.update(p.id, {
       state,
-      answeredBy: "unknown (reconciled)",
+      answeredBy: state === "withdrawn" ? undefined : "unknown (reconciled)",
       answeredAt: this.now(),
     })
     this.pendingGauge()
@@ -1285,7 +1292,7 @@ export class Bridge {
         shown = {
           how: !busy ? "sent" : delivery === "steer" ? "steered" : "queued",
           agent: (await this.host.session(root))?.agent,
-          text: "✅ That question was already answered at the Mac: your message was sent.",
+          text: "✅ That question is no longer open: your message was sent.",
         }
       } catch (err) {
         log("held_send_error", {
@@ -2265,20 +2272,22 @@ export class Bridge {
   private async markAnswered(
     p: Pending,
     o: {
-      outcome: "answered" | "cancelled"
+      outcome: "answered" | "cancelled" | "withdrawn"
       via: string
       answer?: string
       reconciled?: boolean
     },
   ) {
     const note =
-      o.outcome === "cancelled"
-        ? "Cancelled"
-        : o.reconciled
-          ? "Already answered at the Mac"
-          : o.via === "TUI"
-            ? "Answered in the TUI"
-            : `Answered from ${o.via}: ${o.answer}`
+      o.outcome === "withdrawn"
+        ? "Withdrawn: the session stopped asking"
+        : o.outcome === "cancelled"
+          ? "Cancelled"
+          : o.reconciled
+            ? "Already answered at the Mac"
+            : o.via === "TUI"
+              ? "Answered in the TUI"
+              : `Answered from ${o.via}: ${o.answer}`
     if (p.kind === "permission" && this.cfg.permissions.notify === "digest")
       this.permDigestTouch(p.rootSessionID)
     const f = this.fmt("closed", { id: p.id, title: p.title, note })
@@ -2861,8 +2870,8 @@ export class Bridge {
         reason: gone ? "not-found" : "error",
       })
       if (gone) {
-        // OpenCode no longer has it: it was answered at the Mac.
-        await this.settleStale(this.store.get(p.id)!, "answered")
+        // OpenCode no longer has it, and nothing says it was answered.
+        await this.settleStale(this.store.get(p.id)!, "withdrawn")
         if (
           !this.openPromptList(p.rootSessionID).some(
             (x) => x.kind === "question",
@@ -2871,7 +2880,7 @@ export class Bridge {
           await this.releaseHeld(p.rootSessionID)
         return {
           outcome: "failed",
-          out: no(`#${p.id}: already answered at the Mac.`),
+          out: no(`#${p.id}: the session no longer asks this.`),
         }
       }
       this.store.update(p.id, { state: "failed" })

@@ -91,7 +91,7 @@ export type Card =
     }
   | {
       kind: "closed"
-      outcome: "answered" | "cancelled"
+      outcome: "answered" | "cancelled" | "withdrawn"
       /** Unknown when the prompt was answered in the TUI. */
       answer?: string
       /** Where it was answered: a connector name, or "TUI". */

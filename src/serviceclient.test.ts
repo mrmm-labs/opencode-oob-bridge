@@ -106,12 +106,12 @@ describe("the service client: the state of a request", () => {
     assert.equal(await cut.state("question", "s", "f"), "cancelled")
   })
 
-  it("counts a form or permission request it no longer has as answered", async () => {
+  it("says a form it no longer has is gone, and a permission request it no longer has is answered", async () => {
     const c = make({
       form: async () => Promise.reject(tagged("FormNotFoundError")),
       permission: async () => Promise.reject(tagged("PermissionNotFoundError")),
     })
-    assert.equal(await c.state("question", "s", "f"), "answered")
+    assert.equal(await c.state("question", "s", "f"), "gone")
     assert.equal(await c.state("permission", "s", "p"), "answered")
   })
 

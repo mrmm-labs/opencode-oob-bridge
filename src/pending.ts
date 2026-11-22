@@ -5,7 +5,13 @@ import { dirname } from "node:path"
 import type { Question } from "./inbound.ts"
 import { log } from "./logger.ts"
 
-export type PendingState = "pending" | "answered" | "cancelled" | "failed"
+export type PendingState =
+  | "pending"
+  | "answered"
+  | "cancelled"
+  /** OpenCode dropped it and nobody was seen to answer: the session stopped asking. */
+  | "withdrawn"
+  | "failed"
 
 export type Pending = {
   /** Short id used in pushes and replies. */
