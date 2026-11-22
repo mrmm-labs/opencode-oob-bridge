@@ -96,8 +96,8 @@ export type Card =
       answer?: string
       /** Where it was answered: a connector name, or "TUI". */
       via: string
-      /** At the Mac (the TUI) or in Telegram, when it is one of those. */
-      origin?: "mac" | "telegram"
+      /** At the Mac (the TUI), in Telegram or in the app, when it is one of those. */
+      origin?: "mac" | "telegram" | "app"
       /** OpenCode no longer held it when the bridge looked, so nobody saw it answered. */
       reconciled?: boolean
       /** hh:mm, local time. */

@@ -9,7 +9,7 @@ app.js       start: launch parameters, theme, controller, redraw
 tg.js        init data and theme from the URL hash; the two events sent to Telegram
 api.js       the core API over fetch; the event stream with reconnect and a silence watchdog
 controller.js  state and actions (no DOM); every confirmation and gate lives here
-form.js      a form answered one field at a time, with a review step
+form.js      the draft of a form answered on one screen
 views.js     drawing; every string from the API is set as text, never as markup
 format.js    small pure helpers
 *.test.js    tests (node:test), run by `pnpm test`

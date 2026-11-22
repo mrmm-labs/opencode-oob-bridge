@@ -19,9 +19,9 @@
 
 ## 4. The question screen (PR 4)
 
-- [ ] 4.1 One screen, grouped, recommended selected and tagged, Other row, Send answers. Verify: `miniapp/views.test.js`, `miniapp/form.test.js`.
-- [ ] 4.2 Phone-side draft survives a reload. Verify: `miniapp/controller.test.js`.
-- [ ] 4.3 After Send: haptic, close, "✅ Answered in app · …" masked. Verify: `src/chat-question.test.ts`, `miniapp/controller.test.js`.
+- [x] 4.1 One screen, grouped, recommended selected and tagged, Other row, Send answers. Verify: `miniapp/views.test.js`, `miniapp/form.test.js`.
+- [x] 4.2 Phone-side draft survives a reload. Verify: `miniapp/controller.test.js`.
+- [x] 4.3 After Send: haptic, close, "✅ Answered in app · …" masked. Verify: `src/forms.test.ts`, `miniapp/controller.test.js`.
 
 ## 5. Drain (PR 5)
 

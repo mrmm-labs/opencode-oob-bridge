@@ -127,14 +127,16 @@ function lines(card: Card, o: RenderOptions, st: Stage): string[] {
             : "Answered at the Mac"
           : card.origin === "telegram"
             ? "Answered in Telegram"
-            : undefined
+            : card.origin === "app"
+              ? "Answered in app"
+              : undefined
       const head =
         card.outcome === "withdrawn"
           ? "⚪ <b>Withdrawn</b>: the session stopped asking"
           : card.outcome === "cancelled"
             ? "⚪ <b>Cancelled</b>"
             : where
-              ? `✅ <b>${where}</b>${card.answer ? `: ${fit(clean(card.answer), 300)}` : ""}`
+              ? `✅ <b>${where}</b>${card.answer ? `${card.origin === "app" ? " ·" : ":"} ${fit(clean(card.answer), 300)}` : ""}`
               : `✅ <b>Answered</b>${card.answer ? ` · ${fit(clean(card.answer), 300)}` : ""}`
       return [
         head,

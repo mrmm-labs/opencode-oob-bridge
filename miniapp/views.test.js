@@ -137,3 +137,90 @@ describe("the approval screen", () => {
     assert.equal(v.find("button", "Deny").length, 1)
   })
 })
+describe("the question screen", () => {
+  const items = [
+    {
+      key: "a",
+      header: "Ship",
+      text: "Ship it?",
+      options: ["Yes (Recommended)", "No"],
+      multiple: false,
+      custom: false,
+    },
+    {
+      key: "b",
+      header: "Tools",
+      text: "Which?",
+      options: ["x", "y"],
+      multiple: true,
+      custom: true,
+    },
+  ]
+  const screen = (over = {}) =>
+    render(
+      {
+        ...state(undefined),
+        route: { name: "question", id: "p1" },
+        question: {
+          id: "p1",
+          view: { title: "Q", session: "s1", items },
+          draft: [
+            { chosen: ["Yes (Recommended)"], other: "" },
+            { chosen: [], other: "" },
+          ],
+          ...over,
+        },
+      },
+      { ...ctl, edit() {}, sendAnswers() {} },
+      1000,
+    )
+
+  it("shows every question in its own group, the recommended one chosen and tagged", () => {
+    const v = screen()
+    const t = v.text()
+    assert.match(t, /Ship/)
+    assert.match(t, /Tools/)
+    assert.match(t, /✓ Yes\s+Recommended/)
+    assert.doesNotMatch(t, /\(Recommended\)/)
+    assert.equal(
+      v.find("input").length,
+      1,
+      "Other only where typing is allowed",
+    )
+    assert.equal(
+      v.find("input")[0].attrs["aria-label"],
+      "Other… type an answer",
+    )
+  })
+
+  it("keeps Send answers off until every question has an answer", () => {
+    const off = screen().find("button", "Send answers")[0]
+    assert.ok("disabled" in off.attrs)
+    const on = screen({
+      draft: [
+        { chosen: ["Yes (Recommended)"], other: "" },
+        { chosen: ["x"], other: "" },
+      ],
+    }).find("button", "Send answers")[0]
+    assert.ok(!("disabled" in on.attrs))
+    const typed = screen({
+      draft: [
+        { chosen: ["No"], other: "" },
+        { chosen: [], other: "mine" },
+      ],
+    })
+    assert.ok(!("disabled" in typed.find("button", "Send answers")[0].attrs))
+    assert.equal(typed.find("button", "✓ Other: mine").length, 1)
+  })
+
+  it("says a closed question is no longer open, and shows a refusal under the answers", () => {
+    assert.match(
+      screen({ view: undefined, gone: true }).text(),
+      /no longer open/,
+    )
+    assert.match(
+      screen({ text: "Already answered." }).text(),
+      /Already answered/,
+    )
+  })
+})

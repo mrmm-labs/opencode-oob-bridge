@@ -7,7 +7,7 @@ const single = {
   key: "a",
   header: "A",
   text: "Ship?",
-  options: ["Yes", "No"],
+  options: ["Yes (Recommended)", "No"],
   multiple: false,
   custom: false,
 }
@@ -15,75 +15,103 @@ const multi = {
   key: "b",
   header: "B",
   text: "Which?",
-  options: ["x, y", "z"],
+  options: ["x, y", "z (recommended)", "w"],
   multiple: true,
   custom: true,
 }
-const typed = {
-  key: "c",
-  header: "C",
-  text: "Name?",
-  options: ["1", "2"],
-  multiple: false,
-  custom: true,
-}
+const items = [single, multi]
 
-describe("form steps", () => {
-  it("answers one single-select field with one tap", () => {
-    assert.equal(F.oneTap([single]), true)
-    const f = F.pick(F.newForm([single]), "No")
-    assert.equal(F.reviewing(f), true)
-    assert.deepEqual(F.body(f, "p1"), { prompt: "p1", answers: { a: "No" } })
+describe("recommended options", () => {
+  it("tags and strips the suffix in any case", () => {
+    assert.equal(F.isRecommended("Yes (Recommended)"), true)
+    assert.equal(F.isRecommended("z (recommended)"), true)
+    assert.equal(F.isRecommended("No"), false)
+    assert.equal(F.plain("Yes (Recommended)"), "Yes")
+    assert.equal(F.plain("No"), "No")
   })
 
-  it("is not one tap for a multi-select field or several fields", () => {
-    assert.equal(F.oneTap([multi]), false)
-    assert.equal(F.oneTap([single, single]), false)
+  it("starts with the recommended options chosen, one for a single-select question", () => {
+    const d = F.newDraft(items)
+    assert.deepEqual(d[0].chosen, ["Yes (Recommended)"])
+    assert.deepEqual(d[1].chosen, ["z (recommended)"])
+    const two = F.newDraft([
+      { ...single, options: ["a (Recommended)", "b (Recommended)"] },
+    ])
+    assert.equal(two[0].chosen.length, 1)
+  })
+})
+
+describe("choosing", () => {
+  it("a single-select question takes one answer and drops the typed one", () => {
+    let d = F.newDraft(items)
+    d = F.pick(d, 0, single, "No")
+    assert.deepEqual(d[0].chosen, ["No"])
+    assert.equal(
+      F.pick(d, 0, single, "nope"),
+      d,
+      "an unknown option changes nothing",
+    )
   })
 
-  it("keeps a multi-select choice across fields and sends options with commas whole", () => {
-    let f = F.newForm([single, multi])
-    f = F.pick(f, "Yes")
-    assert.equal(f.at, 1)
-    f = F.pick(F.pick(f, "x, y"), "z")
-    assert.equal(F.reviewing(f), false)
-    f = F.next(f)
-    assert.equal(F.reviewing(f), true)
-    assert.deepEqual(F.body(f, "p").answers, { a: "Yes", b: ["x, y", "z"] })
-    f = F.pick(F.restart(f), "No")
-    assert.deepEqual(f.chosen[1], ["x, y", "z"], "Edit keeps the other choices")
+  it("a multi-select question toggles, and keeps what was typed", () => {
+    let d = F.newDraft(items)
+    d = F.other(d, 1, multi, "  my   own ")
+    d = F.pick(d, 1, multi, "w")
+    d = F.pick(d, 1, multi, "z (recommended)")
+    assert.deepEqual(d[1].chosen, ["w"])
+    assert.equal(d[1].other, "my own")
   })
 
-  it("unticks a multi-select option and will not go on with none", () => {
-    let f = F.newForm([multi])
-    f = F.pick(F.pick(f, "z"), "z")
-    assert.deepEqual(f.chosen[0], [])
-    assert.equal(F.next(f).at, 0)
+  it("typing replaces the choice of a single-select question, and only where typing is allowed", () => {
+    const custom = { ...single, custom: true }
+    let d = F.newDraft([custom])
+    d = F.other(d, 0, custom, "mine")
+    assert.deepEqual(d[0], { chosen: [], other: "mine" })
+    d = F.pick(d, 0, custom, "No")
+    assert.deepEqual(d[0], { chosen: ["No"], other: "" })
+    const none = F.newDraft([single])
+    assert.equal(F.other(none, 0, single, "x"), none)
+  })
+})
+
+describe("sending", () => {
+  it("is ready only when every question has an answer", () => {
+    let d = F.newDraft(items)
+    d = F.pick(d, 0, single, "No")
+    d = F.pick(d, 1, multi, "z (recommended)")
+    assert.equal(F.ready(items, d), false)
+    d = F.pick(d, 1, multi, "w")
+    assert.equal(F.ready(items, d), true)
+    assert.equal(F.ready([], []), false)
   })
 
-  it("takes typed text only where allowed, and sends a typed number as text", () => {
-    assert.equal(F.type(F.newForm([single]), "Maybe").at, 0)
-    const f = F.type(F.newForm([typed]), " 2 ")
-    assert.deepEqual(F.body(f, "p").answers, { c: "2" })
-    assert.equal(F.type(F.newForm([typed]), "   ").at, 0)
+  it("sends one value per question, the option as it is named", () => {
+    let d = F.newDraft(items)
+    d = F.other(d, 1, multi, "mine")
+    assert.deepEqual(F.body("p1", items, d), {
+      prompt: "p1",
+      answers: { a: "Yes (Recommended)", b: ["z (recommended)", "mine"] },
+    })
   })
+})
 
-  it("drops separators from typed text", () => {
-    const f = F.type(F.newForm([typed]), "a | b, c")
-    assert.deepEqual(f.chosen[0], ["a b c"])
-  })
-
-  it("is complete only when every field has an answer, and goes back", () => {
-    let f = F.newForm([single, single])
-    assert.equal(F.complete(f), false)
-    f = F.pick(f, "Yes")
-    assert.equal(F.complete(f), false)
-    assert.equal(F.back(f).at, 0)
-    assert.equal(F.back(F.newForm([single])).at, 0)
-  })
-
-  it("ignores an option the field does not have", () => {
-    const f = F.newForm([single])
-    assert.equal(F.pick(f, "Maybe"), f)
+describe("a draft kept on the phone", () => {
+  it("is read back when it fits, and refused when the questions changed", () => {
+    const d = F.newDraft(items)
+    assert.deepEqual(F.restore(JSON.parse(JSON.stringify(d)), items), d)
+    assert.equal(F.restore(d, [single]), undefined)
+    assert.equal(
+      F.restore([{ chosen: ["gone"], other: "" }, d[1]], items),
+      undefined,
+    )
+    assert.equal(
+      F.restore(
+        [d[0], { chosen: [], other: "typed" }],
+        [single, { ...multi, custom: false }],
+      ),
+      undefined,
+    )
+    assert.equal(F.restore("junk", items), undefined)
+    assert.equal(F.restore(undefined, items), undefined)
   })
 })

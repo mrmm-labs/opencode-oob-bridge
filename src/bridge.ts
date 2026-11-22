@@ -2310,9 +2310,11 @@ export class Bridge {
           origin:
             o.via === "TUI"
               ? "mac"
-              : this.channels.find((c) => c.id === o.via)?.type === "telegram"
-                ? "telegram"
-                : undefined,
+              : o.via === "api"
+                ? "app"
+                : this.channels.find((c) => c.id === o.via)?.type === "telegram"
+                  ? "telegram"
+                  : undefined,
           time,
           quote,
         })),
@@ -2903,7 +2905,19 @@ export class Bridge {
     await this.markAnswered(p, {
       outcome: "answered",
       via: via.id,
-      answer: given,
+      answer:
+        via.id === "api"
+          ? truncate(
+              redact(
+                Object.values(answer)
+                  .flat()
+                  .map((a) => a.replace(/\s*\(recommended\)\s*/i, " ").trim())
+                  .join(" · "),
+                this.cfg.redact,
+              ),
+              120,
+            )
+          : given,
     })
     return { outcome: "applied", out: { ok: true, text: `Answered: ${given}` } }
   }

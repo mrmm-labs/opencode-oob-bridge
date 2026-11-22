@@ -207,6 +207,7 @@ const TITLES = {
   night: "Overnight",
   info: "Info",
   approval: "Approval",
+  question: "Question",
   enroll: "Set up this phone",
 }
 
@@ -300,6 +301,8 @@ function screen(state, ctl, now, ui) {
       return info(state, ctl, now)
     case "approval":
       return approval(state, ctl)
+    case "question":
+      return questionScreen(state, ctl)
     case "enroll":
       return enroll(state, ctl)
     default:
@@ -748,90 +751,95 @@ function question(state, ctl, d, q, can) {
         "Answer this at the Mac: no OpenCode window is open to take a reply.",
       ),
     )
-  const f = ctl.form(q)
-  const one = F.oneTap(q.items)
-  const go = (fn, ...args) => void ctl.step(q, fn, ...args)
-  if (F.reviewing(f))
-    return card(
-      q.title,
-      h(
-        "ul",
-        { class: "review" },
-        q.items.map((it, i) =>
-          h(
-            "li",
-            null,
-            h("strong", null, it.header || it.text),
-            h("br"),
-            f.chosen[i].join(", "),
-          ),
-        ),
-      ),
-      h(
-        "div",
-        { class: "row" },
-        button("Submit", () => void ctl.submit(q), {
-          kind: "primary",
-          disabled: !can || !F.complete(f),
-        }),
-        button("Edit", () => go(F.restart)),
-        button("Cancel", () => ctl.cancelForm(q)),
-      ),
-    )
-  const item = q.items[f.at]
-  const typed = "ans:" + q.id + ":" + f.at
   return card(
     q.title,
-    !one &&
-      h(
-        "p",
-        { class: "hint" },
-        "Question " + (f.at + 1) + " of " + q.items.length,
-      ),
-    h("p", { class: "ask" }, item.text || item.header),
     h(
-      "div",
-      { class: "opts" },
-      item.options.map((o) =>
-        button(
-          (item.multiple && f.chosen[f.at].includes(o) ? "✓ " : "") + o,
-          () => go(F.pick, o),
-          {
-            kind: item.multiple && f.chosen[f.at].includes(o) ? "on" : "",
-            disabled: !can,
-          },
-        ),
-      ),
+      "p",
+      { class: "hint" },
+      q.items.length === 1 ? "1 question" : q.items.length + " questions",
     ),
-    item.custom &&
-      h(
-        "div",
-        { class: "row" },
-        field(typed, {
-          type: "text",
-          placeholder: "Type an answer",
-          "aria-label": "Type an answer",
-        }),
-        button(
-          "Use",
-          () => {
-            const t = drafts[typed] ?? ""
-            drafts[typed] = ""
-            go(F.type, t)
-          },
-          { disabled: !can },
-        ),
-      ),
-    h(
-      "div",
-      { class: "row" },
-      f.at > 0 && button("‹ Back", () => go(F.back)),
-      item.multiple &&
-        button("Done", () => go(F.next), {
-          kind: "primary",
-          disabled: !can || f.chosen[f.at].length === 0,
-        }),
-    ),
+    button("Answer", () => void ctl.openPrompt(q.id), {
+      kind: "primary",
+      disabled: !can,
+    }),
+  )
+}
+
+function group(a, ctl, q, i) {
+  const d = a.draft[i]
+  const typed = "ans:" + a.id + ":" + i
+  const row = (o) => {
+    const on = d.chosen.includes(o)
+    return h(
+      "button",
+      {
+        type: "button",
+        class: "btn opt" + (on ? " on" : ""),
+        "aria-pressed": String(on),
+        disabled: a.busy,
+        onclick: () => ctl.edit(F.pick, i, o),
+      },
+      (on ? "✓ " : "") + F.plain(o),
+      F.isRecommended(o) && pill("rec", "Recommended"),
+    )
+  }
+  return card(
+    q.header || q.text,
+    q.header && q.text && h("p", { class: "ask" }, q.text),
+    q.multiple && h("p", { class: "hint" }, "Choose any that apply."),
+    h("div", { class: "opts" }, q.options.map(row)),
+    q.custom &&
+      (d.other
+        ? button("✓ Other: " + d.other, () => ctl.edit(F.other, i, ""), {
+            kind: "on",
+            disabled: a.busy,
+          })
+        : h(
+            "div",
+            { class: "row" },
+            field(typed, {
+              type: "text",
+              placeholder: "Other… type an answer",
+              "aria-label": "Other… type an answer",
+            }),
+            button(
+              "Use",
+              () => {
+                const text = drafts[typed] ?? ""
+                drafts[typed] = ""
+                ctl.edit(F.other, i, text)
+              },
+              { disabled: a.busy },
+            ),
+          )),
+  )
+}
+
+function questionScreen(state, ctl) {
+  const a = state.question
+  if (!a) return empty("Loading…")
+  if (a.gone)
+    return card(
+      "Question",
+      h("p", null, "That question is no longer open."),
+      button("Back", () => void ctl.go("list")),
+    )
+  if (a.sent)
+    return card(
+      "Question",
+      h("p", null, a.text || "Sent."),
+      button("Close", () => void ctl.go("list"), { kind: "primary" }),
+    )
+  return h(
+    "section",
+    null,
+    h("p", { class: "hint" }, a.view.title),
+    a.view.items.map((q, i) => group(a, ctl, q, i)),
+    a.text && h("p", { class: "hint", role: "status" }, a.text),
+    button("Send answers", () => void ctl.sendAnswers(), {
+      kind: "primary",
+      disabled: a.busy || !F.ready(a.view.items, a.draft),
+    }),
   )
 }
 

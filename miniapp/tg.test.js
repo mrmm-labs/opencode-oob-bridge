@@ -471,6 +471,12 @@ describe("Telegram's chrome", () => {
     ])
   })
 
+  it("asks Telegram to close the app", () => {
+    const { sent, win } = rig()
+    chrome(win, "8.0").close()
+    assert.deepEqual(sent, [["web_app_close", {}]])
+  })
+
   it("sends haptic feedback of each kind and nothing for an unknown one", () => {
     const { sent, win } = rig()
     const c = chrome(win, "8.0")
