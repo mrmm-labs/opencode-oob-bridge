@@ -43,6 +43,7 @@ type Res = { status: number; body: unknown }
 export interface AppApprovals {
   appView(id: string): Promise<Res>
   appProof(id: string, body: Record<string, unknown>): Promise<Res>
+  appDecide(id: string, body: Record<string, unknown>): Promise<Res>
   enrol(body: Record<string, unknown>): Promise<Res>
 }
 

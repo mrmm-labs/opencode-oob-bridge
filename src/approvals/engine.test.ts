@@ -963,15 +963,40 @@ describe("approvals: L2 factors", () => {
     )
   })
 
-  it("does not serve the app for a request that has not been tapped, or a finished one", async () => {
+  it("serves the app for a pending request, and not for a finished one", async () => {
     const s = rig()
     const { b } = await made(s, { action_class: "secrets.write" })
-    assert.equal((await s.a.appView(b.id)).status, 404)
-    await tap(s, b.id)
+    assert.equal((await s.a.appView(b.id)).status, 200)
     const v = await view(s, b.id)
     await proof(s, b.id, bio(v))
     assert.equal((await s.a.appView(b.id)).status, 404)
     assert.equal((await proof(s, b.id, bio(v))).status, 404)
+  })
+
+  it("denies from the app at any level, and approves only a level 1 request with no factor", async () => {
+    const s = rig()
+    const l2 = (await made(s, { action_class: "secrets.write" })).b
+    assert.equal(
+      (await s.a.appDecide(l2.id, { action: "approve" })).status,
+      409,
+    )
+    assert.equal(state(s, l2.id).state, "pending")
+    assert.equal((await s.a.appDecide(l2.id, { action: "deny" })).status, 200)
+    assert.equal(state(s, l2.id).state, "denied")
+    assert.equal((await s.a.appDecide(l2.id, { action: "deny" })).status, 404)
+
+    const l1 = (await made(s, { idempotency_key: "k-l1" })).b
+    assert.equal((await s.a.appView(l1.id)).body.level, 1)
+    assert.equal((await s.a.appProof(l1.id, { factor: "totp" })).status, 409)
+    assert.equal((await s.a.appDecide(l1.id, { action: "x" })).status, 409)
+    assert.equal(
+      (await s.a.appDecide(l1.id, { action: "approve" })).status,
+      200,
+    )
+    const got = state(s, l1.id)
+    assert.equal(got.state, "approved")
+    assert.equal(got.answer?.level, 1)
+    assert.equal(got.answer?.approver, "42")
   })
 
   it("withdraws when the operator is at the Mac, and expires on time", async () => {

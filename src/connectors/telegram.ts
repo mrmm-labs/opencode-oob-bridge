@@ -90,6 +90,16 @@ import type {
   TurnCard,
 } from "./types.ts"
 
+const REVIEW = "📱 Review & approve"
+
+/** A message ref is "<chat>:<message id>"; an older one is the bare message id of the paired chat. */
+const splitRef = (ref: string, chat?: string): [string | undefined, number] => {
+  const i = ref.lastIndexOf(":")
+  return i < 0
+    ? [chat, Number(ref)]
+    : [ref.slice(0, i), Number(ref.slice(i + 1))]
+}
+
 const MOVED = "This moved to the app: use the 📱 button."
 const LABEL_MAX = 40
 const POLL_SECONDS = 30
@@ -97,6 +107,7 @@ const PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const PAIR_TTL_MS = 10 * 60_000
 const TOAST_MAX = 190
 const TOPIC_RETRY_MS = 5 * 60_000
+const DM_RETRY_MS = 10 * 60_000
 const TOPIC_NOTICE_MS = 60 * 60_000
 const STREAM_GAP_MS = 1000
 const STREAM_BUDGET = 30
@@ -363,6 +374,8 @@ export class TelegramConnector implements Connector {
   >()
   /** No topic creation before this time, after a failure. */
   private topicRetryAt = 0
+  /** When the operator's private chat last refused an approval message. */
+  private dmFailedAt = -Infinity
   private topicNoticeAt = -Infinity
   /** Set while topic creation is refused for missing rights. */
   private topicWarning: string | undefined
@@ -440,13 +453,17 @@ export class TelegramConnector implements Connector {
   }
 
   /** A private chat opens the app in place; a group takes the direct link, because web_app buttons work only in private chats. */
-  private openButton(sessionID: string, text = "📱 Open"): Button | undefined {
+  private openButton(
+    sessionID: string,
+    text = "📱 Open",
+    dm = false,
+  ): Button | undefined {
     const app = this.app
     if (!app) return undefined
     // An approval is already "a_<id>" and a question "f_<id>"; a session gets "s_", so none can be taken for an enrolment code.
     const arg = /^[af]_/.test(sessionID) ? sessionID : "s_" + sessionID
     const id = /^[A-Za-z0-9_-]{1,64}$/.test(arg) ? arg : undefined
-    if (this.chatId && Number(this.chatId) > 0)
+    if (dm || (this.chatId && Number(this.chatId) > 0))
       return {
         text,
         web_app: { url: app.url + (id ? "?s=" + id : "") },
@@ -457,7 +474,7 @@ export class TelegramConnector implements Connector {
   }
 
   appOpen(): boolean {
-    return this.openButton("a_0") !== undefined
+    return this.openButton("a_0", undefined, true) !== undefined
   }
 
   private withOpen(push: Push, markup: Markup | undefined): Markup | undefined {
@@ -675,9 +692,7 @@ export class TelegramConnector implements Connector {
     return `${this.chatId}:${sessionID}`
   }
 
-  /** The forum topic of a session, created on first use; undefined outside a forum. */
-  private async thread(session: Push["session"]): Promise<number | undefined> {
-    if (!session || !this.chatId) return undefined
+  private async isForum(): Promise<boolean> {
     if (this.forum === undefined) {
       try {
         const chat = await this.call<{ is_forum?: boolean }>("getChat", {
@@ -686,10 +701,39 @@ export class TelegramConnector implements Connector {
         this.forum = chat.is_forum === true
       } catch (err) {
         this.fail(err)
-        return undefined
+        return false
       }
     }
-    if (!this.forum) return undefined
+    return this.forum
+  }
+
+  /** The "Approvals" topic of the paired forum chat, created on first use; never General. */
+  private async approvalsTopic(): Promise<number | undefined> {
+    if (!this.chatId || !(await this.isForum())) return undefined
+    this.topics ??= await this.loadTopics()
+    const key = this.topicKey("approvals")
+    const known = this.topics.get(key)
+    if (known) return known.thread
+    if (this.now() < this.topicRetryAt) return undefined
+    try {
+      const t = await this.call<{ message_thread_id: number }>(
+        "createForumTopic",
+        { chat_id: this.chatId, name: "Approvals" },
+      )
+      this.topics.set(key, { thread: t.message_thread_id, name: "Approvals" })
+      await this.saveTopics()
+      return t.message_thread_id
+    } catch (err) {
+      this.topicRetryAt = this.now() + TOPIC_RETRY_MS
+      this.fail(err)
+      return undefined
+    }
+  }
+
+  /** The forum topic of a session, created on first use; undefined outside a forum. */
+  private async thread(session: Push["session"]): Promise<number | undefined> {
+    if (!session || !this.chatId) return undefined
+    if (!(await this.isForum())) return undefined
     this.topics ??= await this.loadTopics()
     const key = this.topicKey(session.id)
     const known = this.topics.get(key)
@@ -1826,24 +1870,6 @@ export class TelegramConnector implements Connector {
     return true
   }
 
-  private async onApprovalTap(
-    cb: NonNullable<Update["callback_query"]>,
-    id: string,
-    nonce: string,
-    approve: boolean,
-  ): Promise<void> {
-    if (!this.approvals || cb.from === undefined)
-      return this.toast(cb.id, "Approvals are off.")
-    const r = await this.approvals.tap({
-      channel: this.id,
-      userId: String(cb.from.id),
-      id,
-      nonce,
-      action: approve ? "approve" : "deny",
-    })
-    return this.toast(cb.id, r.text)
-  }
-
   operator(): string | undefined {
     if (this.userId !== undefined) return this.userId
     // The id of a private chat is the id of its person.
@@ -1856,22 +1882,41 @@ export class TelegramConnector implements Connector {
 
   async approvalRequest(v: ApprovalView): Promise<string | undefined> {
     if (!this.chatId) return undefined
-    try {
+    const text = renderApproval(v, undefined, this.now())
+    const send = async (
+      chat: string,
+      button: Button,
+      thread?: number,
+    ): Promise<string> => {
       const m = await this.call<{ message_id: number }>("sendMessage", {
-        chat_id: this.chatId,
-        text: renderApproval(v, undefined, this.now()),
+        chat_id: chat,
+        message_thread_id: thread,
+        text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "Approve", callback_data: `ap:${v.id}:${v.nonce}:y` },
-              { text: "Deny", callback_data: `ap:${v.id}:${v.nonce}:n` },
-            ],
-          ],
-        },
+        reply_markup: { inline_keyboard: [[button]] },
       })
-      return String(m.message_id)
+      return `${chat}:${m.message_id}`
+    }
+    const paired = Number(this.chatId) > 0
+    const op = this.operator()
+    const dm = this.openButton("a_" + v.id, REVIEW, true)
+    if (op && dm && (paired || this.now() - this.dmFailedAt >= DM_RETRY_MS)) {
+      try {
+        return await send(op, dm)
+      } catch (err) {
+        this.dmFailedAt = this.now()
+        log("telegram_approval_dm_failed", {
+          message: filterSecrets((err as Error).message),
+        })
+        if (paired) return undefined
+      }
+    }
+    const group = this.openButton("a_" + v.id, REVIEW)
+    const thread = group ? await this.approvalsTopic() : undefined
+    if (!group || thread === undefined) return undefined
+    try {
+      return await send(this.chatId, group, thread)
     } catch (err) {
       this.fail(err)
       return undefined
@@ -1904,11 +1949,12 @@ export class TelegramConnector implements Connector {
     v: ApprovalView,
     s: Settled,
   ): Promise<void> {
-    if (!this.chatId) return
+    const [chat, id] = splitRef(ref, this.chatId)
+    if (!chat) return
     try {
       await this.call("editMessageText", {
-        chat_id: this.chatId,
-        message_id: Number(ref),
+        chat_id: chat,
+        message_id: id,
         text: renderApproval(v, s, this.now()),
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
@@ -1921,11 +1967,12 @@ export class TelegramConnector implements Connector {
   }
 
   async deleteMessage(ref: string): Promise<void> {
-    if (!this.chatId) return
+    const [chat, id] = splitRef(ref, this.chatId)
+    if (!chat) return
     try {
       await this.call("deleteMessage", {
-        chat_id: this.chatId,
-        message_id: Number(ref),
+        chat_id: chat,
+        message_id: id,
       })
     } catch (err) {
       log("telegram_delete_failed", { message: (err as Error).message })
@@ -1940,10 +1987,7 @@ export class TelegramConnector implements Connector {
       this.rejected("callback")
       return log("telegram_ignored", { kind: "callback" })
     }
-    const ap = /^ap:([0-9A-Z]{26}):([A-Za-z0-9_-]{8}):(y|n)$/.exec(
-      cb.data ?? "",
-    )
-    if (ap) return this.onApprovalTap(cb, ap[1], ap[2], ap[3] === "y")
+    if (/^ap:/.test(cb.data ?? "")) return this.toast(cb.id, MOVED)
     if (cb.data === "chatoff") {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")

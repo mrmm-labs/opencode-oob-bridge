@@ -898,11 +898,13 @@ Two optional settings widen or tighten the link:
 
 A local tool can ask you to approve one action from your phone. The bridge listens on a unix socket in its state directory (`approvals.sock`, directory `0700`, socket `0600`); there is no TCP listener. The tool sends a request, waits for the answer, and checks that the answer is signed. Telegram is the only channel for approvals; ntfy cannot say who tapped.
 
-| Level | You do                                                                           |
-| ----- | -------------------------------------------------------------------------------- |
-| 1     | Tap Approve in the Telegram chat.                                                |
-| 2     | Tap Approve, then type the six-digit code of your authenticator app in the chat. |
-| 3     | Answer at the Mac only. The phone cannot.                                        |
+| Level | You do                                                                                   |
+| ----- | ---------------------------------------------------------------------------------------- |
+| 1     | Tap **📱 Review & approve** in Telegram, then Approve in the app.                        |
+| 2     | Tap **📱 Review & approve**, then approve with Face ID, a passkey or the six-digit code. |
+| 3     | Answer at the Mac only. The phone cannot.                                                |
+
+Telegram never carries the decision: the message has one button that opens the request in the Mini App, which shows who asks, what, the level and the expiry, with Deny and Approve. The message goes to your private chat with the bot, or when that refuses (you have not started the bot) to an **Approvals** topic of the paired forum chat, created on first use. It is never posted to General or to a session's topic. A refused private chat is not tried again for ten minutes. Approve and Deny buttons of an older message only say that the decision moved to the app.
 
 Presence decides where a request goes. With AFK on, the phone is asked first. With AFK off you are at the Mac, so a request from the phone side is refused with `needs_local` and the tool asks you locally; switching to present withdraws what is pending. AFK cannot be changed from Telegram or the socket.
 

@@ -271,7 +271,7 @@ export function renderApproval(
       : s.decision === "deny"
         ? (ENDED[s.reason ?? ""] ?? `❌ Denied · L${s.level}`)
         : (ENDED[s.reason ?? ""] ?? "⌛ Expired")
-    : `Answer within ${Math.max(1, Math.round((v.expiresAt - now) / 60_000))} min`
+    : `Answer in the app within ${Math.max(1, Math.round((v.expiresAt - now) / 60_000))} min`
   const lines: Array<string | undefined> = [
     `🔐 <b>Approval #${esc(v.short)}</b> · L${v.level}`,
     `<b>${esc(v.caller)}</b> asks for <code>${esc(v.action_class)}</code>`,
@@ -279,7 +279,9 @@ export function renderApproval(
     `What: ${fit(v.scope, 600)}`,
     v.reason ? `Why: ${fit(v.reason, 400)}` : undefined,
     "",
-    v.level >= 2 && !s ? "Tap Approve, then type the 6-digit code." : undefined,
+    s
+      ? undefined
+      : "The value never goes to Telegram or the AI: review and decide in the app.",
     end,
   ]
   return lines.filter((l) => l !== undefined).join("\n")

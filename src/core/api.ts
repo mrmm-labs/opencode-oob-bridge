@@ -198,11 +198,18 @@ export function handler(d: ApiDeps) {
     if (!id || !/^[0-9A-Z]{26}$/.test(id))
       return send(res, 404, { error: "not found" })
     if (req.method === "GET" && !b) return reply(await ap.appView(id))
-    if (req.method === "POST" && b === "proof" && p.length === 4) {
+    if (
+      req.method === "POST" &&
+      (b === "proof" || b === "decision") &&
+      p.length === 4
+    ) {
       const body = await readBody(req)
-      return body
-        ? reply(await ap.appProof(id, body))
-        : send(res, 400, { error: "invalid body" })
+      if (!body) return send(res, 400, { error: "invalid body" })
+      return reply(
+        b === "proof"
+          ? await ap.appProof(id, body)
+          : await ap.appDecide(id, body),
+      )
     }
     return send(res, 404, { error: "not found" })
   }

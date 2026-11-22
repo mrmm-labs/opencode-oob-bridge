@@ -333,6 +333,32 @@ export function createController({
       }
     },
 
+    /** Denies, or approves a level 1 request, which needs no factor. */
+    async decide(action) {
+      const a = s.approval
+      if (!a?.view || a.busy) return
+      set({ approval: { ...a, busy: true, text: undefined } })
+      const fail = (text) =>
+        set({ approval: { ...s.approval, busy: false, text } })
+      let r
+      try {
+        r = await guard(() => api.approvalDecision(a.id, { action }))
+      } catch (err) {
+        return fail(err instanceof ApiError ? say(err) : "The request failed.")
+      }
+      if (r?.ok || r?.state)
+        return set({
+          approval: {
+            ...s.approval,
+            busy: false,
+            done: true,
+            ok: r.ok === true,
+            text: r.text,
+          },
+        })
+      fail(r?.text ?? "The request failed.")
+    },
+
     /** Enrols this phone with the code shown at the Mac. */
     async enroll(kind, code) {
       if (s.enrol?.busy || s.enrol?.ok) return

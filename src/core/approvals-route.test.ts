@@ -85,6 +85,9 @@ const fake = () => {
       calls.push(["proof", id, b]),
       { status: 422, body: { ok: false, text: "Wrong." } }
     ),
+    appDecide: async (id, b) => (
+      calls.push(["decide", id, b]), { status: 200, body: { ok: true } }
+    ),
     enrol: async (b) => (
       calls.push(["enrol", b]), { status: 200, body: { ok: true } }
     ),
@@ -105,6 +108,16 @@ describe("approvals routes of the core API", () => {
     })
     assert.equal(p.status, 422)
     assert.deepEqual(await p.json(), { ok: false, text: "Wrong." })
+    const d = await r.app(`/v1/approvals/${ID}/decision`, {
+      method: "POST",
+      body: { action: "deny" },
+    })
+    assert.equal(d.status, 200)
+    assert.deepEqual(f.calls.at(-1), ["decide", ID, { action: "deny" }])
+    assert.equal(
+      (await r.bearer(`/v1/approvals/${ID}/decision`, "POST")).status,
+      403,
+    )
     const e = await r.app("/v1/approvals/enroll", {
       method: "POST",
       body: { kind: "biometric", code: "X" },
@@ -112,7 +125,7 @@ describe("approvals routes of the core API", () => {
     assert.equal(e.status, 200)
     assert.deepEqual(
       f.calls.map((c) => c[0]),
-      ["view", "proof", "enrol"],
+      ["view", "proof", "decide", "enrol"],
     )
     await r.done()
   })
