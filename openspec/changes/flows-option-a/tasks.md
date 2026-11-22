@@ -4,12 +4,12 @@
 - [x] 1.2 In-app questions get one "📱 Answer in app" button; one-tap questions keep their option buttons. Verify: `src/forms.test.ts`.
 - [x] 1.3 `f_<id>` start parameter opens that question in the app. Verify: `miniapp/format.test.js`, `miniapp/controller.test.js`.
 - [x] 1.4 Remove the stepper and its callbacks; old `s:` taps get a toast. Verify: `src/forms.test.ts`.
-- [x] 1.5 "📱 Open" shares the style. Verify: `src/forms.test.ts`.
+- [x] 1.5 "📱 Open" shares the style. Verify: `src/connectors/telegram.test.ts`.
 
 ## 2. Withdrawn forms (PR 2)
 
-- [ ] 2.1 A `withdrawn` pending state, set by reconcile when the form is not found. Verify: `src/chat-question.test.ts`.
-- [ ] 2.2 The message reads "⚪ Withdrawn: the session stopped asking" and has no buttons. Verify: `src/chat-question.test.ts`.
+- [x] 2.1 A `withdrawn` pending state, set by reconcile when the form is not found. Verify: `src/chat-question.test.ts`.
+- [x] 2.2 The message reads "⚪ Withdrawn: the session stopped asking" and has no buttons. Verify: `src/chat-question.test.ts`.
 
 ## 3. Approvals in the app only (PR 3)
 

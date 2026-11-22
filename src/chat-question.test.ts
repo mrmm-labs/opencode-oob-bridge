@@ -34,7 +34,10 @@ async function rig(o: { stale?: boolean } = {}) {
   const prompts: Array<{ text: string; delivery: string }> = []
   /** What OpenCode says of each request, and what its form reply does. */
   const live = {
-    states: new Map<string, "open" | "answered" | "cancelled" | undefined>(),
+    states: new Map<
+      string,
+      "open" | "answered" | "cancelled" | "gone" | undefined
+    >(),
     asked: [] as string[],
     replyError: undefined as string | undefined,
   }
@@ -255,7 +258,7 @@ describe("a question OpenCode no longer holds", () => {
     assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
     await r.tg.waitFor(() =>
       edits(r).find((b) =>
-        /already answered at the Mac: your message was sent/.test(b.text),
+        /no longer open: your message was sent/.test(b.text),
       ),
     )
     const emojis = () =>
@@ -297,23 +300,68 @@ describe("a question OpenCode no longer holds", () => {
     await r.tg.waitFor(() => r.prompts[0])
     assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
     await r.tg.waitFor(() =>
-      r.sends().find((b) => /already answered at the Mac/.test(b.text)),
+      r
+        .sends()
+        .find((b) => /no longer open: your message was sent/.test(b.text)),
     )
     assert.equal(r.sends().filter((b) => /Go?/.test(b.text)).length, before)
     await r.done()
   })
 
-  it("a tap whose reply OpenCode refuses as not found closes it instead of failing", async () => {
+  it("a tap whose reply OpenCode refuses as not found withdraws it instead of failing", async () => {
     const r = await rig()
     const q = r.sends().find((b) => /Go?/.test(b.text))!
     r.live.replyError = "Form not found: frm_1"
     r.tap(q, /Yes/)
     await r.tg.waitFor(() =>
-      edits(r).find((b) => /Already answered at the Mac/.test(b.text)),
+      edits(r).find((b) =>
+        /Withdrawn.*the session stopped asking/.test(b.text),
+      ),
     )
     const p = r.store.list().find((x) => x.requestID === "frm_1")!
-    assert.equal(p.state, "answered")
-    assert.equal(p.answeredBy, "unknown (reconciled)")
+    assert.equal(p.state, "withdrawn")
+    assert.equal(p.answeredBy, undefined)
+    await r.done()
+  })
+
+  it("a form OpenCode dropped without saying why is withdrawn, not answered, and its buttons go", async () => {
+    const r = await rig()
+    r.live.states.set("frm_1", "gone")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 1)
+    const p = r.store.list().find((x) => x.requestID === "frm_1")!
+    assert.equal(p.state, "withdrawn")
+    assert.equal(p.answeredBy, undefined)
+    const e = await r.tg.waitFor(() =>
+      edits(r).find((b) => /Withdrawn/.test(b.text)),
+    )
+    assert.match(e.text, /⚪ <b>Withdrawn<\/b>: the session stopped asking/)
+    assert.doesNotMatch(e.text, /answered/i)
+    assert.ok(!e.reply_markup?.inline_keyboard?.length, "no buttons")
+    assert.equal(await r.bridge.reconcile(), 0, "closed once")
+    await r.done()
+  })
+
+  it("a message held behind a withdrawn form is sent", async () => {
+    const r = await rig()
+    const menu = await r.gate()
+    assert.ok(menu)
+    r.live.states.set("frm_1", "gone")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 1)
+    assert.deepEqual(r.prompts, [{ text: "run the tests", delivery: "queue" }])
+    await r.done()
+  })
+
+  it("a form found cancelled keeps that state", async () => {
+    const r = await rig()
+    r.live.states.set("frm_1", "cancelled")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 1)
+    assert.equal(
+      r.store.list().find((x) => x.requestID === "frm_1")!.state,
+      "cancelled",
+    )
     await r.done()
   })
 })

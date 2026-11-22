@@ -44,7 +44,7 @@ export type ServiceClient = {
     kind: "question" | "permission",
     sessionID: string,
     requestID: string,
-  ): Promise<"open" | "answered" | "cancelled" | undefined>
+  ): Promise<"open" | "answered" | "cancelled" | "gone" | undefined>
 }
 
 const loopback = (url: string) => url.replace("//0.0.0.0", "//127.0.0.1")
@@ -110,10 +110,10 @@ export function serviceClient(
         return s === "answered" || s === "cancelled" ? s : "open"
       } catch (err) {
         const tag = (err as { _tag?: string })._tag
-        // Only these two say the request is gone; any other failure says nothing.
-        return tag === "FormNotFoundError" || tag === "PermissionNotFoundError"
-          ? "answered"
-          : undefined
+        // Only these two say the request is gone; any other failure says nothing. A form gone
+        // is not known to be answered (a tool may have been interrupted); a permission is.
+        if (tag === "FormNotFoundError") return "gone"
+        return tag === "PermissionNotFoundError" ? "answered" : undefined
       }
     },
     async reply(r) {

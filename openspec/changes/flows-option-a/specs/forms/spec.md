@@ -30,7 +30,7 @@ A tap on a stepper button of an earlier version SHALL apply nothing and SHALL an
 
 ### Requirement: A form OpenCode drops is withdrawn, not answered
 
-When a question or permission OpenCode no longer holds was not answered through the bridge and not seen answered at the Mac, reconcile SHALL mark it `withdrawn` and edit its message to "⚪ Withdrawn: the session stopped asking" with no buttons. A form found answered or cancelled SHALL keep that state.
+When a form OpenCode no longer holds was not answered through the bridge and not seen answered at the Mac, reconcile SHALL mark it `withdrawn` and edit its message to "⚪ Withdrawn: the session stopped asking" with no buttons. A form found answered or cancelled SHALL keep that state. A permission request OpenCode no longer holds SHALL still be closed as answered at the Mac.
 
 #### Scenario: Tool interrupted
 

@@ -229,9 +229,7 @@ export class Commands {
       return this.done(
         info,
         "applied",
-        yes(
-          "✅ That question was already answered at the Mac: your message was sent.",
-        ),
+        yes("✅ That question is no longer open: your message was sent."),
       )
     }
     if (value === "skip")

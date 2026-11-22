@@ -41,7 +41,7 @@ async function chatRig(
     failPrompt?: boolean | number
     permissions?: Record<string, unknown>
     turnCard?: Record<string, unknown>
-    states?: Map<string, "open" | "answered" | "cancelled" | undefined>
+    states?: Map<string, "open" | "answered" | "cancelled" | "gone" | undefined>
   } = {},
 ) {
   const tg = await fakeTelegram()
