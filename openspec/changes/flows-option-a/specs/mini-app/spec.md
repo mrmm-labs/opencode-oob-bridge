@@ -21,7 +21,7 @@ The question screen SHALL show every question of the form in its own group, with
 #### Scenario: Recommended pre-selected
 
 - **WHEN** a question has an option ending with "(Recommended)"
-- **THEN** it is selected, tagged, and sent without the suffix
+- **THEN** it is selected and tagged, shown without the suffix, and sent as the option is named
 
 #### Scenario: Nothing sent early
 

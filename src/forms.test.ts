@@ -189,6 +189,50 @@ const appButton = (m: { reply_markup?: any }) => {
   return { rows, b: rows[0]?.[0] }
 }
 
+describe("forms: answered in the app", () => {
+  it("edits the message to Answered in app with the short answers, masked and cut", async () => {
+    const r = await rig()
+    await r.ev("form.created", twoFields)
+    await r.tg.waitFor(() =>
+      r.sends().find((b) => /How do we land/.test(b.text)),
+    )
+    const id = r.store.list()[0].id
+    const key = "sk-" + "a".repeat(30)
+    const out = await r.bridge.answerFromClient(id, {
+      answers: { q0: "fix first (Recommended)", q1: key },
+    })
+    assert.equal(out.ok, true)
+    const e = await r.tg.waitFor(() =>
+      r.edits().find((b) => /Answered in app/.test(b.text)),
+    )
+    assert.match(e.text, /✅ <b>Answered in app<\/b> · fix first · /)
+    assert.doesNotMatch(e.text, /Recommended|sk-a/)
+    assert.ok(!e.reply_markup?.inline_keyboard?.length, "no buttons")
+    assert.equal(r.store.list()[0].state, "answered")
+    await r.done()
+  })
+
+  it("cuts a long answer to 120 characters", async () => {
+    const r = await rig()
+    await r.ev("form.created", twoFields)
+    await r.tg.waitFor(() =>
+      r.sends().find((b) => /How do we land/.test(b.text)),
+    )
+    const id = r.store.list()[0].id
+    await r.bridge.answerFromClient(id, {
+      answers: { q0: "w".repeat(300), q1: "me" },
+    })
+    const e = await r.tg.waitFor(() =>
+      r.edits().find((b) => /Answered in app/.test(b.text)),
+    )
+    const shown = /Answered in app<\/b> · (\S+)/.exec(e.text)![1]
+    assert.ok(shown.length <= 120)
+    assert.ok(shown.startsWith("w"))
+    assert.doesNotMatch(e.text, /w{121}|· me/)
+    await r.done()
+  })
+})
+
 describe("forms: one tap in the chat, the rest in the app", () => {
   it("a yes or no keeps its buttons, and a tap answers it", async () => {
     const r = await rig()

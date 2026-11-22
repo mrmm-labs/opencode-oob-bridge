@@ -34,7 +34,7 @@ const initial = () => ({
   older: [],
   olderDone: false,
   patch: undefined,
-  forms: {},
+  question: undefined,
   confirm: undefined,
   toast: undefined,
   digest: undefined,
@@ -52,6 +52,7 @@ export function createController({
   start = "",
   device,
   build = "",
+  storage,
 }) {
   let s = initial()
   const subs = new Set()
@@ -94,6 +95,21 @@ export function createController({
   }
 
   const quiet = (p) => p.catch(() => undefined)
+
+  const draftKey = (id) => "oob.q." + id
+  const readDraft = (id, items) => {
+    try {
+      return F.restore(JSON.parse(storage?.getItem(draftKey(id))), items)
+    } catch {
+      return undefined
+    }
+  }
+  const writeDraft = (id, draft) => {
+    try {
+      if (draft) storage?.setItem(draftKey(id), JSON.stringify(draft))
+      else storage?.removeItem(draftKey(id))
+    } catch {}
+  }
 
   async function loadList() {
     const l = await guard(() => api.sessions())
@@ -231,16 +247,56 @@ export function createController({
     },
 
     /** The second factor of an L2 request: the first one this phone can use, then the others on demand. */
-    /** A link to a question opens the session that asked it, or says it is no longer open. */
+    /** The question screen, with the choices this phone kept for it; or the word that it is no longer open. */
     async openPrompt(id) {
+      set({ route: { name: "question", id }, question: undefined })
       try {
-        const p = await guard(() => api.prompt(id))
-        if (p?.state === "pending" && p.session)
-          return await self.open(p.session)
+        const view = await guard(() => api.prompt(id))
+        if (view?.state === "pending" && view.session && view.items?.length) {
+          const draft = readDraft(id, view.items) ?? F.newDraft(view.items)
+          return set({ question: { id, view, draft } })
+        }
       } catch (err) {
         if (!(err instanceof ApiError && err.status === 404)) throw err
       }
-      toast("That question is no longer open.", false)
+      writeDraft(id)
+      set({ question: { id, gone: true } })
+    },
+
+    /** Changes one answer: the draft stays on the phone, and nothing is sent. */
+    edit(fn, i, ...args) {
+      const q = s.question
+      if (!q?.draft || q.busy) return
+      const draft = fn(q.draft, i, q.view.items[i], ...args)
+      writeDraft(q.id, draft)
+      set({ question: { ...q, draft, text: undefined } })
+    },
+
+    /** Sends every answer in one reply. A refusal keeps the screen and the choices. */
+    async sendAnswers() {
+      const q = s.question
+      if (!q?.draft || q.busy || !F.ready(q.view.items, q.draft)) return
+      set({ question: { ...q, busy: true, text: undefined } })
+      const fail = (text) =>
+        set({ question: { ...s.question, busy: false, text } })
+      let r
+      try {
+        r = await guard(() =>
+          api.action(
+            q.view.session,
+            "answer",
+            F.body(q.id, q.view.items, q.draft),
+          ),
+        )
+      } catch (err) {
+        return fail(err instanceof ApiError ? say(err) : "The request failed.")
+      }
+      if (!r?.ok) return fail(r?.text || "Not done.")
+      writeDraft(q.id)
+      set({
+        question: { ...s.question, busy: false, sent: true, text: r.text },
+      })
+      await quiet(refresh())
     },
 
     async openApproval(id) {
@@ -476,28 +532,6 @@ export function createController({
 
     permission(promptId, decision) {
       return self.act("permission", { prompt: promptId, decision })
-    },
-
-    /** The form of a prompt, made on first use. */
-    form(prompt) {
-      return s.forms[prompt.id] ?? F.newForm(prompt.items)
-    },
-    /** Applies a step of form.js; a one-tap field is sent at once. */
-    async step(prompt, fn, ...args) {
-      const f = fn(self.form(prompt), ...args)
-      set({ forms: { ...s.forms, [prompt.id]: f } })
-      if (F.oneTap(prompt.items) && F.reviewing(f)) await self.submit(prompt)
-    },
-    async submit(prompt) {
-      const f = self.form(prompt)
-      if (!F.complete(f)) return
-      await self.act("answer", F.body(f, prompt.id))
-      const { [prompt.id]: _gone, ...rest } = s.forms
-      set({ forms: rest })
-    },
-    cancelForm(prompt) {
-      const { [prompt.id]: _gone, ...rest } = s.forms
-      set({ forms: rest })
     },
 
     async create(body) {

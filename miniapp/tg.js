@@ -270,6 +270,7 @@ export function chrome(win = globalThis, version = "") {
       if (h && has("haptic"))
         ev("web_app_trigger_haptic_feedback", { type: h[0], ...h[1] })
     },
+    close: () => ev("web_app_close", {}),
     /** Whether a swipe down may close the app: off where the page scrolls. */
     swipes: (allow) =>
       has("swipe") &&

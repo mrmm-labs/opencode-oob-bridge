@@ -52,6 +52,13 @@ const ctl = createController({
   api,
   build,
   start: params.start,
+  storage: (() => {
+    try {
+      return window.localStorage
+    } catch {
+      return undefined
+    }
+  })(),
   device: createDevice(undefined, undefined, {
     version: params.version,
     platform: params.platform,
@@ -129,6 +136,15 @@ root.addEventListener("click", (e) => {
 })
 root.addEventListener("focusout", () => setTimeout(() => later && draw(), 0))
 setInterval(draw, 10_000)
+let closed = false
+ctl.subscribe((s) => {
+  const sent = s.question?.sent === true
+  if (sent && !closed) {
+    tg.haptic("success")
+    tg.close()
+  }
+  closed = sent
+})
 let toastAt = 0
 ctl.subscribe((s) => {
   if (s.toast && s.toast.at !== toastAt) {

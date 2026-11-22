@@ -102,6 +102,7 @@ async function bridge() {
       bridge: {
         known: () => [{ id: "ses_1", state: { at: Date.now() } }],
         openPromptList: () => prompts,
+        promptEntry: (id: string) => prompts.find((p) => p.id === id),
       } as never,
       host,
       cfg,
@@ -211,7 +212,7 @@ const until = async (f: () => boolean, ms = 3000) => {
 }
 
 describe("Mini App end to end: phone, relay, bridge", () => {
-  it("lists sessions, answers a form once after review, stops after a confirmation", async () => {
+  it("lists sessions, answers a form once from the question screen, stops after a confirmation", async () => {
     const b = await bridge()
     const r = await relay(b.api.port)
     const api = new Api({ initData: init(), base: r.url })
@@ -228,15 +229,14 @@ describe("Mini App end to end: phone, relay, bridge", () => {
       assert.equal(ctl.state.detail.questions[0].id, "q1")
       assert.equal(ctl.state.detail.canAnswer, true)
 
-      const q = ctl.state.detail.questions[0]
-      await ctl.step(q, F.pick, "prod")
-      await ctl.step(q, F.pick, "a, b")
-      await ctl.step(q, F.type, "free text")
-      assert.deepEqual(b.calls, [], "nothing reaches the host before Submit")
-      await ctl.step(q, F.next)
-      assert.equal(F.reviewing(ctl.form(q)), true)
-      assert.deepEqual(b.calls, [])
-      await ctl.submit(q)
+      await ctl.openPrompt("q1")
+      assert.equal(ctl.state.question.view.items.length, 2)
+      ctl.edit(F.pick, 0, "prod")
+      ctl.edit(F.pick, 1, "a, b")
+      ctl.edit(F.other, 1, "free text")
+      assert.deepEqual(b.calls, [], "nothing reaches the host before Send")
+      await ctl.sendAnswers()
+      assert.equal(ctl.state.question.sent, true)
       assert.deepEqual(b.calls, [
         "answer:q1:" +
           JSON.stringify({
@@ -244,7 +244,7 @@ describe("Mini App end to end: phone, relay, bridge", () => {
           }),
       ])
 
-      ctl.ask("stop")
+      ctl.ask("stop", "ses_1")
       assert.deepEqual(b.calls.length, 1, "stop waits for the confirmation")
       await ctl.confirmed()
       assert.equal(b.calls[1], "interrupt")

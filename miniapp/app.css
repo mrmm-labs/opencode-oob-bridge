@@ -407,6 +407,11 @@ h3 {
 .pill.waiting {
   border-color: var(--warn);
 }
+.pill.rec {
+  margin-left: 8px;
+  border-color: var(--ok);
+  font-size: 12px;
+}
 .pill.failed,
 .pill.down {
   border-color: var(--danger);

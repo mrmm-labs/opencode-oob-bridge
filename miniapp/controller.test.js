@@ -55,6 +55,7 @@ function rig(over = {}) {
     now: () => 1000,
     start: over.start,
     device: over.device,
+    storage: over.storage,
     makeStream: (h) => (
       (hooks = h), { start() {}, stop: () => stops.push("stop") }
     ),
@@ -111,17 +112,27 @@ describe("start", () => {
     assert.equal(r.ctl.state.detail.id, "s1")
   })
 
-  it("opens the session that asked the question named with f_, and says so when it is closed", async () => {
+  it("opens the question screen for a question named with f_, and says so when it is closed", async () => {
     const asked = (state) => async () => ({
       id: "p5gf",
       kind: "question",
       state,
       session: "s1",
-      items: [],
+      items: [
+        {
+          key: "a",
+          header: "a",
+          text: "a?",
+          options: ["x", "y"],
+          multiple: false,
+          custom: false,
+        },
+      ],
     })
     const open = rig({ start: "f_p5gf", prompt: asked("pending") })
     await open.ctl.boot()
-    assert.deepEqual(open.ctl.state.route, { name: "session", id: "s1" })
+    assert.deepEqual(open.ctl.state.route, { name: "question", id: "p5gf" })
+    assert.ok(open.ctl.state.question.view)
 
     for (const prompt of [
       asked("answered"),
@@ -132,8 +143,7 @@ describe("start", () => {
     ]) {
       const shut = rig({ start: "f_p5gf", prompt })
       await shut.ctl.boot()
-      assert.equal(shut.ctl.state.route.name, "list")
-      assert.match(shut.ctl.state.toast.text, /no longer open/)
+      assert.equal(shut.ctl.state.question.gone, true)
     }
   })
 
@@ -300,7 +310,7 @@ describe("actions", () => {
   })
 })
 
-describe("forms", () => {
+describe("the question screen", () => {
   const item = (key, options, o = {}) => ({
     key,
     header: key,
@@ -310,57 +320,149 @@ describe("forms", () => {
     custom: false,
     ...o,
   })
-  const prompt = (items) => ({ id: "q1", title: "Q", askedAt: 1, items })
+  const asked =
+    (items, state = "pending") =>
+    async () => ({
+      id: "p5gf",
+      kind: "question",
+      state,
+      session: "s1",
+      title: "Q",
+      items,
+    })
+  const store = () => {
+    const m = new Map()
+    return {
+      m,
+      getItem: (k) => m.get(k) ?? null,
+      setItem: (k, v) => m.set(k, v),
+      removeItem: (k) => m.delete(k),
+    }
+  }
+  const three = [
+    item("a", ["x (Recommended)", "y"]),
+    item("b", ["p", "q"]),
+    item("c", ["m", "n"], { multiple: true, custom: true }),
+  ]
 
-  it("sends a single-select field at the tap", async () => {
+  it("opens with the recommended option chosen, and sends nothing until Send", async () => {
     const sent = []
     const r = rig({
+      prompt: asked(three),
       action: async (...a) => (sent.push(a), { ok: true, text: "ok" }),
     })
-    await r.ctl.boot()
-    live(r)
-    await r.ctl.open("s1")
-    const q = prompt([item("a", ["Yes", "No"])])
-    await r.ctl.step(q, F.pick, "No")
-    assert.deepEqual(sent, [
-      ["s1", "answer", { prompt: "q1", answers: { a: "No" } }],
-    ])
-  })
-
-  it("sends nothing for a three-field form until Submit, then one reply", async () => {
-    const sent = []
-    const r = rig({
-      action: async (...a) => (sent.push(a), { ok: true, text: "ok" }),
-    })
-    await r.ctl.boot()
-    live(r)
-    await r.ctl.open("s1")
-    const q = prompt([item("a", ["x"]), item("b", ["y"]), item("c", ["z"])])
-    await r.ctl.step(q, F.pick, "x")
-    await r.ctl.step(q, F.pick, "y")
-    assert.equal(sent.length, 0)
-    await r.ctl.step(q, F.pick, "z")
-    assert.equal(sent.length, 0, "the review step comes first")
-    assert.equal(F.reviewing(r.ctl.form(q)), true)
-    await r.ctl.submit(q)
+    await r.ctl.openPrompt("p5gf")
+    const q = r.ctl.state.question
+    assert.deepEqual(r.ctl.state.route, { name: "question", id: "p5gf" })
+    assert.deepEqual(q.draft[0].chosen, ["x (Recommended)"])
+    assert.equal(F.ready(q.view.items, q.draft), false)
+    r.ctl.edit(F.pick, 1, "q")
+    r.ctl.edit(F.pick, 2, "m")
+    r.ctl.edit(F.other, 2, "  my own ")
+    await r.ctl.sendAnswers()
     assert.equal(sent.length, 1)
-    assert.deepEqual(sent[0][2].answers, { a: "x", b: "y", c: "z" })
-    assert.equal(r.ctl.state.forms.q1, undefined)
+    assert.deepEqual(sent, [
+      [
+        "s1",
+        "answer",
+        {
+          prompt: "p5gf",
+          answers: { a: "x (Recommended)", b: "q", c: ["m", "my own"] },
+        },
+      ],
+    ])
+    assert.equal(r.ctl.state.question.sent, true)
   })
 
-  it("sends nothing when the form is abandoned or cancelled", async () => {
+  it("does not send while a question has no answer", async () => {
     const sent = []
     const r = rig({
+      prompt: asked(three),
       action: async (...a) => (sent.push(a), { ok: true, text: "ok" }),
     })
-    await r.ctl.boot()
-    live(r)
-    await r.ctl.open("s1")
-    const q = prompt([item("a", ["x"]), item("b", ["y"])])
-    await r.ctl.step(q, F.pick, "x")
-    r.ctl.cancelForm(q)
-    await r.ctl.submit(q)
+    await r.ctl.openPrompt("p5gf")
+    await r.ctl.sendAnswers()
     assert.equal(sent.length, 0)
+  })
+
+  it("keeps the choices on the phone across a reload, and drops them once sent", async () => {
+    const storage = store()
+    const first = rig({ prompt: asked(three), storage })
+    await first.ctl.openPrompt("p5gf")
+    first.ctl.edit(F.pick, 0, "y")
+    first.ctl.edit(F.pick, 1, "p")
+    assert.ok(storage.m.has("oob.q.p5gf"))
+
+    const again = rig({ prompt: asked(three), storage })
+    await again.ctl.openPrompt("p5gf")
+    assert.deepEqual(again.ctl.state.question.draft[0].chosen, ["y"])
+    assert.deepEqual(again.ctl.state.question.draft[1].chosen, ["p"])
+    again.ctl.edit(F.pick, 2, "n")
+    await again.ctl.sendAnswers()
+    assert.equal(storage.m.has("oob.q.p5gf"), false)
+  })
+
+  it("ignores a kept draft that no longer fits the question", async () => {
+    const storage = store()
+    storage.setItem(
+      "oob.q.p5gf",
+      JSON.stringify([{ chosen: ["gone"], other: "" }]),
+    )
+    const r = rig({ prompt: asked(three), storage })
+    await r.ctl.openPrompt("p5gf")
+    assert.deepEqual(r.ctl.state.question.draft[0].chosen, ["x (Recommended)"])
+  })
+
+  it("a refusal keeps the screen and the choices, and says why", async () => {
+    const storage = store()
+    const r = rig({
+      prompt: asked([item("a", ["x", "y"])]),
+      action: async () => ({ ok: false, text: "#p5gf: already answered." }),
+      storage,
+    })
+    await r.ctl.openPrompt("p5gf")
+    r.ctl.edit(F.pick, 0, "y")
+    await r.ctl.sendAnswers()
+    const q = r.ctl.state.question
+    assert.equal(q.sent, undefined)
+    assert.equal(q.busy, false)
+    assert.equal(q.text, "#p5gf: already answered.")
+    assert.deepEqual(q.draft[0].chosen, ["y"])
+    assert.ok(storage.m.has("oob.q.p5gf"))
+  })
+
+  it("keeps the choices when the request fails, and can send again", async () => {
+    let n = 0
+    const r = rig({
+      prompt: asked([item("a", ["x", "y"])]),
+      action: async () => {
+        if (n++ === 0) throw new ApiError(0, "no connection")
+        return { ok: true, text: "ok" }
+      },
+    })
+    await r.ctl.openPrompt("p5gf")
+    r.ctl.edit(F.pick, 0, "y")
+    await r.ctl.sendAnswers()
+    assert.equal(r.ctl.state.question.sent, undefined)
+    await r.ctl.sendAnswers()
+    assert.equal(r.ctl.state.question.sent, true)
+  })
+
+  it("says a question is no longer open, and forgets its draft", async () => {
+    for (const prompt of [
+      asked(three, "answered"),
+      asked(three, "withdrawn"),
+      async () => {
+        throw new ApiError(404, "not found")
+      },
+    ]) {
+      const storage = store()
+      storage.setItem("oob.q.p5gf", "[]")
+      const r = rig({ prompt, storage })
+      await r.ctl.openPrompt("p5gf")
+      assert.equal(r.ctl.state.question.gone, true)
+      assert.equal(storage.m.has("oob.q.p5gf"), false)
+    }
   })
 })
 

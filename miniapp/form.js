@@ -1,64 +1,74 @@
-// A question form answered one field at a time, with a review before anything is sent.
-// The choices stay here until Submit. The rules are those of the chat stepper.
+// The questions of one form, answered on one screen. The choices live in a draft until Send.
+// A draft has one entry per question: the options chosen and the typed "Other" answer.
 
-/** One tap answers a single field with options; everything else needs Send. */
-export const oneTap = (qs) =>
-  qs.length === 1 && !qs[0].multiple && qs[0].options.length > 0
+const RECOMMENDED = /\s*\(recommended\)\s*/i
 
-export const newForm = (questions) => ({
-  questions,
-  at: 0,
-  chosen: questions.map(() => []),
-})
+export const isRecommended = (option) => RECOMMENDED.test(option)
 
-export const reviewing = (f) => f.at >= f.questions.length
+/** The label to show: the "(Recommended)" suffix becomes a tag. */
+export const plain = (option) => option.replace(RECOMMENDED, " ").trim()
 
-const clean = (t) => t.replace(/[|,]/g, " ").replace(/\s+/g, " ").trim()
+const clean = (t) => t.replace(/\s+/g, " ").trim()
 
-const edit = (f, patch) => ({ ...f, ...patch })
+/** Every recommended option is chosen; a single-select question keeps the first. */
+export const newDraft = (items) =>
+  items.map((q) => {
+    const chosen = q.options.filter(isRecommended)
+    return { chosen: q.multiple ? chosen : chosen.slice(0, 1), other: "" }
+  })
 
-/** Picks an option of the current field; a single-select field moves on. */
-export function pick(f, option) {
-  const q = f.questions[f.at]
-  if (!q?.options.includes(option)) return f
-  const chosen = f.chosen.map((c) => [...c])
-  const cur = chosen[f.at]
-  if (q.multiple)
-    chosen[f.at] = cur.includes(option)
-      ? cur.filter((o) => o !== option)
-      : [...cur, option]
-  else chosen[f.at] = [option]
-  return edit(f, { chosen, at: q.multiple ? f.at : f.at + 1 })
+/** A draft read back from the phone, or undefined when it no longer fits the questions. */
+export function restore(raw, items) {
+  if (!Array.isArray(raw) || raw.length !== items.length) return undefined
+  const fits = raw.every(
+    (d, i) =>
+      d &&
+      Array.isArray(d.chosen) &&
+      typeof d.other === "string" &&
+      d.chosen.every((c) => items[i].options.includes(c)) &&
+      (!d.other || items[i].custom),
+  )
+  return fits ? raw : undefined
 }
 
-/** A typed answer, for a field that allows one. */
-export function type(f, text) {
-  const q = f.questions[f.at]
-  const t = clean(text)
-  if (!q?.custom || !t) return f
-  const chosen = f.chosen.map((c) => [...c])
-  chosen[f.at] = q.multiple ? [...chosen[f.at], t] : [t]
-  return edit(f, { chosen, at: q.multiple ? f.at : f.at + 1 })
+const at = (draft, i, fn) => draft.map((d, j) => (j === i ? fn(d) : d))
+
+/** Picks an option; a single-select question replaces its answer, a multi-select one toggles. */
+export function pick(draft, i, q, option) {
+  if (!q.options.includes(option)) return draft
+  return at(draft, i, (d) =>
+    !q.multiple
+      ? { chosen: [option], other: "" }
+      : {
+          ...d,
+          chosen: d.chosen.includes(option)
+            ? d.chosen.filter((o) => o !== option)
+            : [...d.chosen, option],
+        },
+  )
 }
 
-/** Done on a multi-select field: needs at least one choice. */
-export function next(f) {
-  return f.chosen[f.at]?.length ? edit(f, { at: f.at + 1 }) : f
+/** The typed answer of a question that allows one; empty text takes it back. */
+export function other(draft, i, q, text) {
+  if (!q.custom) return draft
+  const other = clean(text)
+  return at(draft, i, (d) =>
+    q.multiple ? { ...d, other } : { chosen: [], other },
+  )
 }
 
-export const back = (f) => edit(f, { at: Math.max(0, f.at - 1) })
+export const values = (d) => [...d.chosen, ...(d.other ? [d.other] : [])]
 
-/** Edit from the review: back to the first field, with the choices kept. */
-export const restart = (f) => edit(f, { at: 0 })
+/** Whether every question has an answer. */
+export const ready = (items, draft) =>
+  items.length > 0 && items.every((_, i) => values(draft[i]).length > 0)
 
-/** Whether the form can be sent: every field has an answer. */
-export const complete = (f) => f.chosen.every((c) => c.length > 0)
-
-/** The body of the answer action: one value per field, so nothing is guessed from numbers or separators. */
-export function body(f, prompt) {
+/** The body of the answer action: one value per question, so nothing is guessed from numbers or separators. */
+export function body(prompt, items, draft) {
   const answers = {}
-  f.questions.forEach((q, i) => {
-    answers[q.key] = q.multiple ? f.chosen[i] : f.chosen[i][0]
+  items.forEach((q, i) => {
+    const v = values(draft[i])
+    answers[q.key] = q.multiple ? v : v[0]
   })
   return { prompt, answers }
 }
