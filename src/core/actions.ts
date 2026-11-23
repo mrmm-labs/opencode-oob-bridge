@@ -4,6 +4,7 @@
  * the same for all of them.
  */
 import type { Config } from "../config.ts"
+import { resolveAgent, type AgentOption } from "../agents.ts"
 import type { Host, ModelOption } from "../bridge.ts"
 import type { Delivery } from "../config.ts"
 import type { Answer } from "../inbound.ts"
@@ -26,6 +27,8 @@ export type ActionDeps = {
   now: () => number
   /** Why `chat.deny` blocks a session, if it does. */
   denial(facts: Facts): string | undefined
+  /** A session was just created here. */
+  created?(root: string): void
   setChat(root: string, on: boolean): Promise<Result>
   setWatch(
     root: string,
@@ -120,12 +123,12 @@ export class Actions {
   /** What a client may pick from: models, agents, and the projects it may start a session in (names only). */
   async options(): Promise<{
     models: ModelOption[]
-    agents: string[]
+    agents: AgentOption[]
     projects: Array<{ name: string; agent?: string; model?: string }>
   }> {
     const [models, agents] = await Promise.all([
       this.models(),
-      this.d.host.agents().catch(() => [] as string[]),
+      this.d.host.agents().catch(() => [] as AgentOption[]),
     ])
     const projects = Object.entries(this.d.cfg.chat.projects)
       .filter(
@@ -241,16 +244,21 @@ export class Actions {
     o: { project: string; agent?: string; model?: string; text: string },
     before?: (id: string) => void,
   ): Promise<Result & { outcome: string; id?: string }> {
-    const out = (outcome: string, r: Result, id?: string) => ({
-      ...r,
-      outcome,
-      id,
-    })
+    let agent: string | undefined
+    const out = (outcome: string, r: Result, id?: string) => {
+      log("session_create", { outcome, project: o.project, agent, session: id })
+      return { ...r, outcome, id }
+    }
     const projects = this.d.cfg.chat.projects
     if (!Object.hasOwn(projects, o.project))
       return out("invalid", no("Unknown project."))
     const p = projects[o.project]
-    const agent = o.agent ?? p.agent
+    const given = o.agent ?? p.agent
+    // An agent is sent as its id. With no list to check against, the value goes as given.
+    const known = given ? await this.d.host.agents().catch(() => []) : []
+    agent = given && known.length ? resolveAgent(known, given) : given
+    if (given && !agent)
+      return out("invalid", no("That agent is not available."))
     const model = o.model ?? p.model
     if (this.d.denial({ agent, directory: p.directory }))
       return out(
@@ -286,6 +294,7 @@ export class Actions {
         agent,
         model: ref,
       })
+      this.d.created?.(id)
       before?.(id)
       await this.d.host.prompt(id, o.text, "queue")
       return out(
@@ -378,12 +387,14 @@ export class Actions {
           return yes("Model: " + hit.name)
         }
         case "agent": {
-          const agent = str(body.agent)
-          const list = await this.d.host.agents().catch(() => [] as string[])
-          if (!agent || !list.includes(agent))
-            return no("That agent is not available.")
-          await this.switchAgent(root, agent)
-          return yes("Agent: " + agent)
+          const given = str(body.agent)
+          const list = await this.d.host
+            .agents()
+            .catch(() => [] as AgentOption[])
+          const id = given && resolveAgent(list, given)
+          if (!id) return no("That agent is not available.")
+          await this.switchAgent(root, id)
+          return yes("Agent: " + (list.find((a) => a.id === id)?.label ?? id))
         }
         case "watch": {
           const m = body.mode

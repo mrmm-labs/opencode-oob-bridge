@@ -363,11 +363,11 @@ export function serverHost(
         patch: string
       }>(await ctx.vcs.diff({ location: { directory }, mode: "working" })),
     agents: async () =>
-      list<{ name: string; mode: string; hidden?: boolean }>(
+      list<{ id: string; name: string; mode: string; hidden?: boolean }>(
         await ctx.agent.list(),
       )
         .filter((a) => a.mode !== "subagent" && !a.hidden)
-        .map((a) => a.name),
+        .map((a) => ({ id: a.id, label: a.name })),
     models: async () =>
       list<{
         providerID: string

@@ -43,7 +43,7 @@ function host(calls: Calls, over: Partial<Host> = {}): Host {
     switchModel: async () => {},
     createSession: async () => ({ id: "ses_new" }),
     replyForm: async () => {},
-    agents: async () => ["build"],
+    agents: async () => [{ id: "build", label: "Build" }],
     models: async () => [],
     ...over,
   } as unknown as Host
@@ -131,6 +131,101 @@ describe("actions", () => {
           !l.startsWith("src/server.ts"),
       )
     assert.deepEqual(hits, [])
+  })
+})
+
+describe("agent ids", () => {
+  const projects = {
+    shop: { directory: "/w/shop", agent: "Build" },
+    docs: { directory: "/w/docs" },
+  }
+  const rig = (over: Partial<Host> = {}) => {
+    const created: unknown[] = []
+    const switched: string[] = []
+    const noted: string[] = []
+    const h = host([], {
+      createSession: async (c) => {
+        created.push(c)
+        return { id: "ses_new" }
+      },
+      switchAgent: async (_id, agent) => void switched.push(agent),
+      agents: async () => [
+        { id: "build", label: "Build" },
+        { id: "plan", label: "Plan" },
+      ],
+      ...over,
+    })
+    const a = new Actions({
+      cfg: cfg({ projects } as never),
+      host: h,
+      now: Date.now,
+      denial: () => undefined,
+      created: (id) => void noted.push(id),
+      setChat: async () => ({ ok: true, text: "chat" }),
+      setWatch: async () => ({ ok: true, text: "watch" }),
+      resume: async () => ({ ok: true, text: "resumed" }),
+      answer: async () => ({ ok: true, text: "answered" }),
+    })
+    return { a, created, switched, noted }
+  }
+
+  it("creates with the id, or the label in any case, and sends the id", async () => {
+    const r = rig()
+    for (const agent of ["build", "Build", "BUILD"])
+      assert.equal(
+        (await r.a.create({ project: "docs", agent, text: "go" })).ok,
+        true,
+      )
+    assert.deepEqual(
+      r.created.map((c) => (c as { agent: string }).agent),
+      ["build", "build", "build"],
+    )
+    assert.deepEqual(r.noted, ["ses_new", "ses_new", "ses_new"])
+  })
+
+  it("resolves the agent of a project's config too", async () => {
+    const r = rig()
+    assert.equal((await r.a.create({ project: "shop", text: "go" })).ok, true)
+    assert.equal((r.created[0] as { agent: string }).agent, "build")
+  })
+
+  it("refuses an unknown agent before any session exists", async () => {
+    const r = rig()
+    const out = await r.a.create({ project: "docs", agent: "nope", text: "go" })
+    assert.equal(out.ok, false)
+    assert.equal(out.outcome, "invalid")
+    assert.match(out.text, /agent is not available/)
+    assert.deepEqual(r.created, [])
+    assert.deepEqual(r.noted, [])
+  })
+
+  it("passes the value through when OpenCode lists no agents", async () => {
+    const r = rig({ agents: async () => [] })
+    assert.equal(
+      (await r.a.create({ project: "docs", agent: "Build", text: "go" })).ok,
+      true,
+    )
+    assert.equal((r.created[0] as { agent: string }).agent, "Build")
+  })
+
+  it("switches by id and by label, and sends the id", async () => {
+    const r = rig()
+    assert.equal((await r.a.run("agent", "ses_1", { agent: "plan" })).ok, true)
+    const out = await r.a.run("agent", "ses_1", { agent: "Build" })
+    assert.equal(out.text, "Agent: Build")
+    assert.deepEqual(r.switched, ["plan", "build"])
+  })
+
+  it("refuses to switch to an unknown agent", async () => {
+    const r = rig()
+    const out = await r.a.run("agent", "ses_1", { agent: "nope" })
+    assert.equal(out.ok, false)
+    assert.deepEqual(r.switched, [])
+  })
+
+  it("offers each agent as an id and a label", async () => {
+    const o = await rig().a.options()
+    assert.deepEqual(o.agents[0], { id: "build", label: "Build" })
   })
 })
 

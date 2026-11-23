@@ -25,6 +25,7 @@ import { buildMenu } from "./commandmenu.ts"
 import type { NightSource } from "./overnight.ts"
 import { DigestLog, digestText } from "./digest.ts"
 import { digestDue, isQuiet } from "./quiet.ts"
+import type { AgentOption } from "./agents.ts"
 import { Actions, Refused, type Result } from "./core/actions.ts"
 import type { Config, Delivery, SidebarMode } from "./config.ts"
 import { buildPatch, drawDiff, fileList } from "./diffimage.ts"
@@ -160,8 +161,8 @@ export interface Host {
       patch: string
     }>
   >
-  /** Primary agents the session can switch to. */
-  agents(): Promise<string[]>
+  /** Primary agents the session can switch to: the id OpenCode takes, and the name to show. */
+  agents(): Promise<AgentOption[]>
   /** Chat models of the configured providers. */
   models(): Promise<ModelOption[]>
 }
@@ -372,6 +373,8 @@ const FEED_MS = 100
 export const RECONCILE_MS = 60_000
 /** A prompt this young is not checked: OpenCode may not list it yet. */
 const RECONCILE_GRACE_MS = 10_000
+/** A session that fails this soon after it was created never started. */
+const UNSTARTED_MS = 60_000
 const PERMISSION_LABEL = {
   once: "Allow once",
   always: "Always",
@@ -500,6 +503,9 @@ export class Bridge {
     | undefined
   /** What each connector was last told of a session, to show a change of watch state. */
   private readonly lastStates = new Map<string, SessionState>()
+  /** When each session this process created was created, and which of them failed at once. */
+  private readonly createdAt = new Map<string, number>()
+  private readonly unstarted = new Set<string>()
   private readonly states = new Map<
     string,
     { state: SessionState["state"]; at: number; started?: number }
@@ -551,6 +557,7 @@ export class Bridge {
       },
       now,
       denial: (facts) => this.denial(facts),
+      created: (root) => void this.createdAt.set(root, this.now()),
       setChat: (root, on) => this.setChat(root, on),
       setWatch: async (root, mode, channel) => {
         this.setWatch(root, mode, channel)
@@ -1542,6 +1549,7 @@ export class Bridge {
   ) {
     const prev = this.states.get(r.rootID)
     const now = this.now()
+    if (state === "working") this.unstarted.delete(r.rootID)
     const next = {
       state: state ?? prev?.state ?? "idle",
       at: state ? now : (prev?.at ?? now),
@@ -1566,6 +1574,7 @@ export class Bridge {
       model: pick.model ?? r.root?.model,
       variant: (pick.variant ?? r.root?.modelRef?.variant) || undefined,
       state: next.state,
+      ...(this.unstarted.has(r.rootID) ? { unstarted: true } : {}),
       at: next.at,
       chat: this.chat.has(r.rootID),
       watch: this.watchOf(r.rootID),
@@ -1977,6 +1986,11 @@ export class Bridge {
     if (!r) return
     const kind = failed ? "failed" : "finished"
     const final = this.joined(sessionID).trim()
+    const born = this.createdAt.get(sessionID)
+    if (failed && born !== undefined && this.now() - born < UNSTARTED_MS) {
+      this.unstarted.add(sessionID)
+      log("session_unstarted", { session: sessionID })
+    }
     const st = await this.track(r, failed ? "failed" : "idle")
     await this.endTurn(sessionID, r, !failed)
     const duration =

@@ -655,8 +655,8 @@ function pickers(state, ctl, d, can) {
     o.agents.length > 0 &&
       sel(
         "Agent",
-        o.agents.map((a) => ({ value: a, label: a })),
-        d.agent,
+        o.agents.map((a) => ({ value: a.id, label: a.label })),
+        o.agents.find((a) => a.id === d.agent)?.label ?? d.agent,
         (agent) => ctl.act("agent", { agent }),
       ),
     o.models.length > 0 &&
@@ -1001,7 +1001,7 @@ function newSession(state, ctl) {
     sel(
       "new:agent",
       "Agent",
-      o.agents.map((a) => ({ value: a, label: a })),
+      o.agents.map((a) => ({ value: a.id, label: a.label })),
       "Project default",
     ),
     sel(

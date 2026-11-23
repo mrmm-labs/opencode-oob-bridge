@@ -119,6 +119,8 @@ export type SessionState = {
   /** The model's effort variant, when it has one chosen. */
   variant?: string
   state: "working" | "idle" | "failed"
+  /** It failed within a minute of its creation: it never ran. */
+  unstarted?: boolean
   /** Epoch ms of the last change. */
   at: number
   /** Chatting with this session from the connector is on. */

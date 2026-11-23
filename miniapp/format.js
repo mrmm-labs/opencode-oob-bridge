@@ -45,6 +45,7 @@ export function stateLabel(s) {
       working: { key: "working", text: "Working" },
       idle: { key: "idle", text: "Idle" },
       failed: { key: "failed", text: "Failed" },
+      unstarted: { key: "unstarted", text: "Did not start" },
       suspended: { key: "suspended", text: "Suspended" },
     }[s.state] ?? { key: "idle", text: s.state }
   )

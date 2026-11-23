@@ -113,6 +113,12 @@ describe("telegram render", () => {
       "💤 <b>Idle</b> 09:05\n📌 Fix\n📁 shop &lt;x&gt; 🎯\n🆔 <code>123456</code>\n🕐 09:05",
     )
     assert.match(renderStatus({ ...base, chat: true }), /^💬 on — 💤/)
+    const failed = { ...base, state: "failed" as const }
+    assert.match(renderStatus(failed), /^❌ <b>Failed<\/b>/)
+    assert.match(
+      renderStatus({ ...failed, unstarted: true }),
+      /^⚪ <b>Did not start<\/b>/,
+    )
     assert.match(
       renderStatus({ ...base, state: "failed" }),
       /^❌ <b>Failed<\/b> 09:05/,

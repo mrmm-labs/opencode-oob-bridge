@@ -68,7 +68,7 @@ export type Summary = {
   project?: string
   /** The last part of the session's directory: all the phone gets of the path. */
   folder?: string
-  state: "working" | "idle" | "failed" | "suspended"
+  state: "working" | "idle" | "failed" | "unstarted" | "suspended"
   watch: { mode: "on" | "off" | "auto"; channel?: string }
   chat: boolean
   lastActivity?: number
@@ -152,9 +152,11 @@ export class Views {
           ? "suspended"
           : r.busy
             ? "working"
-            : st?.state === "failed"
-              ? "failed"
-              : "idle",
+            : st?.unstarted
+              ? "unstarted"
+              : st?.state === "failed"
+                ? "failed"
+                : "idle",
         watch: { mode: r.mode, channel: r.channel },
         chat: r.chat,
         lastActivity: st?.at,

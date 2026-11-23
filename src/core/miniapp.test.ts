@@ -43,7 +43,10 @@ const init = (o: { user?: number; age?: number; token?: string } = {}) =>
 const host = {
   session: async (id: string) => ({ id, directory: "/work/app" }),
   busy: () => false,
-  agents: async () => ["build", "plan"],
+  agents: async () => [
+    { id: "build", label: "Build" },
+    { id: "plan", label: "Plan" },
+  ],
   models: async () => [{ ref: "p/m", name: "M", variants: ["fast"] }],
   canReplyForm: () => false,
 } as unknown as Host
@@ -376,7 +379,10 @@ describe("what the app reads", () => {
     const r = await rig()
     try {
       const o = await get(r, "/v1/options")
-      assert.deepEqual(o.agents, ["build", "plan"])
+      assert.deepEqual(o.agents, [
+        { id: "build", label: "Build" },
+        { id: "plan", label: "Plan" },
+      ])
       assert.equal(o.models[0].ref, "p/m")
       assert.deepEqual(o.projects, [{ name: "shop", agent: "build" }])
       assert.doesNotMatch(JSON.stringify(o), /\/work/)

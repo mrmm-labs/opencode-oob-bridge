@@ -130,7 +130,10 @@ async function rig(
     rename: async (sessionID, title) => {
       log.renames.push({ sessionID, title })
     },
-    agents: async () => ["build", "plan"],
+    agents: async () => [
+      { id: "build", label: "Build" },
+      { id: "plan", label: "Plan" },
+    ],
     models: async () => MODELS,
     ...o.host,
   }
@@ -529,13 +532,16 @@ describe("commands: in a session topic", () => {
     const r = await rig()
     r.say("/agent", THREAD)
     const m = await r.answered(/Agent for this session/)
-    assert.deepEqual(buttons(m), ["build", "plan"])
-    tap(r, "plan", THREAD)
+    assert.deepEqual(buttons(m), ["Build", "Plan"])
+    tap(r, "Plan", THREAD)
     await r.answered(/Agent: plan/)
     assert.deepEqual(r.log.agents, [{ sessionID: "root", agent: "plan" }])
+    r.say("/agent Build", THREAD)
+    await r.answered(/Agent: build/)
+    assert.deepEqual(r.log.agents[1], { sessionID: "root", agent: "build" })
     r.say("/agent nope", THREAD)
     await r.answered(/Not an agent I can use/)
-    assert.equal(r.log.agents.length, 1)
+    assert.equal(r.log.agents.length, 2)
     await r.done()
   })
 
@@ -659,6 +665,21 @@ describe("commands: in General", () => {
     await r.done()
   })
 
+  it("a session that fails right after it was started is marked in its topic", async () => {
+    const r = await rig()
+    r.say("/new shop add a health check")
+    await r.answered(/🆕 Started shop/)
+    await r.bridge.onEvent({
+      type: "session.execution.failed",
+      data: { sessionID: "new_1" },
+    } as unknown as BridgeEvent)
+    const e = await r.tg.waitFor(() =>
+      r.tg.of("editForumTopic").find((c) => /^⚪ /.test(c.body.name ?? "")),
+    )
+    assert.match(e.body.name, /^⚪ \S/)
+    await r.done()
+  })
+
   it("/new with no arguments walks project, agent, model, then asks for the prompt", async () => {
     const r = await rig()
     r.say("/new")
@@ -667,10 +688,10 @@ describe("commands: in General", () => {
     await r.answered(/Agent for docs/)
     assert.deepEqual(buttons(lastMenu(r)), [
       "default (OpenCode's own)",
-      "build",
-      "plan",
+      "Build",
+      "Plan",
     ])
-    tap(r, "plan")
+    tap(r, "Plan")
     await r.answered(/Model for docs/)
     assert.equal(buttons(lastMenu(r))[0], "default (OpenCode's own)")
     tap(r, "Model 4")

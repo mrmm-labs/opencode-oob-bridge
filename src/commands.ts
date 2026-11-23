@@ -10,6 +10,7 @@
 import { randomBytes } from "node:crypto"
 import { basename } from "node:path"
 
+import { resolveAgent, type AgentOption } from "./agents.ts"
 import type { Host, ModelOption } from "./bridge.ts"
 import { Refused, type Actions } from "./core/actions.ts"
 import type { Config } from "./config.ts"
@@ -549,15 +550,15 @@ export class Commands {
       return this.done(info, "applied", yes("Renamed."))
     }
     if (name === "agent") {
-      const agents = await this.d.host.agents().catch(() => [] as string[])
+      const agents = await this.d.host.agents().catch(() => [] as AgentOption[])
       if (agents.length === 0)
         return this.done(
           info,
           "invalid",
           no("OpenCode lists no agents to choose from."),
         )
-      if (args && agents.includes(args))
-        return this.applyAgent(root, args, info)
+      const chosen = args ? resolveAgent(agents, args) : undefined
+      if (chosen) return this.applyAgent(root, chosen, info)
       return this.offer(
         info,
         args,
@@ -567,9 +568,9 @@ export class Commands {
             ? "Not an agent I can use. Pick one:"
             : "Agent for this session:",
           agents.map((a) => ({
-            label: a,
-            value: a,
-            current: a === facts?.agent,
+            label: a.label,
+            value: a.id,
+            current: a.id === facts?.agent,
           })),
           { root },
         ),
@@ -742,7 +743,7 @@ export class Commands {
   }
 
   private async chooseAgent(project: string, info: Info): Promise<Outcome> {
-    const agents = await this.d.host.agents().catch(() => [] as string[])
+    const agents = await this.d.host.agents().catch(() => [] as AgentOption[])
     const own = this.d.cfg.chat.projects[project].agent ?? "OpenCode's own"
     return this.done(
       info,
@@ -752,7 +753,7 @@ export class Commands {
         `Agent for ${project}?`,
         [
           { label: `${DEFAULT} (${own})`, value: DEFAULT },
-          ...agents.map((a) => ({ label: a, value: a })),
+          ...agents.map((a) => ({ label: a.label, value: a.id })),
         ],
         { project },
       ),
@@ -879,7 +880,6 @@ export class Commands {
     })
     const end = (outcome: string, out: Outcome) => {
       span.end({ outcome }, out.ok ? undefined : outcome)
-      log("session_create", { outcome, project: o.project })
       return this.done(info, outcome, out)
     }
     const r = await this.d.actions.create(o, (id) => this.d.startChat(id, ch))
