@@ -961,7 +961,10 @@ export class TelegramConnector implements Connector {
     if (!live || !topic || !this.chatId) return
     clearTimeout(live.timer)
     const s = live.want
-    const name = truncate(filterSecrets(s.name), 128)
+    const name = truncate(
+      (s.unstarted ? "⚪ " : "") + filterSecrets(s.name),
+      128,
+    )
     const now = this.now()
     let wait = Infinity
     const due = (last: number, gap: number) => {

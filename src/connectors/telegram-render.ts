@@ -213,7 +213,9 @@ export function renderStatus(s: SessionState, icon?: string): string {
       ? "🟢 <b>Working</b>"
       : s.state === "idle"
         ? `💤 <b>Idle</b> ${at}`
-        : `❌ <b>Failed</b> ${at}`
+        : s.unstarted
+          ? `⚪ <b>Did not start</b> ${at}`
+          : `❌ <b>Failed</b> ${at}`
   const head = watchHead(s)
   const model = s.model && s.variant ? `${s.model} (${s.variant})` : s.model
   const agent = [s.agent, model].filter(Boolean).join(" · ")
