@@ -1,6 +1,8 @@
 /** Everything a deployment sets comes from the environment. A secret may also be read from a file (`NAME_FILE`). */
 import { readFileSync } from "node:fs"
 
+import { channelName } from "./shared/frame.ts"
+
 export type Config = {
   bind: string
   port: number
@@ -9,6 +11,8 @@ export type Config = {
   linkSecret: string
   /** Optional pre-shared key the link upgrade must carry in X-OOB-Link-Key. */
   linkKey?: string
+  /** Named channels on /link/<name>, each with its own secret and optional key. */
+  linkChannels: Record<string, { secret: string; key?: string }>
   linkMaxSkewSeconds: number
   operatorUserId?: number
   verifyToken?: string
@@ -78,6 +82,40 @@ export function loadConfig(
   if (linkKey !== undefined && linkKey.length < MIN_SECRET)
     problems.push(`LINK_KEY must be at least ${MIN_SECRET} characters`)
 
+  const linkChannels: Config["linkChannels"] = {}
+  const names = (env.LINK_CHANNELS ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n !== "")
+  const used = new Map<string, string>()
+  if (linkSecret) used.set(linkSecret, "LINK_SECRET")
+  for (const name of names) {
+    const base = "LINK_CHANNEL_" + name.toUpperCase().replaceAll("-", "_")
+    if (!channelName(name)) {
+      problems.push(
+        `LINK_CHANNELS: "${name}" is not a channel name (lowercase letters, digits and dash, starting with a letter, 24 at most, not "chat")`,
+      )
+      continue
+    }
+    if (name in linkChannels) {
+      problems.push(`LINK_CHANNELS lists "${name}" twice`)
+      continue
+    }
+    const secret = text(base + "_SECRET")
+    const key = text(base + "_KEY")
+    if (!secret) problems.push(`${base}_SECRET is required`)
+    else if (secret.length < MIN_SECRET)
+      problems.push(`${base}_SECRET must be at least ${MIN_SECRET} characters`)
+    else if (used.has(secret))
+      problems.push(`${base}_SECRET must differ from ${used.get(secret)}`)
+    else {
+      used.set(secret, base + "_SECRET")
+      if (key !== undefined && key.length < MIN_SECRET)
+        problems.push(`${base}_KEY must be at least ${MIN_SECRET} characters`)
+      linkChannels[name] = { secret, key }
+    }
+  }
+
   const op = text("OPERATOR_USER_ID")
   let operatorUserId: number | undefined
   if (op !== undefined && /^[1-9][0-9]{0,15}$/.test(op))
@@ -125,6 +163,7 @@ export function loadConfig(
     metricsPort: int("METRICS_PORT", 9090, 1, 65535),
     linkSecret: linkSecret ?? "",
     linkKey,
+    linkChannels,
     linkMaxSkewSeconds: int("LINK_MAX_SKEW_SECONDS", 60, 1, 60),
     operatorUserId,
     verifyToken,

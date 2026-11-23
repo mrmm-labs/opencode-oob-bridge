@@ -12,7 +12,7 @@ import type { Handler } from "./serve.ts"
 const SECRET = "c".repeat(48)
 
 /** A relay as far as the bridge can tell: it checks the upgrade and the up frames and keeps them. */
-async function relay(o: { port?: number } = {}) {
+async function relay(o: { port?: number; path?: string } = {}) {
   const verify = new Verifier(SECRET, "up")
   const wss = new WebSocketServer({ noServer: true })
   const conns: WebSocket[] = []
@@ -24,7 +24,7 @@ async function relay(o: { port?: number } = {}) {
   server.on("upgrade", (req, socket, head) => {
     attempts++
     headers.push(req.headers)
-    const r = verify.openUpgrade(req.headers)
+    const r = verify.openUpgrade(req.headers, (req.url ?? "").split("?")[0])
     if (!r.ok) {
       refused.push(r.reason)
       socket.destroy()
@@ -43,7 +43,7 @@ async function relay(o: { port?: number } = {}) {
   const sendDown = (f: Down, ws = conns.at(-1)!) =>
     ws.send(seal(SECRET, "down", f))
   return {
-    url: "ws://127.0.0.1:" + port + "/link",
+    url: "ws://127.0.0.1:" + port + (o.path ?? "/link"),
     port,
     conns,
     frames,
@@ -250,6 +250,31 @@ describe("the outbound link", () => {
     await again.waitFor(() => c.up(), 5000)
     await c.stop()
     await again.close()
+  })
+
+  it("does not reconnect after the relay closes it with 4000, and says why", async () => {
+    const r = await relay()
+    const c = client(r.url)
+    c.start()
+    await r.waitFor(() => c.up())
+    r.conns[0].close(4000, "replaced")
+    await r.waitFor(() => c.status().state === "down")
+    assert.equal(c.status().reason, "replaced by another client")
+    await new Promise((x) => setTimeout(x, 150))
+    assert.equal(r.attempts(), 1, "no second dial")
+    assert.equal(c.up(), false)
+    await c.stop()
+    await r.close()
+  })
+
+  it("signs the upgrade for the path of its URL", async () => {
+    const r = await relay({ path: "/link/gw" })
+    const c = client(r.url)
+    c.start()
+    await r.waitFor(() => c.up())
+    assert.deepEqual(r.refused, [])
+    await c.stop()
+    await r.close()
   })
 
   it("does not act on a replayed frame or on a frame it sent itself", async () => {

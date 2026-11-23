@@ -4,6 +4,7 @@ import { SHOWN, type Deadman } from "./deadman.ts"
 export type LinkStats = {
   up(): boolean
   refused(): Record<string, number>
+  channelStates?(): Record<string, boolean>
 }
 
 export function render(d: Deadman, link: LinkStats): string {
@@ -23,6 +24,15 @@ export function render(d: Deadman, link: LinkStats): string {
     "# HELP oob_relay_link_up 1 while a bridge is connected on the link.",
     "# TYPE oob_relay_link_up gauge",
     `oob_relay_link_up ${link.up() ? 1 : 0}`,
+    ...(link.channelStates
+      ? [
+          "# HELP oob_relay_channel_up 1 while a client is connected on a named channel.",
+          "# TYPE oob_relay_channel_up gauge",
+          ...Object.entries(link.channelStates()).map(
+            ([c, up]) => `oob_relay_channel_up{channel="${c}"} ${up ? 1 : 0}`,
+          ),
+        ]
+      : []),
     "# HELP oob_relay_frames_refused_total Upgrades and frames refused on the link, by reason.",
     "# TYPE oob_relay_frames_refused_total counter",
     ...Object.entries(link.refused()).map(

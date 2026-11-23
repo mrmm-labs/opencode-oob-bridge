@@ -14,6 +14,9 @@ services:
       LINK_SECRET_FILE: /run/secrets/link_secret
       # Optional second lock for the link (at least 32 characters). Add `link_key` to secrets below.
       # LINK_KEY_FILE: /run/secrets/link_key
+      # Optional named channels for other local clients: /link/<name>, one secret each (see README).
+      # LINK_CHANNELS: "<name>"
+      # LINK_CHANNEL_<NAME>_SECRET_FILE: /run/secrets/link_channel_<name>_secret
       HEARTBEAT_TOKEN_FILE: /run/secrets/heartbeat_token
       TELEGRAM_BOT_TOKEN_FILE: /run/secrets/alert_bot_token
       TELEGRAM_BOT_TOKEN_VERIFY_FILE: /run/secrets/app_bot_token

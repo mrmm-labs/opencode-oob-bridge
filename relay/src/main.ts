@@ -27,6 +27,7 @@ const deadman = new Deadman({
 const link = new Link({
   secret: cfg.linkSecret,
   key: cfg.linkKey,
+  channels: cfg.linkChannels,
   maxSkewMs: cfg.linkMaxSkewSeconds * 1000,
   keepAliveMs: cfg.sseKeepaliveSeconds * 1000,
   requestTimeoutMs: cfg.requestTimeoutSeconds * 1000,
@@ -73,6 +74,7 @@ log("started", {
   operator: cfg.operatorUserId !== undefined,
   alerts: cfg.alert.token !== undefined && cfg.alert.chatId !== undefined,
   beatEndpoint: cfg.heartbeatToken !== undefined,
+  channels: Object.keys(cfg.linkChannels).join(","),
 })
 
 let stopping = false

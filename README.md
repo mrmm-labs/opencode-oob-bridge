@@ -897,6 +897,8 @@ Two optional settings widen or tighten the link:
 - `link.allowHosts`: exact hostnames (no wildcard, scheme, port or address) the link may dial besides loopback and the tailnet, for example a LAN-only ingress. Such a host is accepted over `wss://` only; `ws://` stays loopback and tailnet. Default: empty.
 - `link.key`: a secret source like `link.secret`, sent as the `X-OOB-Link-Key` header on every dial and never logged. The relay checks it before the upgrade when its `LINK_KEY` is set. Trailing whitespace and newlines are trimmed. The HMAC `link.secret` stays mandatory either way.
 
+The relay keeps one connection per path and closes the older one with code 4000 when another client takes its place. The bridge does not redial after a 4000: `/oob status` then shows `replaced by another client`, so two bridges on one relay stop instead of evicting each other in a loop. Other local clients use their own `/link/<name>` channel (see the relay README).
+
 `/oob status` shows the link state. With a link, each heartbeat also travels over it and the relay's acknowledgement counts as an answer.
 
 ## Approvals for local tools
