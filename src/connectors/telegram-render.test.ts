@@ -50,9 +50,9 @@ describe("telegram render", () => {
     assert.equal(fit("short", 50), "short")
   })
 
-  it("turns (Recommended) into a star", () => {
-    assert.equal(starred("Ship it (Recommended)"), "Ship it ⭐")
-    assert.equal(starred("(recommended) Ship it"), "Ship it ⭐")
+  it("turns (Recommended) into a star before the label", () => {
+    assert.equal(starred("Ship it (Recommended)"), "★ Ship it")
+    assert.equal(starred("(recommended) Ship it"), "★ Ship it")
     assert.equal(starred("Wait"), "Wait")
   })
 

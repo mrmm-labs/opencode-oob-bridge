@@ -4,6 +4,7 @@
  * cut and no text is ever read as markup. A message is at most 4096 characters.
  */
 import type { ApprovalView, Settled } from "../approvals/types.ts"
+import { plainLabel } from "../classify.ts"
 import { filterSecrets } from "../filter.ts"
 import { clock } from "../util.ts"
 import { header, MAX_FILES, MAX_SUMMARY } from "../turncard.ts"
@@ -38,10 +39,10 @@ export function fit(text: string, max: number): string {
 const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 export const keycap = (n: number) => KEYCAPS[n - 1] ?? `${n}.`
 
-/** "(Recommended)" becomes a star after the label. */
+/** "(Recommended)" becomes a star before the label, so a cut never takes it off. */
 export function starred(label: string): string {
-  const plain = label.replace(/\s*\(recommended\)\s*/i, " ").trim()
-  return plain === label.trim() ? label : `${plain} ⭐`
+  const plain = plainLabel(label)
+  return plain === label.trim() ? label : `★ ${plain}`
 }
 
 const clean = (s: string) => filterSecrets(s)

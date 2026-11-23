@@ -244,7 +244,7 @@ outgoing requests, and exposes no port or webhook.
 
 What you get in Telegram:
 
-- A **question** that is one tap (one single-select field, two to four options of at most 24
+- A **question** that is one tap (one single-select field, two to four options of at most 48
   characters) is a message with one button per option, numbered with keycap emoji, and a star in
   place of "(Recommended)". Every other question has one button, **📱 Answer in app**, that opens
   that question in the Mini App (`startapp=f_<id>`); with no Mini App it is numbered text. A
@@ -256,7 +256,7 @@ What you get in Telegram:
 
   Go?
 
-  1️⃣ Ship it ⭐
+  1️⃣ ★ Ship it
         Deploy to prod
   2️⃣ Wait
 

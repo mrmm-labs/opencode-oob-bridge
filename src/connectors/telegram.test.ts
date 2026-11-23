@@ -135,7 +135,7 @@ describe("TelegramConnector outbound", () => {
       {
         key: "q0",
         type: "string",
-        options: [{ label: "Yes" }, { label: "x".repeat(25) }],
+        options: [{ label: "Yes" }, { label: "x".repeat(49) }],
       },
     ])
     const send = (id: string, questions: typeof two) =>
@@ -986,14 +986,14 @@ describe("Telegram: message layout", () => {
         "",
         "<b>Go?</b>",
         "",
-        "1️⃣ <b>Ship it ⭐</b>",
+        "1️⃣ <b>★ Ship it</b>",
         "      <i>Deploy to &lt;prod&gt;</i>",
         "2️⃣ <b>Wait</b>",
         "",
         "<i>Tap a button, or reply.</i>",
       ].join("\n"),
     )
-    assert.equal(q.reply_markup.inline_keyboard[0][0].text, "1️⃣ Ship it ⭐")
+    assert.equal(q.reply_markup.inline_keyboard[0][0].text, "1️⃣ ★ Ship it")
     b.tg.callback(CHAT, 501, `${id}:1`)
     const e = await b.tg.waitFor(() => b.tg.of("editMessageText")[0])
     assert.match(
