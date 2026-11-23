@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.45.0...v0.45.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* send agent ids, refuse unknown agents early, mark sessions that never started ([#166](https://github.com/mrmm-labs/opencode-oob-bridge/issues/166)) ([db00cfc](https://github.com/mrmm-labs/opencode-oob-bridge/commit/db00cfca686ad7b91fad1d9b862360d9beed6d74))
+
 ## [0.45.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.44.1...v0.45.0) (2026-11-23)
 
 
