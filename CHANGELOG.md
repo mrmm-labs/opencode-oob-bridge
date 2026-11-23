@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.44.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.43.0...v0.44.0) (2026-11-23)
+
+
+### Features
+
+* a pinned app message in every topic bound to a session ([#155](https://github.com/mrmm-labs/opencode-oob-bridge/issues/155)) ([af8562d](https://github.com/mrmm-labs/opencode-oob-bridge/commit/af8562d91703490f018fb8cc4825a8c6403a9a87))
+* one-tap questions with long options, recommended marked with a star ([#154](https://github.com/mrmm-labs/opencode-oob-bridge/issues/154)) ([d2f4c7d](https://github.com/mrmm-labs/opencode-oob-bridge/commit/d2f4c7d029c0ab0aa70ae1ff9586f0e30f06e241))
+
 ## [0.43.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.42.0...v0.43.0) (2026-11-22)
 
 
