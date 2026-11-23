@@ -108,6 +108,7 @@ const PAIR_TTL_MS = 10 * 60_000
 const TOAST_MAX = 190
 const TOPIC_RETRY_MS = 5 * 60_000
 const DM_RETRY_MS = 10 * 60_000
+const APP_TEXT = "📱 Open app"
 const TOPIC_NOTICE_MS = 60 * 60_000
 const STREAM_GAP_MS = 1000
 const STREAM_BUDGET = 30
@@ -300,6 +301,9 @@ class RateLimited extends Error {
 type Topic = {
   thread: number
   card?: number
+  /** The pinned "Open app" message, and whether it is pinned. */
+  app?: number
+  appPinned?: boolean
   name?: string
   iconId?: string
   icon?: string
@@ -374,6 +378,9 @@ export class TelegramConnector implements Connector {
   >()
   /** No topic creation before this time, after a failure. */
   private topicRetryAt = 0
+  /** Topics whose app message was seen to this run, and whether the startup sweep ran. */
+  private readonly appDone = new Set<string>()
+  private appSwept = false
   /** When the operator's private chat last refused an approval message. */
   private dmFailedAt = -Infinity
   private topicNoticeAt = -Infinity
@@ -441,6 +448,7 @@ export class TelegramConnector implements Connector {
       this.streams.clear()
     })
     void this.register()
+    void this.sweepApps()
     this.poll()
   }
 
@@ -450,6 +458,7 @@ export class TelegramConnector implements Connector {
   launch(app: { url: string; link?: string }): void {
     this.app = app
     if (this.onInbound) void this.register()
+    void this.sweepApps()
   }
 
   /** A private chat opens the app in place; a group takes the direct link, because web_app buttons work only in private chats. */
@@ -994,10 +1003,111 @@ export class TelegramConnector implements Connector {
         await this.card(topic, text, !!s.chat, s.id)
       }
     }
+    await this.appMessage(key, s.id)
     if (wait < Infinity) {
       live.timer = setTimeout(() => void this.flush(key), wait)
       live.timer.unref?.()
     }
+  }
+
+  /** Once per run, the app message of every topic already bound to a session. */
+  private async sweepApps(): Promise<void> {
+    if (this.appSwept || !this.app || !this.onInbound || !this.chatId) return
+    this.appSwept = true
+    try {
+      this.topics ??= await this.loadTopics()
+      const prefix = `${this.chatId}:`
+      const bound = [...this.topics.keys()].filter(
+        (k) => k.startsWith(prefix) && k !== this.topicKey("approvals"),
+      )
+      if (bound.length === 0 || !(await this.isForum())) return
+      for (const key of bound)
+        await this.appMessage(key, key.slice(prefix.length))
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /**
+   * The "📱 Open app" message of a bound topic: posted and pinned once, then edited in place. A
+   * message Telegram no longer has is posted and pinned again; a pin the bot may not make leaves it
+   * unpinned. Runs once per topic and run.
+   */
+  private async appMessage(key: string, sessionID: string): Promise<void> {
+    const topic = this.topics?.get(key)
+    const open = this.openButton(sessionID)
+    if (!topic || !open || !this.chatId || this.appDone.has(key)) return
+    this.appDone.add(key)
+    const thread = topic.thread
+    const reply_markup = { inline_keyboard: [[open]] }
+    let posted = false
+    let recreated = false
+    try {
+      if (topic.app !== undefined) {
+        try {
+          await this.call("editMessageText", {
+            chat_id: this.chatId,
+            message_id: topic.app,
+            text: APP_TEXT,
+            reply_markup,
+          })
+        } catch (err) {
+          const m = (err as Error).message
+          if (/not modified/i.test(m)) {
+            // Already as it should be.
+          } else if (/not found/i.test(m)) {
+            topic.app = undefined
+            recreated = true
+          } else throw err
+        }
+      }
+      if (topic.app === undefined) {
+        const m = await this.call<{ message_id: number }>("sendMessage", {
+          chat_id: this.chatId,
+          message_thread_id: thread,
+          text: APP_TEXT,
+          disable_notification: true,
+          reply_markup,
+        })
+        topic.app = m.message_id
+        topic.appPinned = false
+        posted = true
+        await this.saveTopics()
+      }
+    } catch (err) {
+      this.fail(err)
+      log("topic_pin", { thread, outcome: "failed" })
+      return
+    }
+    let pinned = topic.appPinned === true
+    let outcome = recreated ? "recreated" : posted ? "pinned" : "edited"
+    if (!pinned) {
+      try {
+        await this.call("pinChatMessage", {
+          chat_id: this.chatId,
+          message_id: topic.app,
+          disable_notification: true,
+        })
+        topic.appPinned = pinned = true
+        await this.saveTopics()
+        if (!recreated && !posted) outcome = "pinned"
+        // The bar shows the latest pin: the status card takes it back.
+        if (topic.card !== undefined && this.opts.statusCard !== false)
+          await this.call("pinChatMessage", {
+            chat_id: this.chatId,
+            message_id: topic.card,
+            disable_notification: true,
+          }).catch((err) => this.fail(err))
+      } catch (err) {
+        const m = (err as Error).message
+        outcome = "unpinned"
+        log("topic_pin_failed", {
+          thread,
+          reason: RIGHTS.test(m) ? "no_pin_right" : filterSecrets(m),
+        })
+      }
+    }
+    log("topic_pin", { thread, outcome })
   }
 
   /** Creates, pins or edits the status card of a topic. */
