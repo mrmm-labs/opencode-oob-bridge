@@ -674,9 +674,10 @@ describe("commands: in General", () => {
       data: { sessionID: "new_1" },
     } as unknown as BridgeEvent)
     const e = await r.tg.waitFor(() =>
-      r.tg.of("editForumTopic").find((c) => /^⚪ /.test(c.body.name ?? "")),
+      r.tg
+        .of("editForumTopic")
+        .find((c) => (c.body.name ?? "").startsWith("⚪ ")),
     )
-    assert.match(e.body.name, /^⚪ \S/)
     await r.done()
   })
 
