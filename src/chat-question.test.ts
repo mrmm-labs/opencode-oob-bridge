@@ -39,12 +39,14 @@ async function rig(o: { stale?: boolean } = {}) {
       "open" | "answered" | "cancelled" | "gone" | undefined
     >(),
     asked: [] as string[],
+    lists: new Map<string, Set<string> | undefined>(),
     replyError: undefined as string | undefined,
   }
   const skew = { ms: 0 }
   const host: Host = {
     session: async (id) => ({ id, agent: "coord", directory: "/w/shop" }),
-    root: (id) => id,
+    root: (id) => (id.startsWith("ses_") ? "root" : id),
+    openRequests: async (_kind, sid) => live.lists.get(sid),
     replyForm: async () => {
       if (live.replyError) throw new Error(live.replyError)
     },
@@ -110,6 +112,27 @@ async function rig(o: { stale?: boolean } = {}) {
       sends().find((b) => /waiting on a question/.test(b.text)),
     )
   }
+  const form = async (id: string, sessionID: string, text: string) => {
+    await bridge.onEvent({
+      type: "form.created",
+      data: {
+        form: {
+          id,
+          sessionID,
+          metadata: { kind: "question" },
+          fields: [
+            {
+              key: "q0",
+              type: "string",
+              description: text,
+              options: [{ label: "Yes" }, { label: "No" }],
+            },
+          ],
+        },
+      },
+    } as unknown as BridgeEvent)
+    await tg.waitFor(() => sends().find((b) => b.text.includes(text)))
+  }
   const tap = (menu: { reply_markup: any }, label: RegExp) => {
     const btn = menu.reply_markup.inline_keyboard
       .flat()
@@ -125,6 +148,7 @@ async function rig(o: { stale?: boolean } = {}) {
     prompts,
     sends,
     gate,
+    form,
     tap,
     async done() {
       await bridge.stop()
@@ -339,6 +363,75 @@ describe("a question OpenCode no longer holds", () => {
     assert.doesNotMatch(e.text, /answered/i)
     assert.ok(!e.reply_markup?.inline_keyboard?.length, "no buttons")
     assert.equal(await r.bridge.reconcile(), 0, "closed once")
+    await r.done()
+  })
+
+  const AJ6H = {
+    id: "frm_207d9220e001qszdppOkRjCcyp",
+    session: "ses_eaf5640a2ffeYqvSogl3Omy3T1",
+  }
+  const MTKE = {
+    id: "frm_207d9baef001DDjUFCA7Sr4SJ4",
+    session: "ses_eca821321ffeFk0j0g51hFjWhO",
+  }
+
+  it("two forms OpenCode lists as none are withdrawn and no longer counted as open", async () => {
+    const r = await rig()
+    await r.form(AJ6H.id, AJ6H.session, "First?")
+    await r.form(MTKE.id, MTKE.session, "Second?")
+    r.live.states.set("frm_1", "answered")
+    r.live.lists.set(AJ6H.session, new Set())
+    r.live.lists.set(MTKE.session, new Set())
+    assert.equal(r.bridge.drain().questions, 3, "young: counted")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 3)
+    for (const f of [AJ6H, MTKE]) {
+      const p = r.store.list().find((x) => x.requestID === f.id)!
+      assert.equal(p.state, "withdrawn")
+      assert.equal(p.answeredBy, undefined)
+    }
+    await r.tg.waitFor(
+      () =>
+        edits(r).filter((b) => /⚪ <b>Withdrawn<\/b>/.test(b.text)).length >= 2,
+    )
+    assert.deepEqual(r.bridge.drain(), {
+      questions: 0,
+      permissions: 0,
+      unverified: 0,
+    })
+    assert.equal(r.tg.of("deleteMessage").length, 0, "never deleted")
+    await r.done()
+  })
+
+  it("a form OpenCode still lists stays pending and counts as open", async () => {
+    const r = await rig()
+    await r.form(AJ6H.id, AJ6H.session, "First?")
+    r.live.lists.set(AJ6H.session, new Set([AJ6H.id]))
+    r.live.states.set("frm_1", "answered")
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 1)
+    assert.equal(
+      r.store.list().find((x) => x.requestID === AJ6H.id)!.state,
+      "pending",
+    )
+    assert.equal(r.bridge.drain().questions, 1)
+    await r.done()
+  })
+
+  it("a form OpenCode cannot be asked about stays pending but is not counted as open", async () => {
+    const r = await rig()
+    r.live.states.set("frm_1", undefined)
+    r.skew.ms = 60_000
+    assert.equal(await r.bridge.reconcile(), 0)
+    assert.equal(
+      r.store.list().find((x) => x.requestID === "frm_1")!.state,
+      "pending",
+    )
+    assert.deepEqual(r.bridge.drain(), {
+      questions: 0,
+      permissions: 0,
+      unverified: 1,
+    })
     await r.done()
   })
 

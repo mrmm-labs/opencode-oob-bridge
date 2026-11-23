@@ -9,12 +9,16 @@ type Endpoint = {
   auth?: { type: "basic"; username: string; password: string }
 }
 
+type Listed = Array<{ id?: unknown }> | { items?: Array<{ id?: unknown }> }
+
 type Api = {
   permission: {
     get(i: { sessionID: string; requestID: string }): Promise<unknown>
+    list?(i: { sessionID: string }): Promise<Listed>
   }
   session: {
     form: {
+      list?(i: { sessionID: string }): Promise<Listed>
       get(i: {
         sessionID: string
         formID: string
@@ -36,6 +40,14 @@ export type ServiceClient = {
     formID: string
     answer: unknown
   }): Promise<void>
+  /**
+   * The ids of the forms or permission requests the service holds open for a session. Undefined when
+   * it cannot say; an empty set says it holds none.
+   */
+  open(
+    kind: "question" | "permission",
+    sessionID: string,
+  ): Promise<Set<string> | undefined>
   /**
    * What the service says of a form or permission request: still `open`, or already `answered` or
    * `cancelled` (a request it no longer has counts as answered). Undefined when it cannot say.
@@ -97,6 +109,25 @@ export function serviceClient(
     async ready() {
       return (await api()) !== undefined
     },
+    async open(kind, sessionID) {
+      const a = await api()
+      if (!a) return undefined
+      try {
+        const out =
+          kind === "permission"
+            ? await a.permission.list?.({ sessionID })
+            : await a.session.form.list?.({ sessionID })
+        const items = Array.isArray(out) ? out : out?.items
+        if (!Array.isArray(items)) return undefined
+        return new Set(
+          items.flatMap((i) => (typeof i?.id === "string" ? [i.id] : [])),
+        )
+      } catch (err) {
+        const tag = (err as { _tag?: string })._tag
+        // A session the service no longer has holds nothing open.
+        return tag === "SessionNotFoundError" ? new Set() : undefined
+      }
+    },
     async state(kind, sessionID, requestID) {
       const a = await api()
       if (!a) return undefined
@@ -112,7 +143,8 @@ export function serviceClient(
         const tag = (err as { _tag?: string })._tag
         // Only these two say the request is gone; any other failure says nothing. A form gone
         // is not known to be answered (a tool may have been interrupted); a permission is.
-        if (tag === "FormNotFoundError") return "gone"
+        if (tag === "FormNotFoundError" || tag === "SessionNotFoundError")
+          return "gone"
         return tag === "PermissionNotFoundError" ? "answered" : undefined
       }
     },

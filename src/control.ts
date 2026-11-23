@@ -268,6 +268,8 @@ export class Control {
 
   /** What this server half runs and what is installed; the warnings compare the two and the TUIs. */
   async versionReport(force = true): Promise<VersionReport> {
+    // The counts are checked against OpenCode now, not as of the last periodic check.
+    await this.o.bridge.reconcile().catch(() => 0)
     const inst = await this.refreshInstalled(force)
     const { owner, version } = this.o
     const core = this.core?.status()
@@ -297,13 +299,14 @@ export class Control {
 
   /** What is still pending, as counts. */
   drain(): Drain {
-    const { questions, permissions } = this.o.bridge.drain()
+    const { questions, permissions, unverified } = this.o.bridge.drain()
     const approvals = this.approvals?.pending() ?? 0
     return {
       open: questions + approvals + permissions,
       questions,
       approvals,
       permissions,
+      unverified,
     }
   }
 

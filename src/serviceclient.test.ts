@@ -85,14 +85,23 @@ describe("the service client: the state of a request", () => {
   const make = (o: {
     form?: () => Promise<unknown>
     permission?: () => Promise<unknown>
+    formList?: () => Promise<unknown>
+    permissionList?: () => Promise<unknown>
   }) =>
     serviceClient({
       discover: async () => endpoint,
       make: () =>
         ({
-          permission: { get: o.permission ?? (async () => ({})) },
+          permission: {
+            get: o.permission ?? (async () => ({})),
+            list: o.permissionList,
+          },
           session: {
-            form: { get: o.form ?? (async () => ({})), reply: async () => {} },
+            form: {
+              get: o.form ?? (async () => ({})),
+              list: o.formList,
+              reply: async () => {},
+            },
           },
         }) as never,
     })
@@ -115,15 +124,47 @@ describe("the service client: the state of a request", () => {
     assert.equal(await c.state("permission", "s", "p"), "answered")
   })
 
-  it("says nothing on any other failure, or with no service", async () => {
+  it("says a form of a session it no longer has is gone", async () => {
     const c = make({
       form: async () => Promise.reject(tagged("SessionNotFoundError")),
+    })
+    assert.equal(await c.state("question", "s", "f"), "gone")
+  })
+
+  it("says nothing on any other failure, or with no service", async () => {
+    const c = make({
+      form: async () => Promise.reject(new Error("boom")),
       permission: async () => Promise.reject(new Error("socket hang up")),
     })
     assert.equal(await c.state("question", "s", "f"), undefined)
     assert.equal(await c.state("permission", "s", "p"), undefined)
     const none = serviceClient({ discover: async () => undefined })
     assert.equal(await none.state("question", "s", "f"), undefined)
+  })
+
+  it("lists the ids it holds open, an empty set for a session it no longer has", async () => {
+    const c = make({
+      formList: async () => [{ id: "f1" }, { id: "f2" }],
+      permissionList: async () => ({ items: [{ id: "p1" }] }),
+    })
+    assert.deepEqual(await c.open("question", "s"), new Set(["f1", "f2"]))
+    assert.deepEqual(await c.open("permission", "s"), new Set(["p1"]))
+    const empty = make({ formList: async () => [] })
+    assert.deepEqual(await empty.open("question", "s"), new Set())
+    const gone = make({
+      formList: async () => Promise.reject(tagged("SessionNotFoundError")),
+    })
+    assert.deepEqual(await gone.open("question", "s"), new Set())
+  })
+
+  it("lists nothing it cannot say: a failure, an odd answer, or no service", async () => {
+    const down = make({ formList: async () => Promise.reject(new Error("x")) })
+    assert.equal(await down.open("question", "s"), undefined)
+    const odd = make({ formList: async () => ({}) })
+    assert.equal(await odd.open("question", "s"), undefined)
+    assert.equal(await make({}).open("question", "s"), undefined)
+    const none = serviceClient({ discover: async () => undefined })
+    assert.equal(await none.open("question", "s"), undefined)
   })
 
   it("says a permission request it holds is open", async () => {

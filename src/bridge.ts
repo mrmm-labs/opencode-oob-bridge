@@ -127,6 +127,14 @@ export interface Host {
     sessionID: string,
     requestID: string,
   ): Promise<"open" | "answered" | "cancelled" | "gone" | undefined>
+  /**
+   * The ids of the forms or permission requests OpenCode holds open for a session: the list is the
+   * proof that something is still asked. Undefined when it cannot say. Absent when the host cannot.
+   */
+  openRequests?(
+    kind: "question" | "permission",
+    sessionID: string,
+  ): Promise<Set<string> | undefined>
   /** Answers a permission request. Absent when the host cannot. */
   replyPermission?(
     sessionID: string,
@@ -397,6 +405,8 @@ export class Bridge {
   digestGapMs = PERM_DIGEST_GAP_MS
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
   private reconcileChain: Promise<unknown> = Promise.resolve()
+  /** When OpenCode last confirmed each pending prompt open. */
+  private readonly confirmedOpen = new Map<string, number>()
   private readonly permDigests = new Map<
     string,
     {
@@ -698,12 +708,23 @@ export class Bridge {
     this.waitingSource = fn
   }
 
-  /** How many questions and permission requests are still pending. */
-  drain(): { questions: number; permissions: number } {
-    const open = this.store.list().filter((p) => p.state === "pending")
+  /**
+   * How many questions and permission requests are open, as OpenCode confirmed it within the last two
+   * checks (or as just asked), and how many it could not confirm. A host that cannot be asked
+   * confirms nothing, so everything pending counts as open.
+   */
+  drain(): { questions: number; permissions: number; unverified: number } {
+    const pending = this.store.list().filter((p) => p.state === "pending")
+    const now = this.now()
+    const sure = (p: Pending) =>
+      !this.host.requestState ||
+      now - p.askedAt < RECONCILE_GRACE_MS ||
+      now - (this.confirmedOpen.get(p.id) ?? -Infinity) <= 2 * RECONCILE_MS
+    const open = pending.filter(sure)
     return {
       questions: open.filter((p) => p.kind === "question").length,
       permissions: open.filter((p) => p.kind === "permission").length,
+      unverified: pending.length - open.length,
     }
   }
 
@@ -1229,25 +1250,57 @@ export class Bridge {
     if (!this.host.requestState) return Promise.resolve(0)
     const run = async (): Promise<number> => {
       let closed = 0
+      let checked = 0
+      let open = 0
+      let withdrawn = 0
+      let unverified = 0
       const touched = new Set<string>()
+      const listed = new Map<string, Set<string> | undefined>()
+      const list = async (kind: Pending["kind"], sessionID: string) => {
+        const k = kind + ":" + sessionID
+        if (!listed.has(k))
+          listed.set(
+            k,
+            await this.host
+              .openRequests?.(kind, sessionID)
+              .catch(() => undefined),
+          )
+        return listed.get(k)
+      }
       try {
         for (const p of this.store.list()) {
           if (p.state !== "pending") continue
           if (root !== undefined && p.rootSessionID !== root) continue
           if (this.now() - p.askedAt < graceMs) continue
-          const s = await this.host.requestState!(
+          checked++
+          let s = await this.host.requestState!(
             p.kind,
             p.sessionID,
             p.requestID,
           ).catch(() => undefined)
-          if (s === undefined || s === "open") continue
+          // What OpenCode lists as open is the proof: a request it does not list is not asked.
+          const ids = await list(p.kind, p.sessionID)
+          if (ids && !ids.has(p.requestID) && (s === undefined || s === "open"))
+            s = "gone"
+          if (s === undefined) {
+            unverified++
+            continue
+          }
+          if (s === "open") {
+            open++
+            this.confirmedOpen.set(p.id, this.now())
+            continue
+          }
           // An answer may have arrived while OpenCode was asked.
           const now = this.store.get(p.id)
           if (now?.state !== "pending") continue
           await this.settleStale(now, s === "gone" ? "withdrawn" : s)
           touched.add(now.rootSessionID)
+          if (s === "gone") withdrawn++
           closed++
         }
+        if (checked > 0)
+          log("reconcile", { checked, open, closed, withdrawn, unverified })
         for (const r of touched)
           if (!this.openPromptList(r).some((p) => p.kind === "question"))
             await this.releaseHeld(r)
@@ -1269,6 +1322,7 @@ export class Bridge {
     p: Pending,
     state: "answered" | "cancelled" | "withdrawn",
   ) {
+    this.confirmedOpen.delete(p.id)
     this.store.update(p.id, {
       state,
       answeredBy: state === "withdrawn" ? undefined : "unknown (reconciled)",

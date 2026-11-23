@@ -85,6 +85,8 @@ export type Drain = {
   questions: number
   approvals: number
   permissions: number
+  /** Pending, but OpenCode could not confirm it open: not counted in `open`. */
+  unverified: number
 }
 
 export type Snapshot = {

@@ -240,6 +240,7 @@ export function serverHost(
   forms: (r: Omit<FormRelay, "token">) => Promise<void>,
   canReplyForm?: () => boolean | Promise<boolean>,
   requestState?: Host["requestState"],
+  openRequests?: Host["openRequests"],
 ): Host {
   return {
     async session(id) {
@@ -262,6 +263,7 @@ export function serverHost(
       forms({ sessionID, formID, answer }),
     canReplyForm,
     requestState,
+    openRequests,
     replyPermission: (sessionID, requestID, decision) =>
       ctx.permission.reply({ sessionID, requestID, decision } as never),
     prompt: async (sessionID, text, delivery, files) => {
@@ -529,6 +531,7 @@ async function boot(
     replyForm,
     async () => control.pickTui() !== undefined || (await service.ready()),
     (kind, sessionID, requestID) => service.state(kind, sessionID, requestID),
+    (kind, sessionID) => service.open(kind, sessionID),
   )
   const digest = new DigestLog(join(dir, "digest.jsonl"))
   await digest.load()

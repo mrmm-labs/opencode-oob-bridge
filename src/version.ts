@@ -145,9 +145,9 @@ export type VersionReport = {
 }
 
 const drainLines = (d?: Drain): string[] =>
-  d && d.open > 0
+  d && (d.open > 0 || d.unverified > 0)
     ? [
-        `Open: ${d.open} (questions ${d.questions}, approvals ${d.approvals}, permissions ${d.permissions})`,
+        `Open: ${d.open} (questions ${d.questions}, approvals ${d.approvals}, permissions ${d.permissions})${d.unverified > 0 ? `, ${d.unverified} not confirmed by OpenCode` : ""}`,
       ]
     : []
 
