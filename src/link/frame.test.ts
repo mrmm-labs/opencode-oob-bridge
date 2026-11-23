@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import {
+  channelOf,
   describe as why,
   NonceCache,
   seal,
@@ -152,6 +153,48 @@ describe("upgrade proof", () => {
       body: "GET /link",
     })
     assert.equal(new Verifier(SECRET, "up", c.now).open(env).ok, false)
+  })
+})
+
+describe("channels", () => {
+  const lower = (h: Record<string, string>) =>
+    Object.fromEntries(Object.entries(h).map(([k, v]) => [k.toLowerCase(), v]))
+
+  it("names the channel a path belongs to", () => {
+    assert.equal(channelOf("/link"), "chat")
+    assert.equal(channelOf("/link/gw"), "gw")
+    assert.equal(channelOf("/link/a-1"), "a-1")
+    for (const p of [
+      "/link/",
+      "/link/chat",
+      "/link/Gw",
+      "/link/1gw",
+      "/link/g_w",
+      "/link/gw/x",
+      "/linkx",
+      "/",
+      "/link/" + "a".repeat(25),
+    ])
+      assert.equal(channelOf(p), undefined, p)
+    assert.equal(channelOf("/link/" + "a".repeat(24)), "a".repeat(24))
+  })
+
+  it("binds the upgrade proof to its path", () => {
+    const c = clock()
+    const v = () => new Verifier(SECRET, "up", c.now)
+    const h = lower(sealUpgrade(SECRET, c.now(), "/link/gw"))
+    assert.deepEqual(v().openUpgrade(h, "/link"), {
+      ok: false,
+      reason: "mac",
+    })
+    assert.deepEqual(v().openUpgrade(h, "/link/other"), {
+      ok: false,
+      reason: "mac",
+    })
+    assert.equal(v().openUpgrade(h, "/link/gw").ok, true)
+    const bridge = lower(sealUpgrade(SECRET, c.now()))
+    assert.equal(v().openUpgrade(bridge, "/link/gw").ok, false)
+    assert.equal(v().openUpgrade(bridge).ok, true)
   })
 })
 

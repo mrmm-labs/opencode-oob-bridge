@@ -13,6 +13,23 @@ export const SKEW_MS = 60_000
 export const MAX_FRAME_BYTES = 1024 * 1024
 export const MAX_CHUNK_BYTES = 48 * 1024
 export const LINK_PATH = "/link"
+/** The name the chat bridge holds on /link; a channel cannot take it. */
+export const BRIDGE_CHANNEL = "chat"
+const CHANNEL_NAME = /^[a-z][a-z0-9-]{0,23}$/
+
+/** True for a name a channel may have: lowercase, digits and dash, 24 at most, not the bridge's. */
+export const channelName = (name: string): boolean =>
+  CHANNEL_NAME.test(name) && name !== BRIDGE_CHANNEL
+
+export const channelPath = (name: string): string => LINK_PATH + "/" + name
+
+/** The channel a path names: the bridge's for /link, a name for /link/<name>, undefined otherwise. */
+export function channelOf(path: string): string | undefined {
+  if (path === LINK_PATH) return BRIDGE_CHANNEL
+  if (!path.startsWith(LINK_PATH + "/")) return undefined
+  const name = path.slice(LINK_PATH.length + 1)
+  return channelName(name) ? name : undefined
+}
 /** The pre-shared key a relay may ask for on the upgrade, before the HMAC is looked at. */
 export const LINK_KEY_HEADER = "X-OOB-Link-Key"
 
@@ -37,6 +54,9 @@ export type Down =
     }
   | { t: "close"; id: string }
   | { t: "ack"; seq: number }
+
+/** A frame on a named channel: the signed body names the channel of its socket. */
+export type ChannelFrame = { t: string; ch: string; [k: string]: unknown }
 
 /** Bridge to relay. */
 export type Up =
@@ -65,7 +85,7 @@ const same = (a: string, b: string) => {
 export function seal(
   secret: string,
   dir: Dir,
-  payload: Down | Up,
+  payload: Down | Up | ChannelFrame,
   now = Date.now(),
 ): string {
   const body = JSON.stringify(payload)
@@ -82,12 +102,13 @@ export function seal(
 export function sealUpgrade(
   secret: string,
   now = Date.now(),
+  path = LINK_PATH,
 ): Record<string, string> {
   const nonce = randomBytes(12).toString("hex")
   return {
     "X-Link-Ts": String(now),
     "X-Link-Nonce": nonce,
-    "X-Link-Mac": sign(secret, "up", now, nonce, "GET " + LINK_PATH),
+    "X-Link-Mac": sign(secret, "up", now, nonce, "GET " + path),
   }
 }
 
@@ -199,7 +220,10 @@ export class Verifier {
   }
 
   /** The upgrade request's headers (lower-case names, as Node gives them). */
-  openUpgrade(h: Record<string, string | string[] | undefined>): Opened<true> {
+  openUpgrade(
+    h: Record<string, string | string[] | undefined>,
+    path = LINK_PATH,
+  ): Opened<true> {
     const one = (v: string | string[] | undefined) =>
       typeof v === "string" ? v : undefined
     const ts = Number(one(h[H_TS]))
@@ -207,7 +231,7 @@ export class Verifier {
       one(h[H_TS]) === undefined ? undefined : ts,
       one(h[H_NONCE]),
       one(h[H_MAC]),
-      "GET " + LINK_PATH,
+      "GET " + path,
     )
     return bad ? this.refusal(bad) : { ok: true, payload: true }
   }

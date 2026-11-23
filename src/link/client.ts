@@ -9,6 +9,7 @@ import { log } from "../logger.ts"
 import {
   describe,
   LINK_KEY_HEADER,
+  LINK_PATH,
   seal,
   sealUpgrade,
   Verifier,
@@ -49,6 +50,8 @@ export type LinkOptions = {
 }
 
 const OPEN = 1
+/** The relay closes a connection with this code when a newer one took its place. */
+const REPLACED = 4000
 const MISSED_ACKS_BEFORE_RECONNECT = 2
 
 export class LinkClient {
@@ -157,6 +160,14 @@ export class LinkClient {
     this.timer.unref?.()
   }
 
+  private path(): string {
+    try {
+      return new URL(this.o.url).pathname || LINK_PATH
+    } catch {
+      return LINK_PATH
+    }
+  }
+
   private async connect(): Promise<void> {
     if (this.stopped) return
     let secret: string | undefined
@@ -172,7 +183,7 @@ export class LinkClient {
       return this.later()
     }
     registerSecret(secret)
-    const headers = sealUpgrade(secret, this.now())
+    const headers = sealUpgrade(secret, this.now(), this.path())
     if (this.o.key) {
       let key: string | undefined
       try {
@@ -229,6 +240,11 @@ export class LinkClient {
       this.server.closeAll()
       this.settle(false)
       if (this.stopped) return
+      if (code === REPLACED) {
+        this.set("down", "replaced by another client")
+        log("link_replaced", {})
+        return
+      }
       this.set(
         "down",
         code === undefined

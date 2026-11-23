@@ -42,6 +42,62 @@ describe("relay config", () => {
     assert.ok("error" in e && /LINK_KEY_FILE cannot be read/.test(e.error))
   })
 
+  it("reads named channels with their own secret and key, also from _FILE", () => {
+    assert.deepEqual(ok(base).config.linkChannels, {})
+    const env = {
+      ...base,
+      LINK_CHANNELS: "gw, a-b",
+      LINK_CHANNEL_GW_SECRET: "g".repeat(32),
+      LINK_CHANNEL_GW_KEY: "k".repeat(32),
+      LINK_CHANNEL_A_B_SECRET_FILE: "/run/secrets/ab",
+    }
+    const r = loadConfig(env, () => "a".repeat(40) + "\n")
+    assert.ok(!("error" in r))
+    assert.deepEqual(r.config.linkChannels, {
+      gw: { secret: "g".repeat(32), key: "k".repeat(32) },
+      "a-b": { secret: "a".repeat(40), key: undefined },
+    })
+  })
+
+  it("refuses a channel that is badly named, has no secret, a short one or one it shares", () => {
+    const s = { LINK_CHANNEL_GW_SECRET: "g".repeat(32) }
+    assert.match(
+      bad({ ...base, LINK_CHANNELS: "chat", ...s }),
+      /not a channel name/,
+    )
+    assert.match(bad({ ...base, LINK_CHANNELS: "Gw" }), /not a channel name/)
+    assert.match(bad({ ...base, LINK_CHANNELS: "gw,gw", ...s }), /twice/)
+    assert.match(
+      bad({ ...base, LINK_CHANNELS: "gw" }),
+      /LINK_CHANNEL_GW_SECRET is required/,
+    )
+    assert.match(
+      bad({ ...base, LINK_CHANNELS: "gw", LINK_CHANNEL_GW_SECRET: "short" }),
+      /LINK_CHANNEL_GW_SECRET must be at least 32/,
+    )
+    assert.match(
+      bad({ ...base, LINK_CHANNELS: "gw", ...s, LINK_CHANNEL_GW_KEY: "short" }),
+      /LINK_CHANNEL_GW_KEY must be at least 32/,
+    )
+    assert.match(
+      bad({
+        ...base,
+        LINK_CHANNELS: "gw",
+        LINK_CHANNEL_GW_SECRET: base.LINK_SECRET,
+      }),
+      /LINK_CHANNEL_GW_SECRET must differ from LINK_SECRET/,
+    )
+    assert.match(
+      bad({
+        ...base,
+        LINK_CHANNELS: "gw,ha",
+        ...s,
+        LINK_CHANNEL_HA_SECRET: "g".repeat(32),
+      }),
+      /LINK_CHANNEL_HA_SECRET must differ from LINK_CHANNEL_GW_SECRET/,
+    )
+  })
+
   it("has the documented defaults", () => {
     const { config: c } = ok(base)
     assert.deepEqual(
