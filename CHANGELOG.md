@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.44.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.44.0...v0.44.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* withdraw pending prompts that OpenCode no longer lists and count only confirmed ones ([#160](https://github.com/mrmm-labs/opencode-oob-bridge/issues/160)) ([2c56fdb](https://github.com/mrmm-labs/opencode-oob-bridge/commit/2c56fdb7b9a36f92e5bbc4dcd5a1186bf088b9fa))
+
 ## [0.44.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.43.0...v0.44.0) (2026-11-23)
 
 
