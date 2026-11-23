@@ -673,7 +673,7 @@ describe("commands: in General", () => {
       type: "session.execution.failed",
       data: { sessionID: "new_1" },
     } as unknown as BridgeEvent)
-    const e = await r.tg.waitFor(() =>
+    await r.tg.waitFor(() =>
       r.tg
         .of("editForumTopic")
         .find((c) => (c.body.name ?? "").startsWith("⚪ ")),
