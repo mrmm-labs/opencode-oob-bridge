@@ -121,7 +121,13 @@ describe("reportLines", () => {
   }
 
   it("adds a line with the open counts only when something is open", () => {
-    const open = { open: 2, questions: 1, approvals: 1, permissions: 0 }
+    const open = {
+      open: 2,
+      questions: 1,
+      approvals: 1,
+      permissions: 0,
+      unverified: 0,
+    }
     const none = { ...open, open: 0, questions: 0, approvals: 0 }
     assert.match(
       reportLines({ ...report, drain: open }).join("\n"),
@@ -132,6 +138,10 @@ describe("reportLines", () => {
       /Open:/,
     )
     assert.doesNotMatch(reportLines(report).join("\n"), /Open:/)
+    assert.match(
+      reportLines({ ...report, drain: { ...none, unverified: 2 } }).join("\n"),
+      /Open: 0 .*2 not confirmed by OpenCode/,
+    )
     assert.match(
       chatLines({ ...report, drain: open }, Date.now()).join("\n"),
       /Open: 2/,

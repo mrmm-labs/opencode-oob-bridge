@@ -303,7 +303,13 @@ describe("http api", () => {
       owner: {},
       afk: {},
       pending: 0,
-      drain: { open: 2, questions: 1, approvals: 1, permissions: 0 },
+      drain: {
+        open: 2,
+        questions: 1,
+        approvals: 1,
+        permissions: 0,
+        unverified: 0,
+      },
       channels: [],
       sessions: [row],
       stuck: [],
@@ -409,6 +415,7 @@ describe("http api", () => {
         questions: 1,
         approvals: 1,
         permissions: 0,
+        unverified: 0,
       })
     } finally {
       await r.api.close()

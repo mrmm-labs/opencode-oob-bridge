@@ -610,7 +610,13 @@ describe("version", () => {
 
   it("says what is still pending, as counts, only when something is", async () => {
     const r = await rig()
-    const none = { open: 0, questions: 0, approvals: 0, permissions: 0 }
+    const none = {
+      open: 0,
+      questions: 0,
+      approvals: 0,
+      permissions: 0,
+      unverified: 0,
+    }
     assert.deepEqual(r.control.snapshot().drain, none)
     assert.deepEqual((await r.control.versionReport()).drain, none)
     assert.doesNotMatch(await r.control.versionText(), /Open:/)
@@ -634,7 +640,13 @@ describe("version", () => {
     r.store.put(entry("q2", "question", "answered"))
     r.store.put(entry("p1", "permission"))
     r.control.approvals = { pending: () => 1 } as never
-    const open = { open: 3, questions: 1, approvals: 1, permissions: 1 }
+    const open = {
+      open: 3,
+      questions: 1,
+      approvals: 1,
+      permissions: 1,
+      unverified: 0,
+    }
     assert.deepEqual(r.control.snapshot().drain, open)
     const text = await r.control.versionText()
     assert.match(text, /Open: 3 \(questions 1, approvals 1, permissions 1\)/)
