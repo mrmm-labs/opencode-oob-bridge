@@ -36,13 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write # npm provenance and trusted publishing
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release-please.outputs.tag }}
-      # Tool versions from mise.toml. Node 24 ships npm 11, which publishes through npm
-      # trusted publishing (OIDC).
+      # Tool versions from mise.toml.
       - uses: jdx/mise-action@v2
       - run: mise run build
       - run: mise run test
@@ -56,15 +54,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ needs.release-please.outputs.tag }}" "${{ steps.pack.outputs.file }}" "${{ steps.pack.outputs.file }}.sha256" --clobber
-      # NPM_TOKEN is only needed until trusted publishing is configured on npmjs.com.
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NODE_AUTH_TOKEN" ]; then
-            echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
-          fi
-          npm publish "${{ steps.pack.outputs.file }}" --provenance --access public
 
   # Optional: pushes the relay image to a private registry named only by secrets.
   # The first step masks every derived value, no step prints a reference, and the
