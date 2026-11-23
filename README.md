@@ -302,6 +302,11 @@ What you get in Telegram:
     project, short session id and last activity. It is edited in place, at most once every 10 seconds.
     Set `statusCard: false` to turn it off; `notify.finished: true` brings back one message per
     finished turn.
+  - With the Mini App set up, each topic also holds a pinned **📱 Open app** message whose button
+    opens that session in the app. It is posted and pinned silently when the topic is bound and once
+    at startup for topics that already exist, then edited in place, never deleted or pinned twice,
+    and posted again if Telegram lost it. If the bot may not pin, the message stays unpinned and
+    `topic_pin_failed` is logged with the reason (give the bot the **Pin messages** admin right).
   - Each topic gets an **icon** and a color. The color follows the project, the icon comes from a
     small family per project and the session picks within it, the same every time. `icons` pins
     an emoji for an agent or a project (for example `{ "^coordinator$": "🎯", "api*": "🛠" }`).
