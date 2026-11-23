@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.44.1...v0.45.0) (2026-11-23)
+
+
+### Features
+
+* named channels on the relay link, and a client that stops when replaced ([#162](https://github.com/mrmm-labs/opencode-oob-bridge/issues/162)) ([fb51c52](https://github.com/mrmm-labs/opencode-oob-bridge/commit/fb51c527572aa1a0d47a3d870eda6f19eea4d0fe))
+
 ## [0.44.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.44.0...v0.44.1) (2026-11-23)
 
 
