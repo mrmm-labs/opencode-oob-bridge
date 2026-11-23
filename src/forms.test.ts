@@ -251,6 +251,56 @@ describe("forms: one tap in the chat, the rest in the app", () => {
     await r.done()
   })
 
+  it("long options with a recommended one keep their buttons: one per row, starred, cut with …, and a tap answers the full option", async () => {
+    const REC = "Apply the fix to the staging cluster now (Recommended)"
+    const r = await rig()
+    withApp(r)
+    await r.ev("form.created", {
+      form: {
+        id: "frm_4",
+        sessionID: "root",
+        metadata: { kind: "question" },
+        fields: [
+          {
+            key: "go",
+            type: "string",
+            title: "Fix",
+            description: "What next?",
+            options: [
+              { label: REC },
+              { label: "Wait for the release" },
+              { label: "Skip this for now" },
+            ],
+            custom: true,
+          },
+        ],
+      },
+    })
+    const m = await r.tg.waitFor(() =>
+      r.sends().find((b) => /What next/.test(b.text)),
+    )
+    const id = r.store.list()[0].id
+    const rows = m.reply_markup.inline_keyboard
+    assert.equal(rows.length, 4, "three options and the app row")
+    assert.ok(rows.every((x: any[]) => x.length === 1))
+    assert.deepEqual(
+      rows.slice(0, 3).map((x: any[]) => x[0].callback_data),
+      [`${id}:1`, `${id}:2`, `${id}:3`],
+    )
+    const first = rows[0][0].text as string
+    assert.match(first, /^1️⃣ ★ Apply the fix/)
+    assert.ok(first.endsWith("…") && first.length <= 40, first)
+    assert.doesNotMatch(first, /Recommended/)
+    assert.equal(rows[1][0].text, "2️⃣ Wait for the release")
+    assert.equal(rows[2][0].text, "3️⃣ Skip this for now")
+    assert.equal(rows[3][0].text, "📱 Answer in app")
+    assert.match(m.text, /★ Apply the fix to the staging cluster now/)
+    r.tap(`${id}:1`)
+    await r.tg.waitFor(() => r.seen.forms[0])
+    assert.deepEqual(r.seen.forms, [{ formID: "frm_4", answer: { go: REC } }])
+    await r.done()
+  })
+
   it("two fields get one 📱 Answer in app button to that question, and no option buttons", async () => {
     const r = await rig()
     withApp(r)
