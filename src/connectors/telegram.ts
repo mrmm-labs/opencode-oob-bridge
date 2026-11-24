@@ -2114,7 +2114,7 @@ export class TelegramConnector implements Connector {
         inline: true,
       })
     }
-    const ctl = /^ctl:(resume|diff|continue|stop)$/.exec(cb.data ?? "")
+    const ctl = /^ctl:(resume|diff|continue|qa|stop)$/.exec(cb.data ?? "")
     if (ctl) {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
@@ -2857,7 +2857,10 @@ export class TelegramConnector implements Connector {
             [
               { text: "Diff", callback_data: "ctl:diff" },
               ...(o.chat
-                ? [{ text: "Continue", callback_data: "ctl:continue" }]
+                ? [
+                    { text: "Continue", callback_data: "ctl:continue" },
+                    { text: "QA", callback_data: "ctl:qa" },
+                  ]
                 : []),
               { text: "Stop", callback_data: "ctl:stop" },
             ],

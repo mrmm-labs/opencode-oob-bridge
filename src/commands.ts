@@ -13,6 +13,7 @@ import { basename } from "node:path"
 import { resolveAgent, type AgentOption } from "./agents.ts"
 import type { Host, ModelOption } from "./bridge.ts"
 import { Refused, type Actions } from "./core/actions.ts"
+import { qaText } from "./qa.ts"
 import type { Config } from "./config.ts"
 import type {
   Connector,
@@ -33,6 +34,7 @@ const SESSION_COMMANDS = [
   "compact",
   "rename",
   "steer",
+  "qa",
   "undo",
 ] as const
 const GENERAL_COMMANDS = ["new", "sessions", "projects"] as const
@@ -383,6 +385,7 @@ export class Commands {
           "/trace [n]: the last n updates and sends, with their path and outcome",
           "/night: the overnight plan; /night end ends it",
           "/steer <text>: inject a message into the running turn (or start with !)",
+          "/qa [topic]: ask the session to run an interactive Q&A on its open decisions",
           "/compact: compact the session",
           "/rename <title>: rename the session",
           "/chat off: stop chatting with this session",
@@ -400,7 +403,7 @@ export class Commands {
         "/version: the plugin version installed and running",
         "/trace [n]: the last n updates and sends, with their path and outcome",
         "/night: the overnight plan; /night end ends it",
-        "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /compact, /rename, /chat off.",
+        "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /qa, /compact, /rename, /chat off.",
       ].join("\n"),
     )
   }
@@ -528,6 +531,16 @@ export class Commands {
       if (!args) return this.done(info, "invalid", no("Usage: /steer <text>"))
       const busy = this.d.host.busy(root)
       await this.d.actions.prompt(root, args, "steer")
+      this.d.remote(root)
+      return this.done(
+        info,
+        busy ? "steered" : "sent",
+        yes(busy ? "⚡ steered in" : "→ sent"),
+      )
+    }
+    if (name === "qa") {
+      const busy = this.d.host.busy(root)
+      await this.d.actions.prompt(root, qaText(args), "steer")
       this.d.remote(root)
       return this.done(
         info,

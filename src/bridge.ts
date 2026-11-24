@@ -53,6 +53,7 @@ import {
   stats,
   type Stats,
 } from "./turncard.ts"
+import { qaText } from "./qa.ts"
 import { CAPTION_MAX, prepareFile, type FileOutcome } from "./sendfile.ts"
 import { traces } from "./trace.ts"
 import { clock, formatDuration, sleep, truncate } from "./util.ts"
@@ -2201,7 +2202,7 @@ export class Bridge {
   /** Draws the diff; a test replaces it to force a failure. */
   private drawer: typeof drawDiff = drawDiff
 
-  /** A turn card's button: Diff, Continue or Stop. */
+  /** A turn card's button: Diff, Continue, QA or Stop. */
   private async cardButton(
     ch: Connector,
     root: string,
@@ -2216,6 +2217,13 @@ export class Bridge {
         if (!this.chat.has(root)) return no("Chat is off for this session.")
         await this.actions.prompt(root, "continue", this.delivery(root))
         return yes("Sent: continue.")
+      }
+      if (what === "qa") {
+        if (!this.chat.has(root)) return no("Chat is off for this session.")
+        const busy = this.host.busy(root)
+        await this.actions.prompt(root, qaText(), "steer")
+        this.remote.add(root)
+        return yes(busy ? "⚡ steered in" : "→ sent")
       }
       const files = await this.actions.diffFiles(root)
       if (files === undefined)
@@ -2678,7 +2686,12 @@ export class Bridge {
       info.outcome = "applied"
       return this.resume(root, "button")
     }
-    if (m.text === "diff" || m.text === "continue" || m.text === "stop") {
+    if (
+      m.text === "diff" ||
+      m.text === "continue" ||
+      m.text === "stop" ||
+      m.text === "qa"
+    ) {
       info.root = root
       info.outcome = "applied"
       return this.cardButton(ch, root, m.text)

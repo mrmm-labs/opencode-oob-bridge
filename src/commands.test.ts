@@ -343,6 +343,73 @@ describe("commands: in a session topic", () => {
     await r.done()
   })
 
+  it("/qa sends the Q&A instruction with steer delivery, and answers like /steer", async () => {
+    const r = await rig()
+    r.say("/qa", THREAD)
+    await r.answered(/→ sent/)
+    const text = r.log.prompts[0].text as string
+    assert.match(text, /^Run an interactive Q&A on the open decisions now\./)
+    assert.match(text, /with the question tool, never as plain text/)
+    assert.doesNotMatch(text, /Focus:/)
+    assert.deepEqual(r.log.deliveries, ["steer"])
+    r.state.running = true
+    r.say("/qa billing", THREAD)
+    await r.answered(/⚡ steered in/)
+    assert.equal(r.log.prompts.length, 2)
+    assert.equal(r.log.prompts[1].text, text + " Focus: billing")
+    assert.deepEqual(r.log.deliveries, ["steer", "steer"])
+    await r.done()
+  })
+
+  it("/qa caps the topic, keeps it on one line, and never reads it as a folder or a model", async () => {
+    const r = await rig()
+    r.say("/qa " + "x".repeat(300), THREAD)
+    await r.answered(/→ sent/)
+    const focus = (r.log.prompts[0].text as string).split(" Focus: ")[1]
+    assert.equal(focus, "x".repeat(200))
+    r.say("/qa /w/payroll   prov/m4 now", THREAD)
+    await r.tg.waitFor(() => r.log.prompts[1])
+    assert.match(
+      r.log.prompts[1].text as string,
+      / Focus: \/w\/payroll prov\/m4 now$/,
+    )
+    assert.deepEqual(r.log.created, [])
+    assert.deepEqual(r.log.models, [])
+    await r.done()
+  })
+
+  it("/qa in General is a scope hint and sends nothing", async () => {
+    const r = await rig()
+    r.say("/qa")
+    const h = await r.answered(/\/qa acts on a session/)
+    assert.equal(h.body.message_thread_id, undefined)
+    assert.deepEqual(r.log.prompts, [])
+    await r.done()
+  })
+
+  it("/qa needs chat on for the session", async () => {
+    const r = await rig({ chatOn: false })
+    r.say("/qa", THREAD)
+    await r.answered(/Chat is off for this session/)
+    assert.deepEqual(r.log.prompts, [])
+    await r.done()
+  })
+
+  it("/qa is in the registered list and in the help of both scopes", async () => {
+    const r = await rig()
+    const c = await r.tg.waitFor(() => r.tg.of("setMyCommands")[0])
+    const qa = c.body.commands.find(
+      (x: { command: string }) => x.command === "qa",
+    )
+    assert.ok(qa)
+    assert.ok(qa.description.length > 0 && qa.description.length <= 256)
+    r.say("/help", THREAD)
+    await r.answered(/\/qa \[topic\]/)
+    r.say("/help")
+    await r.answered(/\/steer, \/qa, \/compact/)
+    await r.done()
+  })
+
   it("/steer injects into a running turn, and needs text", async () => {
     const r = await rig()
     r.state.running = true
