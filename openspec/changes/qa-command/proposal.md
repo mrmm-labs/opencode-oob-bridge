@@ -1,6 +1,6 @@
 ## Why
 
-Open decisions pile up in a session: questions it raised in text, forms nobody answered, an open-questions file. Getting them answered on the phone takes a typed prompt each time. A fixed instruction makes the session ask them one form at a time, with the question tool.
+Open decisions pile up in a session: questions it raised in text, forms nobody answered, and whatever records the project keeps. Getting them answered on the phone takes a typed prompt each time. A fixed instruction makes the session ask them one form at a time, with the question tool.
 
 ## What Changes
 
