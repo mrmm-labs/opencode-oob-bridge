@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.46.0...v0.46.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* make the /qa instruction generic for any project ([#170](https://github.com/mrmm-labs/opencode-oob-bridge/issues/170)) ([ecd137d](https://github.com/mrmm-labs/opencode-oob-bridge/commit/ecd137dd9f9e909d41b1a28d03b3b8d570e217c9))
+
 ## [0.46.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.45.1...v0.46.0) (2026-11-24)
 
 
