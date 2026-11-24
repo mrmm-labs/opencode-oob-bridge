@@ -489,6 +489,38 @@ describe("resume: one alert for each suspension", () => {
 describe("timed away and the overnight plan", () => {
   const HOUR = 3_600_000
 
+  it("route with root all sets every session at once and keeps the channels", async () => {
+    const r = await rig()
+    r.router.set("other", false, "telegram")
+    const out = await r.control.op("route", { root: "all", mode: "auto" })
+    assert.equal(out.ok, true)
+    assert.match(out.text!, /2 sessions: auto/)
+    assert.equal(r.router.mode("root"), "auto")
+    assert.equal(r.router.mode("other"), "auto")
+    assert.equal(r.router.channel("other"), "telegram")
+    assert.equal(
+      (await r.control.op("route", { root: "all", mode: "maybe" })).ok,
+      false,
+    )
+    await r.done()
+  })
+
+  it("a forced mode with no time is time-boxed to away.overrideMinutes, and the snapshot says why", async () => {
+    const r = await rig()
+    r.control.heartbeat("a", r.clock.t)
+    const on = await r.control.op("afk", { mode: "on" })
+    assert.equal(on.snapshot.afk.away, true)
+    assert.equal(on.snapshot.afk.reason, "manual-away")
+    assert.equal(on.snapshot.afk.until, r.clock.t + 2 * HOUR)
+    assert.match(on.snapshot.afk.why, /because you said so/)
+    r.clock.t += 2 * HOUR
+    r.control.heartbeat("a", r.clock.t)
+    const s = r.control.snapshot()
+    assert.equal(s.afk.mode, "auto")
+    assert.equal(s.afk.reason, "input")
+    await r.done()
+  })
+
   it("afk on <time> ends by itself, is kept, and shows the time left", async () => {
     const r = await rig()
     const on = await r.control.op("afk", { mode: "on", for: "8h" })
@@ -501,9 +533,14 @@ describe("timed away and the overnight plan", () => {
     assert.equal(s.afk.away, false)
     assert.equal(s.afk.until, undefined)
     assert.equal(
-      (await r.control.op("afk", { mode: "off", for: "8h" })).ok,
+      (await r.control.op("afk", { mode: "auto", for: "8h" })).ok,
       false,
+      "a time goes with on or off only",
     )
+    const back = await r.control.op("afk", { mode: "off", for: "1h" })
+    assert.equal(back.snapshot.afk.reason, "manual-present")
+    assert.equal(back.snapshot.afk.until, r.clock.t + HOUR)
+    assert.equal(r.settings.afkUntil(), r.clock.t + HOUR)
     assert.equal(
       (await r.control.op("afk", { mode: "on", for: "soon" })).ok,
       false,

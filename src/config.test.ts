@@ -27,13 +27,86 @@ describe("parseConfig", () => {
   it("fills defaults", () => {
     const c = parseConfig(base) as Config
     assert.equal(opts(c, "ntfy").server, "https://ntfy.example")
-    assert.equal(c.away.minutes, 10)
+    assert.deepEqual(c.away, {
+      minutes: 10,
+      phoneMinutes: 30,
+      graceSeconds: 60,
+      overrideMinutes: 120,
+      lock: false,
+      sleep: false,
+      schedule: [],
+    })
     assert.deepEqual(c.redact, { mode: "full" })
     assert.deepEqual(c.rules, [])
     assert.equal(opts(c, "ntfy").token, undefined)
     assert.equal(opts(c, "ntfy").actionAuth, true)
     assert.equal(c.channels.ntfy.enabled, true)
     assert.equal(c.channels.telegram, undefined)
+  })
+
+  it("reads the away rules and refuses bad ones", () => {
+    const c = parseConfig({
+      ...base,
+      away: {
+        minutes: 5,
+        phoneMinutes: 0,
+        graceSeconds: 15,
+        overrideMinutes: 30,
+        lock: true,
+        sleep: true,
+        schedule: [{ from: "22:00", to: "07:00", timezone: "UTC", as: "away" }],
+      },
+    }) as Config
+    assert.deepEqual(c.away, {
+      minutes: 5,
+      phoneMinutes: 0,
+      graceSeconds: 15,
+      overrideMinutes: 30,
+      lock: true,
+      sleep: true,
+      schedule: [{ from: 1320, to: 420, timezone: "UTC", as: "away" }],
+    })
+    for (const bad of [
+      { phoneMinutes: -1 },
+      { graceSeconds: "1" },
+      { overrideMinutes: 0 },
+      { lock: "yes" },
+      { sleep: 1 },
+      { schedule: {} },
+      { schedule: [{ from: "22:00", to: "22:00", as: "away" }] },
+      { schedule: [{ from: "22:00", to: "07:00", as: "maybe" }] },
+      {
+        schedule: [
+          { from: "22:00", to: "07:00", as: "away", timezone: "Nowhere/Land" },
+        ],
+      },
+    ])
+      assert.ok(
+        "error" in parseConfig({ ...base, away: bad }),
+        JSON.stringify(bad),
+      )
+  })
+
+  it("reads telegram's rate budget and refuses bad values", () => {
+    const tg = (rate: unknown) =>
+      parseConfig({ channels: { telegram: { token: { env: "TG" }, rate } } })
+    const c = tg({ gapMs: 500, perMinute: 10 }) as Config
+    assert.deepEqual((opts(c, "telegram") as { rate: unknown }).rate, {
+      gapMs: 500,
+      perMinute: 10,
+    })
+    for (const bad of [
+      { perMinute: 0 },
+      { gapMs: -1 },
+      { perMinute: 1.5 },
+      { gapMs: 60001 },
+      "fast",
+    ])
+      assert.ok("error" in tg(bad), JSON.stringify(bad))
+    assert.match(
+      (tg({ perMinute: 0 }) as { error: string }).error,
+      /rate\.perMinute/,
+    )
   })
 
   it("actionAuth is a boolean", () => {
@@ -113,6 +186,7 @@ describe("parseConfig channels", () => {
       operator: undefined,
       apiBase: "https://api.telegram.org",
       statusCard: true,
+      rate: { gapMs: 1100, perMinute: 18 },
       draft: false,
       notify: {},
       icons: {},
@@ -164,6 +238,7 @@ describe("parseConfig channels", () => {
       operator: undefined,
       apiBase: "https://api.telegram.org",
       statusCard: false,
+      rate: { gapMs: 1100, perMinute: 18 },
       draft: false,
       notify: { finished: true, failed: undefined },
       icons: { "^coord": "🎯" },

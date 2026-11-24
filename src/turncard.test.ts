@@ -75,6 +75,7 @@ async function rig(
     diff: o.diff ?? (async () => state.files),
   }
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   router.set("root", true)
   const bridge = new Bridge(
     cfg,
@@ -431,6 +432,7 @@ describe("turn card: rendering and the pure parts", () => {
       channels: { telegram: { token: { env: "X" } } },
     }) as Config
     const router = new Router(cfg, async () => true)
+    router.setAfk("on", Infinity)
     let calls = 0
     const host = {} as unknown as Host
     const b = new Bridge(

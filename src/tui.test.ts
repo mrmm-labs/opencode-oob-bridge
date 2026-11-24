@@ -246,6 +246,8 @@ describe("TUI entry", () => {
     const cmd = f.commands.find((c) => c.slash?.name === "oob")!
     await cmd.run("on")
     assert.equal(f.toasts.at(-1), "oob routing: on")
+    // Routing on pushes only when away.
+    await cmd.run("afk on 1h")
     await cmd.run("bogus")
     assert.match(f.toasts.at(-1)!, /No sub-command "bogus"/)
 
@@ -287,6 +289,16 @@ describe("TUI entry", () => {
     await n.close()
   })
 })
+
+/** Reads the settings file until `ok` holds: a write may still be on its way. */
+async function readJsonWhen(file: string, ok: (v: any) => boolean, ms = 3000) {
+  const end = Date.now() + ms
+  for (;;) {
+    const v = await readJson(file, ms)
+    if (ok(v) || Date.now() > end) return v
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
 
 async function readJson(file: string, ms = 3000) {
   const end = Date.now() + ms
@@ -629,6 +641,7 @@ describe("/oob menu and channels", () => {
       undefined,
       dir,
     )
+    await cmd.run("afk on 1h")
     fire(server, {
       type: "session.execution.started",
       data: { sessionID: "root" },
@@ -653,9 +666,16 @@ describe("/oob menu and channels", () => {
     await cmd.run("chat on")
     assert.match(f.toasts.at(-1)!, /Chat is on for this session/)
     await cleanup()
-    const saved = await readJson(join(dir, "settings.json"))
+    const saved = await readJsonWhen(
+      join(dir, "settings.json"),
+      (v) => v.sessions?.root,
+    )
     assert.equal(saved.sessions.root.chat, true)
-    assert.equal(saved.sessions.root.on, true)
+    assert.equal(
+      saved.sessions.root.on,
+      undefined,
+      "chat does not force routing on",
+    )
 
     const again = await started(
       { telegram: { token: { env: "OOBB_TG" }, chatId: 7, apiBase: tg.url } },
@@ -671,8 +691,11 @@ describe("/oob menu and channels", () => {
     assert.equal(ask.current, "on")
     assert.match(again.f.toasts.at(-1)!, /Chat is off/)
     await again.cleanup()
-    const off = await readJson(join(dir, "settings.json"))
-    assert.equal(off.sessions.root.chat, undefined)
+    const off = await readJsonWhen(
+      join(dir, "settings.json"),
+      (v) => !v.sessions?.root,
+    )
+    assert.equal(off.sessions.root, undefined, "auto with no chat is forgotten")
     await tg.close()
   })
 
@@ -894,6 +917,7 @@ describe("/oob menu and channels", () => {
     assert.match(f.toasts.at(-1)!, /Usage/)
 
     // The session now asks: only Telegram hears it.
+    await cmd.run("afk on 1h")
     fire(server, {
       type: "form.created",
       data: {

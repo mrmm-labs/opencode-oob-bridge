@@ -56,6 +56,7 @@ async function rig(
     busy: () => false,
   }
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   router.set("root", true)
   const store = new PendingStore()
   const log = new DigestLog()

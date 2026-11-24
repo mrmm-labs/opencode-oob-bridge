@@ -6,6 +6,7 @@ import { legacyConfigPath, configPath, legacy } from "./paths.ts"
 import { connectorTypes } from "./connectors/index.ts"
 import { parseRedact, type Redact } from "./filter.ts"
 import { DEFAULT_INTERVAL_S } from "./deadman.ts"
+import { AWAY_DEFAULTS, type AwayRules } from "./routing.ts"
 import {
   BREAKTHROUGH,
   parseClock,
@@ -86,7 +87,8 @@ export type Config = {
   channels: Record<string, ChannelConfig>
   /** `all`, or the name of a channel, for a session that chose none. */
   defaultChannel: string
-  away: { minutes: number }
+  /** When the person counts as away: see `AwayRules`. Every key has a default. */
+  away: Required<AwayRules>
   /** The core API listener: off unless `bind` is set. */
   core: { bind?: string; port: number }
   /** The Telegram Mini App: opened from Telegram only when `url` is set. */
@@ -134,6 +136,60 @@ export type Config = {
   scrub?: ScrubTarget
   /** How much the bridge log holds: `warn` failures only, `info` every inbound and outbound outcome (default), `debug` also each step. */
   log: { level: LogLevel }
+}
+
+/** `away`: the idle time and the rules that start or end away, each with a default. */
+function parseAway(raw: unknown): Required<AwayRules> | { error: string } {
+  const a = raw === undefined ? {} : raw
+  if (!isObject(a)) return { error: "away must be an object" }
+  const minutes = a.minutes === undefined ? 10 : a.minutes
+  if (typeof minutes !== "number" || !(minutes > 0))
+    return { error: "away.minutes must be a positive number" }
+  const out = { ...AWAY_DEFAULTS, minutes }
+  for (const [k, lo] of [
+    ["phoneMinutes", 0],
+    ["graceSeconds", 0],
+    ["overrideMinutes", 1],
+  ] as const) {
+    const v = a[k]
+    if (v === undefined) continue
+    if (typeof v !== "number" || !Number.isFinite(v) || v < lo)
+      return { error: `away.${k} must be a number from ${lo}` }
+    out[k] = v
+  }
+  for (const k of ["lock", "sleep"] as const) {
+    const v = a[k]
+    if (v === undefined) continue
+    if (typeof v !== "boolean")
+      return { error: `away.${k} must be true or false` }
+    out[k] = v
+  }
+  if (a.schedule !== undefined) {
+    if (!Array.isArray(a.schedule))
+      return { error: "away.schedule must be a list of windows" }
+    for (const w of a.schedule) {
+      if (!isObject(w))
+        return { error: "each away.schedule window must be an object" }
+      const from = parseClock(w.from)
+      const to = parseClock(w.to)
+      if (from === undefined || to === undefined || from === to)
+        return {
+          error: "away.schedule from and to must be two different HH:MM times",
+        }
+      if (w.as !== "away" && w.as !== "present")
+        return { error: "away.schedule as must be away or present" }
+      if (
+        w.timezone !== undefined &&
+        (typeof w.timezone !== "string" || !validZone(w.timezone))
+      )
+        return { error: "away.schedule timezone must be an IANA time zone" }
+      out.schedule = [
+        ...out.schedule,
+        { from, to, timezone: w.timezone as string | undefined, as: w.as },
+      ]
+    }
+  }
+  return out
 }
 
 function parseQuiet(raw: unknown): QuietHours | undefined | { error: string } {
@@ -594,10 +650,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
       error: `defaultChannel is ${defaultChannel}, which is not configured`,
     }
 
-  const away = isObject(raw.away) ? raw.away : {}
-  const minutes = away.minutes === undefined ? 10 : away.minutes
-  if (typeof minutes !== "number" || !(minutes > 0))
-    return { error: "away.minutes must be a positive number" }
+  const away = parseAway(raw.away)
+  if ("error" in away) return away
 
   const rules: Rule[] = []
   for (const r of Array.isArray(raw.rules) ? raw.rules : []) {
@@ -712,7 +766,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     channels: configured,
     defaultChannel,
     sidebar: sidebar as SidebarMode,
-    away: { minutes },
+    away,
     core,
     miniApp,
     deadman,

@@ -149,6 +149,8 @@ export type Push = {
   action?: { label: string; control: string }
   /** Quiet hours: true delivers without a sound or notification, false makes one regardless. Unset: the connector decides. */
   silent?: boolean
+  /** The operator asked for this push (a test): sent even while present. */
+  explicit?: boolean
   /** The connector may record transport facts here; it is never shown to anyone. */
   stats?: SendStats
 }
@@ -229,6 +231,13 @@ export type ConnectorStatus = {
   silentMs?: number
   /** A standing condition worth showing, such as a missing permission. */
   warning?: string
+  /** What went out: calls sent, merged or dropped to stay under the budget, refused while present, and answered with 429. */
+  out?: {
+    sent: number
+    coalesced: number
+    suppressed: number
+    rateLimited: number
+  }
 }
 
 export type Pairing = {
@@ -328,6 +337,14 @@ export interface Connector {
   ): Promise<boolean>
   /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
   silence?(isQuiet: () => boolean): void
+  /**
+   * Tells the connector how to ask whether the person is present. While it answers true the connector
+   * sends nothing (no message, typing indicator or edit) except answers to what the person just did in the
+   * chat; receiving goes on.
+   */
+  mute?(isMuted: () => boolean): void
+  /** The person came back: drops queued sends and typing indicators at once. Never throws. */
+  hush?(): void
   /** Sets the commands the chat offers after "/". Registered when it differs from the last list. */
   menu?(commands: MenuCommand[]): void
   /** The user id stored at pairing: the only person whose tap or code answers an approval. Undefined until known. */

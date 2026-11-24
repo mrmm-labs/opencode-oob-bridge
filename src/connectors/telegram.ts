@@ -40,6 +40,7 @@ import {
 } from "../token.ts"
 import { isObject, sleep, truncate, URL_RE } from "../util.ts"
 import { globToRegExp } from "../routing.ts"
+import { Muted, SendBudget, VISIBLE, type Rate } from "./telegram-budget.ts"
 import { Inbox } from "./telegram-inbox.ts"
 import { closeFences, splitReply } from "./telegram-markdown.ts"
 import {
@@ -189,6 +190,8 @@ export type TelegramOptions = {
   media?: MediaConfig
   /** How often the typing indicator is renewed while a chat session works. */
   typingMs?: number
+  /** The send budget per chat. Without it calls are not paced; the config always gives one. */
+  rate?: Rate
   /** Clock, for the topic, card and streaming limits. */
   now?: () => number
   /** How often a draft is sent again while the model is silent; tests shorten it. */
@@ -237,6 +240,10 @@ const classOf = (outcome: string): Class =>
 const POLLERS = new Map<string, Promise<void>>()
 /** A replaced loop gets this long to end before the new one goes on. */
 const HANDOVER_MS = 5_000
+/** Telegram allows about one message a second per chat and 20 a minute in a group. */
+const DEFAULT_RATE: Rate = { gapMs: 1100, perMinute: 18 }
+/** After an update from the paired chat, the connector may answer it while the person counts as present. */
+const ANSWER_WINDOW_MS = 30_000
 
 /** The handler asks for the update to be tried again. */
 class RetryLater extends Error {}
@@ -420,6 +427,11 @@ export class TelegramConnector implements Connector {
   private readonly opts: TelegramOptions
   private readonly fetch: typeof fetch
   private readonly now: () => number
+  private readonly budget: SendBudget | undefined
+  private isMuted: (() => boolean) | undefined
+  /** When the paired chat last sent an update: what is sent in answer is not unsolicited. */
+  private inboundAt = -Infinity
+  private readonly out = { sent: 0, suppressed: 0, rateLimited: 0 }
 
   constructor(opts: TelegramOptions, enabled = true) {
     this.opts = opts
@@ -430,6 +442,8 @@ export class TelegramConnector implements Connector {
     this.userId = opts.operator ?? opts.operatorFallback
     this.fetch = opts.fetch ?? globalThis.fetch
     this.now = opts.now ?? Date.now
+    if (opts.rate)
+      this.budget = new SendBudget(opts.rate, this.now, () => this.muteNow())
     this.notify = {
       finished: opts.notify?.finished ?? opts.statusCard === false,
       failed: opts.notify?.failed ?? true,
@@ -584,7 +598,26 @@ export class TelegramConnector implements Connector {
         this.lastError ??
         (this.chatId ? undefined : "not paired"),
       warning: this.topicWarning,
+      out: { ...this.out, coalesced: this.budget?.stats.coalesced ?? 0 },
     }
+  }
+
+  mute(isMuted: () => boolean): void {
+    this.isMuted = isMuted
+  }
+
+  hush(): void {
+    for (const t of this.pulses.values()) clearInterval(t)
+    this.pulses.clear()
+    this.budget?.drop()
+  }
+
+  /** Present, and not answering what the person just did in the chat. */
+  private muteNow(): boolean {
+    return (
+      this.isMuted?.() === true &&
+      this.now() - this.inboundAt >= ANSWER_WINDOW_MS
+    )
   }
 
   hint(id: string, qs: Question[]): string {
@@ -601,6 +634,7 @@ export class TelegramConnector implements Connector {
 
   async send(push: Push): Promise<string | undefined> {
     if (!this.chatId) return undefined
+    if (push.explicit) this.inboundAt = this.now()
     const q = push.prompt
     const live = q && oneTap(q.questions) ? q : undefined
     const one = live?.questions[0]
@@ -944,6 +978,7 @@ export class TelegramConnector implements Connector {
     }
     if (cur) return
     const tick = () =>
+      !this.muteNow() &&
       void this.call("sendChatAction", {
         chat_id: this.chatId,
         message_thread_id: thread,
@@ -1272,7 +1307,7 @@ export class TelegramConnector implements Connector {
 
   private fail(err: unknown): void {
     // Logged once, by the token, when its retry step began.
-    if (err instanceof TokenUnavailable) return
+    if (err instanceof TokenUnavailable || err instanceof Muted) return
     this.lastError = filterSecrets((err as Error).message)
     log("telegram_error", { message: this.lastError })
   }
@@ -1296,7 +1331,7 @@ export class TelegramConnector implements Connector {
     this.quiet = isQuiet
   }
 
-  private async call<T>(
+  private call<T>(
     method: string,
     body: unknown,
     timeoutMs = 10_000,
@@ -1304,6 +1339,35 @@ export class TelegramConnector implements Connector {
     stats?: SendStats,
     retry = true,
   ): Promise<T> {
+    const raw = (b: unknown) =>
+      this.rawCall<T>(method, b, timeoutMs, signal, stats, retry)
+    if (this.budget && SendBudget.paced(method, body))
+      return this.budget
+        .run<T>(method, body as Record<string, unknown>, raw)
+        .catch((err) => {
+          if (err instanceof Muted && !err.counted) {
+            err.counted = true
+            this.out.suppressed++
+          }
+          throw err
+        })
+    return raw(body)
+  }
+
+  private async rawCall<T>(
+    method: string,
+    body: unknown,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    stats: SendStats | undefined,
+    retry: boolean,
+  ): Promise<T> {
+    if (VISIBLE.test(method) && this.muteNow()) {
+      const m = new Muted()
+      m.counted = true
+      this.out.suppressed++
+      throw m
+    }
     if (
       method === "sendMessage" &&
       this.quiet?.() &&
@@ -1360,9 +1424,15 @@ export class TelegramConnector implements Connector {
       })
       if (json?.ok) {
         if (method !== "getUpdates") this.sendOkAt = this.now()
+        if (VISIBLE.test(method)) this.out.sent++
         return json.result as T
       }
       const wait = json?.parameters?.retry_after
+      if (res.status === 429) {
+        this.out.rateLimited++
+        if (wait !== undefined)
+          this.budget?.cool((body as { chat_id?: unknown })?.chat_id, wait)
+      }
       if (res.status === 429 && wait !== undefined && !retry)
         throw new RateLimited(wait)
       if (res.status === 429 && wait !== undefined && attempt < 2) {
@@ -1539,6 +1609,8 @@ export class TelegramConnector implements Connector {
   /** One update, start to end: its outcome is always logged, a failed delivery is retried and said so. */
   private async handle(u: Update, attempt: number): Promise<void> {
     const t0 = this.now()
+    const chat = u.message?.chat.id ?? u.callback_query?.message?.chat.id
+    if (chat !== undefined && String(chat) === this.chatId) this.inboundAt = t0
     const delays = this.opts.retryMs ?? RETRY_MS
     const limit = this.opts.handleMs ?? HANDLE_MS
     const rec = this.recs.get(u.update_id) ?? this.begin(u)
@@ -2453,6 +2525,10 @@ export class TelegramConnector implements Connector {
     file: UploadFile | UploadFile[],
     timeoutMs = 30_000,
   ): Promise<void> {
+    if (this.muteNow()) {
+      this.out.suppressed++
+      throw Object.assign(new Muted(), { counted: true })
+    }
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
     const form = new FormData()
@@ -3033,6 +3109,7 @@ export type TelegramConfig = {
   /** Bot API base URL; the public API unless a local Bot API server is used. */
   apiBase: string
   statusCard: boolean
+  rate: Rate
   draft: boolean
   notify: { finished?: boolean; failed?: boolean }
   icons: Record<string, string>
@@ -3073,6 +3150,23 @@ export const telegramType: ConnectorType<TelegramConfig> = {
     if (typeof statusCard !== "boolean")
       return { error: `${at}statusCard must be true or false` }
 
+    const rate = { ...DEFAULT_RATE }
+    if (raw.rate !== undefined) {
+      if (!isObject(raw.rate)) return { error: `${at}rate must be an object` }
+      for (const [k, lo, hi] of [
+        ["gapMs", 0, 60_000],
+        ["perMinute", 1, 600],
+      ] as const) {
+        const v = raw.rate[k]
+        if (v === undefined) continue
+        if (typeof v !== "number" || !Number.isInteger(v) || v < lo || v > hi)
+          return {
+            error: `${at}rate.${k} must be a whole number from ${lo} to ${hi}`,
+          }
+        rate[k] = v
+      }
+    }
+
     const draft = raw.draft ?? false
     if (typeof draft !== "boolean")
       return { error: `${at}draft must be true or false` }
@@ -3111,6 +3205,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       operator,
       apiBase: apiBase.replace(/\/+$/, ""),
       statusCard,
+      rate,
       draft,
       notify,
       icons,
@@ -3130,6 +3225,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       chatId: typeof stored === "string" ? stored : o.chatId,
       apiBase: o.apiBase,
       statusCard: o.statusCard,
+      rate: o.rate,
       draft: o.draft,
       notify: o.notify,
       icons: o.icons,

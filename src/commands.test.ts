@@ -138,6 +138,7 @@ async function rig(
     ...o.host,
   }
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   const bridge = new Bridge(
     cfg,
     host,
@@ -875,7 +876,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
   it("lists the operator's commands first, and leaves out what is off", async () => {
     const r = await rig({ host: withUndo })
     const c = await r.tg.waitFor(() => r.tg.of("setMyCommands")[0])
-    assert.deepEqual(names(c).slice(0, 10), [
+    assert.deepEqual(names(c).slice(0, 12), [
       "status",
       "stop",
       "model",
@@ -884,6 +885,8 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
       "undo",
       "resume",
       "afk",
+      "back",
+      "auto",
       "night",
       "new",
     ])
@@ -1030,13 +1033,48 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
     await r.done()
   })
 
-  it("/afk shows the state and changes nothing", async () => {
+  it("/afk status shows the state and why, and changes nothing", async () => {
     const r = await rig()
+    r.router.setAfk("auto")
     const before = r.router.afkMode()
-    r.say("/afk on")
-    const m = await r.answered(/Away mode:/)
-    assert.match(m.body.text, /changed at the Mac/)
+    r.say("/afk status")
+    const m = await r.answered(/Routing:/)
+    assert.match(m.body.text, /away|here/)
     assert.equal(r.router.afkMode(), before)
+    await r.done()
+  })
+
+  it("/afk and /back force the mode for a time, the default when none is given", async () => {
+    const r = await rig()
+    r.router.setAfk("auto")
+    r.router.touch()
+    r.say("/afk 3h")
+    await r.answered(/because you said so \(\/afk\), ends in 180 min/)
+    assert.equal(r.router.afkMode(), "on")
+    r.say("/back")
+    await r.answered(/because you said so \(\/back\), ends in 120 min/)
+    assert.equal(r.router.afkMode(), "off")
+    r.say("/back soon")
+    await r.answered(/A time like 2h/)
+    assert.equal(r.router.afkMode(), "off")
+    await r.done()
+  })
+
+  it("/auto puts every session back on auto with one tap, and never turns one on", async () => {
+    const r = await rig()
+    r.router.set("root", true, "telegram")
+    r.router.set("other", false)
+    r.say("/auto")
+    const m = await r.answered(/Put every session back on auto/)
+    assert.equal(r.router.mode("root"), "on", "nothing changes before the tap")
+    assert.ok(m.body.reply_markup)
+    r.say("/auto all")
+    await r.answered(/\d+ sessions? back on auto: /)
+    assert.equal(r.router.mode("root"), "auto")
+    assert.equal(r.router.mode("other"), "auto")
+    assert.equal(r.router.channel("root"), "telegram", "the channel is kept")
+    r.say("/auto on")
+    await r.answered(/Put every session back on auto/)
     await r.done()
   })
 

@@ -34,6 +34,8 @@
     //   // Your Telegram user id, if pairing stored none (a group paired long ago).
     //   // "operator": 123456789,
     //   // In a forum group: one pinned status card per session topic.
+    //   // Send budget per chat: least gap between calls, most calls a minute.
+    //   // "rate": { "gapMs": 1100, "perMinute": 18 },
     //   // "statusCard": true,
     //   // Session-end pushes. "finished" is true only when statusCard is false.
     //   // "notify": { "finished": false, "failed": true },
@@ -54,8 +56,19 @@
   // The sidebar section: "full" (a row each), "compact" (one line) or "off".
   "sidebar": "full",
 
-  // Mirror sessions after this many minutes without input in the TUI.
-  "away": { "minutes": 10 },
+  // When you count as away. Nothing is sent to Telegram while you are here.
+  // "minutes": no input in any TUI for this long. "phoneMinutes": a Telegram
+  // message means away for this long, each later one extends it. "graceSeconds":
+  // input at the Mac this long ends it. "overrideMinutes": how long /afk and /back
+  // last. "lock" and "sleep" (off) count a locked screen or a sleep as away.
+  // "schedule": windows that force away or present, e.g.
+  // { "from": "22:00", "to": "07:00", "timezone": "Europe/Paris", "as": "away" }
+  "away": {
+    "minutes": 10,
+    "phoneMinutes": 30,
+    "graceSeconds": 60,
+    "overrideMinutes": 120,
+  },
 
   // Which sessions mirror while you are away. Any rule matching routes the
   // session; fields in one rule must all match. No rules: every session.

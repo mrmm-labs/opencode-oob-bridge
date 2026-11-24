@@ -13,6 +13,8 @@ import { log } from "./logger.ts"
 export type SessionSetting = {
   on?: boolean
   channel?: string
+  /** This session counts as away only after this many minutes without input: never sooner than `away.minutes`. */
+  awayMinutes?: number
   chat?: boolean
   /** How prompts from a chat reach the session, when it differs from `chat.delivery`. */
   delivery?: "queue" | "steer"
@@ -21,7 +23,7 @@ export type Afk = "auto" | "on" | "off"
 export type Settings = {
   /** The away override chosen with `/oob afk`. */
   afk?: Afk
-  /** When a timed `on` ends, in epoch ms. */
+  /** When a forced `on` or `off` ends, in epoch ms. */
   afkUntil?: number
   /** The sidebar block's size, when chosen in the TUI. */
   sidebar?: SidebarMode
@@ -71,14 +73,14 @@ export class SettingsStore {
 
   afkUntil(): number | undefined {
     const v = this.data.afkUntil
-    return this.afk() === "on" && typeof v === "number" ? v : undefined
+    return this.afk() !== "auto" && typeof v === "number" ? v : undefined
   }
 
   setAfk(mode: Afk, until?: number): void {
     this.data = {
       ...this.data,
       afk: mode === "auto" ? undefined : mode,
-      afkUntil: mode === "on" ? until : undefined,
+      afkUntil: mode === "auto" ? undefined : until,
     }
     this.save()
   }

@@ -54,6 +54,7 @@ function rig(ch: Connector) {
     },
   }) as Config
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   router.set("root", true)
   const replies: unknown[] = []
   const bridge = new Bridge(

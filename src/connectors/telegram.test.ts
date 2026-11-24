@@ -474,6 +474,7 @@ async function bridgeRig(
     },
   }
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   router.set("root", true)
   const store = new PendingStore()
   const bridge = new Bridge(
@@ -1092,6 +1093,7 @@ describe("Telegram: closing a question", () => {
       return send(p)
     }
     const router = new Router(cfg, async () => true)
+    router.setAfk("on", Infinity)
     router.set("root", true)
     const bridge = new Bridge(
       cfg,

@@ -78,6 +78,13 @@ export type ChannelRow = {
   pollOkAt?: number
   sendOkAt?: number
   silentMs?: number
+  /** Calls sent, merged or dropped under the budget, refused while present, and answered with 429. */
+  out?: {
+    sent: number
+    coalesced: number
+    suppressed: number
+    rateLimited: number
+  }
 }
 
 export type Drain = {
@@ -102,14 +109,20 @@ export type Snapshot = {
     minutes: number
     lastInputAt: number
     tuis: number
-    /** When a timed "on" ends. */
+    /** When a forced "on" or "off" ends. */
     until?: number
+    /** The rule that decided it (manual-away, phone, idle, ...), in words, and when that rule stops holding. */
+    reason: string
+    why: string
+    expires?: number
   }
   /** The overnight plan, once there has been one. */
   night?: NightView
   /** What happened while the operator was away, for a minute after they come back. */
   back?: { id: number; text: string; at: number }
   channels: ChannelRow[]
+  /** Events held while the person was present, and the digests sent when they went away. */
+  quiet?: { held: number; digests: number }
   pending: number
   /** What is still pending: counts only, so a restart can wait for them. */
   drain: Drain

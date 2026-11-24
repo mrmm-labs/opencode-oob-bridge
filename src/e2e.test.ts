@@ -112,6 +112,7 @@ describe("e2e against a real ntfy", () => {
       },
     }
     const router = new Router(cfg, async () => true)
+    router.setAfk("on", Infinity)
     router.set("root", true)
     const nc = cfg.channels.ntfy.options as NtfyConfig
     const ntfy = new Ntfy({

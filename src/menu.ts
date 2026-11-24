@@ -870,9 +870,18 @@ async function status(ctx: Context, app: App): Promise<void> {
             ]
           : []),
         ...(c.warning ? [`  ⚠ ${c.warning}`] : []),
+        ...(c.out
+          ? [
+              `  sent ${c.out.sent} · merged ${c.out.coalesced} · held while here ${c.out.suppressed} · 429 ${c.out.rateLimited}`,
+            ]
+          : []),
       ].join("\n")
     }),
   )
+  if (st.quiet)
+    lines.push(
+      `Quiet while here: ${st.quiet.held} events held, ${st.quiet.digests} digests sent`,
+    )
   lines.push(...st.trace)
   lines.push(`Open prompts: ${st.pending}`)
   for (const w of st.waiting ?? []) lines.push(`  🔐 ${w}`)

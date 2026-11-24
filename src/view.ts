@@ -5,7 +5,7 @@
  */
 import type { Pairing } from "./connectors/types.ts"
 import type { Delivery, SidebarMode } from "./config.ts"
-import type { OpResult, Snapshot } from "./rpc.ts"
+import type { ChannelRow, OpResult, Snapshot } from "./rpc.ts"
 import type { NightView } from "./overnight.ts"
 import type { Afk } from "./settings.ts"
 
@@ -49,7 +49,9 @@ export interface Pilot {
       pollOkAt?: number
       sendOkAt?: number
       silentMs?: number
+      out?: ChannelRow["out"]
     }>
+    quiet?: { held: number; digests: number }
     pending: number
     waiting?: string[]
     trace: string[]
