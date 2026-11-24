@@ -106,7 +106,7 @@ A session SHALL start on `auto`, including one started from a chat or given chat
 
 ### Requirement: Rules decide away
 
-The bridge SHALL decide away from these rules, in this order, the first that holds winning: a forced `/afk` or `/back` until it ends; the screen locked when `away.lock` is true; the machine slept with no input since when `away.sleep` is true; a message from the paired chat within `away.phoneMinutes` (default 30; 0 turns the rule off); the first window of `away.schedule` that holds; no TUI attached; no input for `away.minutes` (default 10); otherwise the person is here. `away.lock`, `away.sleep` and `away.schedule` SHALL be off by default.
+The bridge SHALL decide away from rules, the first that holds winning, in this order: a forced `/afk` or `/back`; the screen locked; the machine slept; a message from the paired chat; a schedule window; no TUI attached or no input. The lock, sleep and schedule rules SHALL be off by default.
 
 #### Scenario: A Telegram message
 
@@ -127,6 +127,15 @@ The bridge SHALL decide away from these rules, in this order, the first that hol
 
 - **WHEN** `/back` is active and a Telegram message arrives
 - **THEN** the state stays here until the `/back` ends
+
+### Requirement: Rule defaults
+
+`away.phoneMinutes` SHALL default to 30 (0 turns the rule off), `away.minutes` to 10, `away.graceSeconds` to 60 and `away.overrideMinutes` to 120.
+
+#### Scenario: Nothing configured
+
+- **WHEN** the config has no `away` key
+- **THEN** a Telegram message means away for 30 minutes, 10 minutes without input is away, and a glance of under 60 seconds does not end it
 
 ### Requirement: A glance does not flip it
 
