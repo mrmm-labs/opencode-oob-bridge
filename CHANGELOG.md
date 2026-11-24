@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.47.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.46.1...v0.47.0) (2026-11-24)
+
+
+### Features
+
+* stay quiet while present, route by presence rules, budget Telegram sends ([#172](https://github.com/mrmm-labs/opencode-oob-bridge/issues/172)) ([0f32a65](https://github.com/mrmm-labs/opencode-oob-bridge/commit/0f32a6525fb2f19f9b399f59de92eda975098959))
+
 ## [0.46.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.46.0...v0.46.1) (2026-11-24)
 
 
