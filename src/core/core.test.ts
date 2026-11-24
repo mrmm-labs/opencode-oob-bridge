@@ -134,6 +134,65 @@ describe("actions", () => {
   })
 })
 
+describe("qa and update actions", () => {
+  const rig = (o: { chat?: boolean; busy?: boolean; deny?: boolean } = {}) => {
+    const sent: Array<{ text: string; delivery: string }> = []
+    const h = host([], {
+      busy: () => o.busy ?? false,
+      prompt: async (_id, text, delivery) => void sent.push({ text, delivery }),
+    })
+    const a = new Actions({
+      cfg: cfg(),
+      host: h,
+      now: Date.now,
+      denial: () => (o.deny ? "directory **/shop" : undefined),
+      chatOn: () => o.chat ?? true,
+      setChat: async () => ({ ok: true, text: "chat" }),
+      setWatch: async () => ({ ok: true, text: "watch" }),
+      resume: async () => ({ ok: true, text: "resumed" }),
+      answer: async () => ({ ok: true, text: "answered" }),
+    })
+    return { a, sent }
+  }
+
+  it("send the fixed instruction with steer delivery, and say how it went", async () => {
+    const idle = rig()
+    const out = await idle.a.run("qa", "ses_1", {})
+    assert.deepEqual([out.ok, out.text], [true, "→ sent"])
+    assert.match(
+      idle.sent[0].text,
+      /^Run an interactive Q&A on the open decisions now\./,
+    )
+    assert.equal(idle.sent[0].delivery, "steer")
+    const busy = rig({ busy: true })
+    const up = await busy.a.run("update", "ses_1", { topic: "the  api\nlayer" })
+    assert.equal(up.text, "⚡ steered in")
+    assert.match(
+      busy.sent[0].text,
+      /^Give a short progress update now:.* Focus: the api layer$/,
+    )
+  })
+
+  it("are refused with chat off or for a denied session, and send nothing", async () => {
+    const off = rig({ chat: false })
+    const a = await off.a.run("qa", "ses_1", {})
+    assert.equal(a.ok, false)
+    assert.match(a.text, /Chat is off/)
+    const denied = rig({ deny: true })
+    const b = await denied.a.run("update", "ses_1", {})
+    assert.equal(b.ok, false)
+    assert.match(b.text, /chat\.deny/)
+    assert.deepEqual([...off.sent, ...denied.sent], [])
+  })
+
+  it("are listed among the actions", () => {
+    const names = rig()
+      .a.available()
+      .map((x) => x.name)
+    assert.ok(names.includes("qa") && names.includes("update"))
+  })
+})
+
 describe("agent ids", () => {
   const projects = {
     shop: { directory: "/w/shop", agent: "Build" },
@@ -458,6 +517,36 @@ describe("http api", () => {
     const h = { authorization: "Bearer " + token }
     return { api, url, h, token, tokens, ring, calls, dir }
   }
+
+  it("takes qa and update on the action endpoint with the token, and not without it", async () => {
+    const r = await rig()
+    try {
+      const url = r.url + "/v1/sessions/ses_1/actions/"
+      const bare = await fetch(url + "qa", { method: "POST", body: "{}" })
+      assert.equal(bare.status, 401)
+      assert.deepEqual(r.calls, [])
+      const qa = await fetch(url + "qa", {
+        method: "POST",
+        headers: r.h,
+        body: "{}",
+      })
+      assert.equal(qa.status, 200)
+      const up = await fetch(url + "update", {
+        method: "POST",
+        headers: r.h,
+        body: JSON.stringify({ topic: "the api" }),
+      })
+      assert.equal(up.status, 200)
+      assert.equal(r.calls.length, 2)
+      assert.match(r.calls[0], /^prompt:Run an interactive Q&A/)
+      assert.match(
+        r.calls[1],
+        /^prompt:Give a short progress update now:.* Focus: the api$/,
+      )
+    } finally {
+      await r.api.close()
+    }
+  })
 
   it("answers 401 with no detail without a valid token", async () => {
     const r = await rig()

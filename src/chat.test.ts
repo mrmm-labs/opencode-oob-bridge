@@ -394,7 +394,13 @@ describe("chat from Telegram: deny list and the Stop button", () => {
     await chatOn(r)
     const card = r.sends()[0]
     assert.deepEqual(card.reply_markup, {
-      inline_keyboard: [[{ text: "🛑 Stop chat", callback_data: "chatoff" }]],
+      inline_keyboard: [
+        [
+          { text: "QA", callback_data: "ctl:qa" },
+          { text: "Update", callback_data: "ctl:update" },
+        ],
+        [{ text: "🛑 Stop chat", callback_data: "chatoff" }],
+      ],
     })
     assert.match(card.text.split("\n")[0], /💬 on — /)
     r.tg.callback(CHAT, 501, "chatoff", 9001)
@@ -406,6 +412,33 @@ describe("chat from Telegram: deny list and the Stop button", () => {
       r.sends().find((b) => /Chat is off for this session/.test(b.text)),
     )
     assert.deepEqual(r.prompts, [])
+    await r.done()
+  })
+
+  it("the card's QA and Update buttons send their instruction once each, and are refused once chat is off", async () => {
+    const r = await chatRig()
+    await chatOn(r)
+    r.tg.callback(CHAT, 501, "ctl:qa", 9001)
+    await r.tg.waitFor(() => r.prompts[0])
+    assert.match(
+      r.prompts[0].text,
+      /^Run an interactive Q&A on the open decisions now\./,
+    )
+    r.tg.callback(CHAT, 502, "ctl:update", 9001)
+    await r.tg.waitFor(() => r.prompts[1])
+    assert.match(r.prompts[1].text, /^Give a short progress update now:/)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[1])
+    assert.deepEqual(
+      r.tg.of("answerCallbackQuery").map((c) => c.body.text),
+      ["→ sent", "→ sent"],
+    )
+    assert.equal(r.prompts.length, 2)
+    r.tg.callback(CHAT, 503, "chatoff", 9001)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[2])
+    r.tg.callback(CHAT, 504, "ctl:update", 9001)
+    await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[3])
+    assert.match(r.tg.of("answerCallbackQuery")[3].body.text, /Chat is off/)
+    assert.equal(r.prompts.length, 2)
     await r.done()
   })
 

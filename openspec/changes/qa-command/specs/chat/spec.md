@@ -32,3 +32,17 @@
 
 - **WHEN** chat is off for the session
 - **THEN** nothing is sent and the bot says chat is off
+
+### Requirement: /update asks the session for a progress update
+
+`/update [topic]` SHALL be a session command that sends the session a fixed instruction to give a short progress update, with the delivery, the reply, the topic rules and the gates of `/qa`.
+
+#### Scenario: Idle session
+
+- **WHEN** `/update` is sent in the topic of an idle session with chat on
+- **THEN** the instruction is sent with delivery `steer` and the bot says "→ sent"
+
+#### Scenario: Chat off
+
+- **WHEN** chat is off for the session
+- **THEN** nothing is sent and the bot says chat is off

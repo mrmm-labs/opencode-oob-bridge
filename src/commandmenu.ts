@@ -39,6 +39,7 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
   { command: "variant", description: "Pick the model's effort variant" },
   { command: "steer", description: "Inject a message into the running turn" },
   { command: "qa", description: "Run a Q&A on the open decisions" },
+  { command: "update", description: "Ask for a short progress update" },
   { command: "rename", description: "Rename this session" },
   { command: "chat", description: "/chat off stops chatting with it" },
   { command: "version", description: "Plugin version installed and running" },

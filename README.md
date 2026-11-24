@@ -335,7 +335,7 @@ is a mirror of the conversation. This needs the Telegram channel in a forum grou
 
 ```
 /oob chat on      turn it on for the session you are looking at
-/oob chat off     turn it off (the 🛑 Stop chat button on the status card does the same)
+/oob chat off     turn it off (the 🛑 Stop chat button on the status card does the same; with chat on the card also has QA and Update buttons, as the session screen of the Mini App does)
 /oob delivery queue|steer|default   how prompts reach this session (see below)
 ```
 
@@ -496,7 +496,7 @@ With `digest` set, one message goes out once a day at `digest.at`: what finished
 
 ### Turn cards
 
-When a turn of a mirrored session ends and it changed a file, or ran at least `turnCard.minSeconds`, the bot posts one card in the topic. The first line is always visible: `✅ Done · 14 files · +320 −41 · 3m12s`. The last paragraph of the final reply and the changed files (15, then "+N more") sit in a block Telegram shows collapsed. Under it: **Diff** sends up to three images of the diff and the patch as a file (see below), **Continue** sends `continue` to the session (left out when chat is off), **QA** does what `/qa` does with no topic (also left out when chat is off), **Stop** interrupts the running turn. A new card, or an hour, takes the buttons off the old one. Counts are what the turn changed in the working tree; when the tree cannot be read the card shows no counts. Subagent turns get no card, and a channel that cannot fold gets the first line and a short summary.
+When a turn of a mirrored session ends and it changed a file, or ran at least `turnCard.minSeconds`, the bot posts one card in the topic. The first line is always visible: `✅ Done · 14 files · +320 −41 · 3m12s`. The last paragraph of the final reply and the changed files (15, then "+N more") sit in a block Telegram shows collapsed. Under it: **Diff** sends up to three images of the diff and the patch as a file (see below), **Continue** sends `continue` to the session (left out when chat is off), **QA** and **Update** do what `/qa` and `/update` do with no topic (also left out when chat is off), **Stop** interrupts the running turn. A new card, or an hour, takes the buttons off the old one. Counts are what the turn changed in the working tree; when the tree cannot be read the card shows no counts. Subagent turns get no card, and a channel that cannot fold gets the first line and a short summary.
 
 ### Commands
 
@@ -521,6 +521,7 @@ In a session's topic (they act on that session, and need chat on):
 | `/night`              | The overnight plan in words; `/night end` ends it. A plan is only started at the Mac.                                                                                                                                                                                                                        |
 | `/stop`               | Stops the running turn.                                                                                                                                                                                                                                                                                      |
 | `/qa [topic]`         | Asks the session to run an interactive Q&A on its open decisions, one question form at a time. Sent like `/steer` (steered into a running turn, a plain send when idle). The turn card has a **QA** button that does the same with no topic.                                                                 |
+| `/update [topic]`     | Asks the session for a short progress update: what is done, what is running, what needs you. Sent like `/qa`. The status card, the turn card and the app have an **Update** button for it.                                                                                                                   |
 | `/compact`            | Compacts the session.                                                                                                                                                                                                                                                                                        |
 | `/rename <title>`     | Renames the session.                                                                                                                                                                                                                                                                                         |
 | `/chat off`           | Turns chat off. Chat is only switched on in the TUI.                                                                                                                                                                                                                                                         |

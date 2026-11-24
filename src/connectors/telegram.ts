@@ -1125,7 +1125,13 @@ export class TelegramConnector implements Connector {
     const reply_markup = {
       inline_keyboard: [
         ...(chat
-          ? [[{ text: "🛑 Stop chat", callback_data: "chatoff" } as Button]]
+          ? [
+              [
+                { text: "QA", callback_data: "ctl:qa" },
+                { text: "Update", callback_data: "ctl:update" },
+              ] as Button[],
+              [{ text: "🛑 Stop chat", callback_data: "chatoff" } as Button],
+            ]
           : []),
         ...(open ? [[open]] : []),
       ],
@@ -2114,7 +2120,9 @@ export class TelegramConnector implements Connector {
         inline: true,
       })
     }
-    const ctl = /^ctl:(resume|diff|continue|qa|stop)$/.exec(cb.data ?? "")
+    const ctl = /^ctl:(resume|diff|continue|qa|update|stop)$/.exec(
+      cb.data ?? "",
+    )
     if (ctl) {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
@@ -2860,6 +2868,7 @@ export class TelegramConnector implements Connector {
                 ? [
                     { text: "Continue", callback_data: "ctl:continue" },
                     { text: "QA", callback_data: "ctl:qa" },
+                    { text: "Update", callback_data: "ctl:update" },
                   ]
                 : []),
               { text: "Stop", callback_data: "ctl:stop" },

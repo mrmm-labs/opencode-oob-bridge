@@ -361,6 +361,31 @@ describe("commands: in a session topic", () => {
     await r.done()
   })
 
+  it("/update sends the progress instruction with steer delivery, with an optional focus", async () => {
+    const r = await rig()
+    r.say("/update", THREAD)
+    await r.answered(/→ sent/)
+    const text = r.log.prompts[0].text as string
+    assert.equal(
+      text,
+      "Give a short progress update now: what is done, what is running, what needs me. Plain short lists, no tables, at most 12 lines.",
+    )
+    assert.deepEqual(r.log.deliveries, ["steer"])
+    r.state.running = true
+    r.say("/update the api", THREAD)
+    await r.answered(/⚡ steered in/)
+    assert.equal(r.log.prompts[1].text, text + " Focus: the api")
+    r.say("/update", undefined)
+    await r.answered(/\/update acts on a session/)
+    assert.equal(r.log.prompts.length, 2)
+    await r.done()
+    const off = await rig({ chatOn: false })
+    off.say("/update", THREAD)
+    await off.answered(/Chat is off for this session/)
+    assert.deepEqual(off.log.prompts, [])
+    await off.done()
+  })
+
   it("/qa caps the topic, keeps it on one line, and never reads it as a folder or a model", async () => {
     const r = await rig()
     r.say("/qa " + "x".repeat(300), THREAD)
@@ -403,10 +428,14 @@ describe("commands: in a session topic", () => {
     )
     assert.ok(qa)
     assert.ok(qa.description.length > 0 && qa.description.length <= 256)
+    assert.ok(
+      c.body.commands.some((x: { command: string }) => x.command === "update"),
+    )
     r.say("/help", THREAD)
     await r.answered(/\/qa \[topic\]/)
+    await r.answered(/\/update \[topic\]/)
     r.say("/help")
-    await r.answered(/\/steer, \/qa, \/compact/)
+    await r.answered(/\/steer, \/qa, \/update, \/compact/)
     await r.done()
   })
 

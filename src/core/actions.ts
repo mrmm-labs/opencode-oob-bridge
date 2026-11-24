@@ -5,6 +5,7 @@
  */
 import type { Config } from "../config.ts"
 import { resolveAgent, type AgentOption } from "../agents.ts"
+import { instructionText } from "../qa.ts"
 import type { Host, ModelOption } from "../bridge.ts"
 import type { Delivery } from "../config.ts"
 import type { Answer } from "../inbound.ts"
@@ -29,6 +30,8 @@ export type ActionDeps = {
   denial(facts: Facts): string | undefined
   /** A session was just created here. */
   created?(root: string): void
+  /** Whether chat is on for the session. */
+  chatOn?(root: string): boolean
   setChat(root: string, on: boolean): Promise<Result>
   setWatch(
     root: string,
@@ -62,6 +65,8 @@ export const ACTIONS = [
   "undo",
   "model",
   "agent",
+  "qa",
+  "update",
   "watch",
   "chat",
 ] as const
@@ -395,6 +400,18 @@ export class Actions {
           if (!id) return no("That agent is not available.")
           await this.switchAgent(root, id)
           return yes("Agent: " + (list.find((a) => a.id === id)?.label ?? id))
+        }
+        case "qa":
+        case "update": {
+          if (this.d.chatOn && !this.d.chatOn(root))
+            return no("Chat is off for this session.")
+          const busy = this.d.host.busy(root)
+          await this.prompt(
+            root,
+            instructionText(name, str(body.topic)),
+            "steer",
+          )
+          return yes(busy ? "⚡ steered in" : "→ sent")
         }
         case "watch": {
           const m = body.mode
