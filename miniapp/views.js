@@ -504,7 +504,14 @@ function session(state, ctl, now, ui = {}) {
       },
     )
   const more = "more:" + d.id
+  const send = (name, label) =>
+    button(label, () => void ctl.act(name), {
+      disabled: !can || !!off(name) || !!d.blocked,
+      title: off(name)?.reason,
+    })
   const quick = [
+    d.chat && send("qa", "QA"),
+    d.chat && send("update", "Update"),
     d.state === "working" && act("stop", "Stop", "danger"),
     (d.state === "suspended" || d.stuck) && act("resume", "Resume", "primary"),
   ].filter(Boolean)

@@ -13,6 +13,7 @@ import { basename } from "node:path"
 import { resolveAgent, type AgentOption } from "./agents.ts"
 import type { Host, ModelOption } from "./bridge.ts"
 import { Refused, type Actions } from "./core/actions.ts"
+import { instructionText, isInstruction } from "./qa.ts"
 import type { Config } from "./config.ts"
 import type {
   Connector,
@@ -33,6 +34,8 @@ const SESSION_COMMANDS = [
   "compact",
   "rename",
   "steer",
+  "qa",
+  "update",
   "undo",
 ] as const
 const GENERAL_COMMANDS = ["new", "sessions", "projects"] as const
@@ -383,6 +386,8 @@ export class Commands {
           "/trace [n]: the last n updates and sends, with their path and outcome",
           "/night: the overnight plan; /night end ends it",
           "/steer <text>: inject a message into the running turn (or start with !)",
+          "/qa [topic]: ask the session to run an interactive Q&A on its open decisions",
+          "/update [topic]: ask the session for a short progress update",
           "/compact: compact the session",
           "/rename <title>: rename the session",
           "/chat off: stop chatting with this session",
@@ -400,7 +405,7 @@ export class Commands {
         "/version: the plugin version installed and running",
         "/trace [n]: the last n updates and sends, with their path and outcome",
         "/night: the overnight plan; /night end ends it",
-        "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /compact, /rename, /chat off.",
+        "Inside a session's topic: /model, /agent, /variant, /status, /stop, /steer, /qa, /update, /compact, /rename, /chat off.",
       ].join("\n"),
     )
   }
@@ -528,6 +533,16 @@ export class Commands {
       if (!args) return this.done(info, "invalid", no("Usage: /steer <text>"))
       const busy = this.d.host.busy(root)
       await this.d.actions.prompt(root, args, "steer")
+      this.d.remote(root)
+      return this.done(
+        info,
+        busy ? "steered" : "sent",
+        yes(busy ? "⚡ steered in" : "→ sent"),
+      )
+    }
+    if (isInstruction(name)) {
+      const busy = this.d.host.busy(root)
+      await this.d.actions.prompt(root, instructionText(name, args), "steer")
       this.d.remote(root)
       return this.done(
         info,
