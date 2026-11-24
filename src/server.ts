@@ -36,6 +36,7 @@ import { serviceClient, type ServiceClient } from "./serviceclient.ts"
 import { fileTool, type FileOutcome } from "./sendfile.ts"
 import { traces } from "./trace.ts"
 import { PendingStore } from "./pending.ts"
+import { watchLock } from "./screenlock.ts"
 import { definition, type FormRelay } from "./rpc.ts"
 import { Router } from "./routing.ts"
 import { OvernightStore } from "./overnight.ts"
@@ -490,7 +491,9 @@ async function boot(
   await store.load()
   const router = new Router(cfg)
   for (const [id, v] of Object.entries(settings.sessions()))
-    router.set(id, v.on, v.channel)
+    router.set(id, v.on, v.channel, v.awayMinutes)
+  const screen = cfg.away.lock ? watchLock() : undefined
+  if (screen) router.setLocked(screen.locked)
 
   const sessions = new Sessions(async (id) => {
     try {
@@ -708,6 +711,7 @@ async function boot(
       await approvals.stop()
       await core.stop()
       control.stop()
+      screen?.stop()
       forms.clear()
       await bridge.stop()
       await settings.flush()

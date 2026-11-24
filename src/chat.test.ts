@@ -117,6 +117,7 @@ async function chatRig(
       : {}),
   }
   const router = new Router(cfg, async () => true)
+  router.setAfk("on", Infinity)
   const store = new PendingStore()
   const bridge = new Bridge(
     cfg,

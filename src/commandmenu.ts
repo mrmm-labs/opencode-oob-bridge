@@ -26,7 +26,12 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
     description: "Wake a stuck session",
     needs: "resume",
   },
-  { command: "afk", description: "Who counts as away (change it at the Mac)" },
+  {
+    command: "afk",
+    description: "Count me as away for a while (/afk 3h, /afk status)",
+  },
+  { command: "back", description: "Count me as here for a while (/back 1h)" },
+  { command: "auto", description: "Put every session back on auto routing" },
   { command: "digest", description: "Send the digest now", needs: "digest" },
   {
     command: "night",

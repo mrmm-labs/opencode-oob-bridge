@@ -3,8 +3,15 @@ import { execFile } from "node:child_process"
 
 import type { Rule } from "./config.ts"
 import { log } from "./logger.ts"
+import { isQuiet } from "./quiet.ts"
 
-export type SessionFacts = { id: string; agent?: string; directory?: string }
+export type SessionFacts = {
+  id: string
+  agent?: string
+  directory?: string
+  /** Chat is on for the session: it routes when away whatever the rules say. */
+  chat?: boolean
+}
 
 export type Classify = (argv: string[], s: SessionFacts) => Promise<boolean>
 
@@ -59,34 +66,140 @@ const auto = (routes: boolean, reason: string) => ({
   reason,
 })
 
+/** A window of the day in which the person counts as away or as present, whatever the input. */
+export type Window = {
+  from: number
+  to: number
+  timezone?: string
+  as: "away" | "present"
+}
+
+/**
+ * The rules that decide whether the person is away. Each key is optional here: the
+ * config parser fills the defaults, and a Router built without them gets the same ones.
+ */
+export type AwayRules = {
+  /** No input in any TUI for this long: away. */
+  minutes: number
+  /** A message from the paired chat means away for this long; each later one extends it. 0: off. */
+  phoneMinutes?: number
+  /** Input in a TUI turns away off only after this many seconds of continuous input, so a glance does not. */
+  graceSeconds?: number
+  /** How long `/afk` and `/back` last when no time is given. */
+  overrideMinutes?: number
+  /** Away while the screen is locked (the server asks the OS). */
+  lock?: boolean
+  /** Away after the machine slept, until the next input. */
+  sleep?: boolean
+  /** Windows that force away or present. The first that holds wins. */
+  schedule?: Window[]
+}
+
+export const AWAY_DEFAULTS = {
+  phoneMinutes: 30,
+  graceSeconds: 60,
+  overrideMinutes: 120,
+  lock: false,
+  sleep: false,
+  schedule: [] as Window[],
+}
+
+export type Reason =
+  | "manual-away"
+  | "manual-present"
+  | "locked"
+  | "slept"
+  | "phone"
+  | "schedule-away"
+  | "schedule-present"
+  | "idle"
+  | "no-tui"
+  | "input"
+
+/** Whether the person is away, which rule decided it, and when that rule stops holding (epoch ms). */
+export type Presence = { away: boolean; reason: Reason; until?: number }
+
+const mins = (ms: number) => Math.max(1, Math.ceil(ms / 60_000))
+
+/** One line: the state and why. */
+export function explain(p: Presence, now: number, idleMinutes: number): string {
+  const left =
+    p.until === undefined ? "" : `, ends in ${mins(p.until - now)} min`
+  switch (p.reason) {
+    case "manual-away":
+      return `away because you said so (/afk)${left}`
+    case "manual-present":
+      return `here because you said so (/back)${left}`
+    case "locked":
+      return "away: the screen is locked"
+    case "slept":
+      return "away: the machine slept"
+    case "phone":
+      return `away: you wrote from Telegram${left}`
+    case "schedule-away":
+      return "away: inside an away window of the schedule"
+    case "schedule-present":
+      return "here: inside a present window of the schedule"
+    case "idle":
+      return `away: no input for ${idleMinutes} min`
+    case "no-tui":
+      return "away: no OpenCode window is open"
+    case "input":
+      return "here: recent input"
+  }
+}
+
 export class Router {
   private lastInput: number
+  /** Start of the run of input that `lastInput` ends: a gap longer than the grace starts a new one. */
+  private runStart: number
+  /** When the paired chat last sent something. */
+  private phoneAt = 0
+  private sleptAt = 0
   private afk: "auto" | "on" | "off" = "auto"
-  /** When a forced "on" ends and the mode returns to auto. */
+  /** When a forced "on" or "off" ends and the mode returns to auto. */
   private afkUntil: number | undefined
   private present: () => boolean = () => true
-  private readonly manual = new Map<string, { on: boolean; channel?: string }>()
+  private locked: () => boolean = () => false
+  private readonly manual = new Map<
+    string,
+    { on?: boolean; channel?: string; awayMinutes?: number }
+  >()
   private readonly classified = new Map<string, Promise<boolean>>()
 
-  private readonly cfg: { away: { minutes: number }; rules: Rule[] }
+  private readonly cfg: { away: AwayRules; rules: Rule[] }
+  private readonly rules: Required<AwayRules>
   private readonly classify: Classify
   private readonly now: () => number
 
   constructor(
-    cfg: { away: { minutes: number }; rules: Rule[] },
+    cfg: { away: AwayRules; rules: Rule[] },
     classify: Classify = runClassifier,
     now: () => number = Date.now,
   ) {
     this.cfg = cfg
+    this.rules = { ...AWAY_DEFAULTS, ...cfg.away }
     this.classify = classify
     this.now = now
     // Starting the TUI counts as input: nothing routes on away until the idle time passes.
-    this.lastInput = now()
+    this.lastInput = this.runStart = now()
   }
 
   /** Records operator input in a TUI; `at` is when it happened, if a TUI reports it later. */
   touch(at?: number): void {
-    this.lastInput = Math.max(this.lastInput, at ?? this.now())
+    const t = at ?? this.now()
+    if (t - this.lastInput > this.rules.graceSeconds * 1000) this.runStart = t
+    this.lastInput = Math.max(this.lastInput, t)
+  }
+
+  /** A message or tap from the paired chat: away for `phoneMinutes`, until a TUI has had input for the grace. */
+  phone(at?: number): void {
+    this.phoneAt = Math.max(this.phoneAt, at ?? this.now())
+  }
+
+  /** The machine slept (told by whoever notices a long gap): away until the next input, if `sleep` is on. */
+  slept(at?: number): void {
+    this.sleptAt = Math.max(this.sleptAt, at ?? this.now())
   }
 
   /** When the operator last gave input, in epoch ms. */
@@ -94,48 +207,119 @@ export class Router {
     return this.lastInput
   }
 
-  /** `on` and `off` force away and present; `auto` follows the time since the last input. */
+  /**
+   * `on` and `off` force away and present, for `until` (epoch ms; the default time-box when omitted)
+   * and then the rules decide again; `auto` is the rules.
+   */
   setAfk(mode: "auto" | "on" | "off", until?: number): void {
     this.afk = mode
-    this.afkUntil = mode === "on" ? until : undefined
+    this.afkUntil =
+      mode === "auto"
+        ? undefined
+        : (until ?? this.now() + this.rules.overrideMinutes * 60_000)
   }
 
-  /** The end of a timed "on", while it lasts. */
+  /** How long `/afk` and `/back` last when no time is given, in ms. */
+  overrideMs(): number {
+    return this.rules.overrideMinutes * 60_000
+  }
+
+  /** The end of a forced `on` or `off`, while it lasts. */
   afkEnds(): number | undefined {
-    return this.afk === "on" && this.afkUntil && this.now() < this.afkUntil
+    return this.afk !== "auto" && this.afkUntil && this.now() < this.afkUntil
       ? this.afkUntil
       : undefined
   }
 
   afkMode(): "auto" | "on" | "off" {
-    return this.afk
+    return this.afk === "auto" || this.afkEnds() ? this.afk : "auto"
   }
 
-  /** Whether any TUI is attached: with none, auto counts as away. */
+  /** Whether any TUI is attached: with none, the idle rule counts as away. */
   setPresence(fn: () => boolean): void {
     this.present = fn
   }
 
-  away(): boolean {
-    if (this.afk === "on" && this.afkUntil && this.now() >= this.afkUntil)
+  /** Whether the screen is locked, when `away.lock` is on. */
+  setLocked(fn: () => boolean): void {
+    this.locked = fn
+  }
+
+  /** The state, the rule that decided it and when it stops holding. In order: a forced mode, the signals, the phone, the schedule, then input. */
+  state(): Presence {
+    const now = this.now()
+    const r = this.rules
+    if (this.afk !== "auto") {
+      if (this.afkUntil && now < this.afkUntil)
+        return {
+          away: this.afk === "on",
+          reason: this.afk === "on" ? "manual-away" : "manual-present",
+          until: this.afkUntil,
+        }
       this.setAfk("auto")
-    if (this.afk !== "auto") return this.afk === "on"
-    if (!this.present()) return true
-    return this.now() - this.lastInput >= this.cfg.away.minutes * 60_000
+    }
+    if (r.lock && this.locked()) return { away: true, reason: "locked" }
+    if (r.sleep && this.sleptAt > this.lastInput)
+      return { away: true, reason: "slept" }
+    const phoneUntil = this.phoneAt + r.phoneMinutes * 60_000
+    if (r.phoneMinutes > 0 && this.phoneAt > 0 && now < phoneUntil) {
+      const stayed =
+        this.lastInput > this.phoneAt &&
+        this.lastInput - Math.max(this.runStart, this.phoneAt) >=
+          r.graceSeconds * 1000
+      if (!stayed) return { away: true, reason: "phone", until: phoneUntil }
+    }
+    const w = r.schedule.find((x) => isQuiet({ ...x, breakthrough: [] }, now))
+    if (w)
+      return {
+        away: w.as === "away",
+        reason: w.as === "away" ? "schedule-away" : "schedule-present",
+      }
+    if (!this.present()) return { away: true, reason: "no-tui" }
+    return now - this.lastInput >= this.cfg.away.minutes * 60_000
+      ? { away: true, reason: "idle" }
+      : { away: false, reason: "input" }
+  }
+
+  /** The state in words, for the status and the chat line. */
+  why(): string {
+    return explain(this.state(), this.now(), this.cfg.away.minutes)
+  }
+
+  away(): boolean {
+    return this.state().away
   }
 
   /**
-   * `true` / `false` force routing for a top-level session; `undefined` returns
-   * it to auto. `channel` ("all" or a channel id) overrides the default one.
+   * `true` routes a top-level session when away whatever the rules say, `false`
+   * never routes it, `undefined` is auto. `channel` ("all" or a channel id)
+   * overrides the default one. `awayMinutes` can only lengthen the idle time: a
+   * session never counts as away sooner than the instance does. No mode sends while present.
    */
-  set(rootSessionID: string, on: boolean | undefined, channel?: string): void {
-    if (on === undefined) this.manual.delete(rootSessionID)
-    else this.manual.set(rootSessionID, { on, channel })
+  set(
+    rootSessionID: string,
+    on: boolean | undefined,
+    channel?: string,
+    awayMinutes?: number,
+  ): void {
+    if (on === undefined && channel === undefined && awayMinutes === undefined)
+      this.manual.delete(rootSessionID)
+    else this.manual.set(rootSessionID, { on, channel, awayMinutes })
   }
 
   mode(rootSessionID: string): "on" | "off" | "auto" {
-    const m = this.manual.get(rootSessionID)
-    return m === undefined ? "auto" : m.on ? "on" : "off"
+    const on = this.manual.get(rootSessionID)?.on
+    return on === undefined ? "auto" : on ? "on" : "off"
+  }
+
+  /** The session's own idle time, if it has one. */
+  awayMinutesOf(rootSessionID: string): number | undefined {
+    return this.manual.get(rootSessionID)?.awayMinutes
+  }
+
+  /** Sessions with a mode, channel or idle time of their own. */
+  chosen(): string[] {
+    return [...this.manual.keys()]
   }
 
   /** The channel a session chose, if any. */
@@ -152,13 +336,27 @@ export class Router {
     root: SessionFacts,
   ): Promise<{ routes: boolean; mode: "on" | "off" | "auto"; reason: string }> {
     const m = this.manual.get(root.id)
-    if (m !== undefined)
+    const on = m?.on
+    if (on === false)
+      return { routes: false, mode: "off", reason: "manual-off" }
+    const st = this.state()
+    let away = st.away
+    // A session's own idle time only lengthens the instance's.
+    if (
+      away &&
+      st.reason === "idle" &&
+      m?.awayMinutes !== undefined &&
+      this.now() - this.lastInput < m.awayMinutes * 60_000
+    )
+      away = false
+    if (!away)
       return {
-        routes: m.on,
-        mode: m.on ? "on" : "off",
-        reason: m.on ? "manual-on" : "manual-off",
+        routes: false,
+        mode: on ? "on" : "auto",
+        reason: "present",
       }
-    if (!this.away()) return auto(false, "present")
+    if (on) return { routes: true, mode: "on", reason: "manual-on" }
+    if (root.chat) return auto(true, "chat")
     if (this.cfg.rules.length === 0) return auto(true, "away-no-rules")
     for (const rule of this.cfg.rules)
       if (await this.matches(rule, root)) return auto(true, "rule-match")

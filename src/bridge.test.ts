@@ -72,6 +72,7 @@ function setup(over: Record<string, unknown> = {}) {
     },
   }
   const router = new Router(c, async () => true, now)
+  router.setAfk("on", Infinity)
   const store = new PendingStore()
   const channel = new NtfyConnector(
     "ntfy",
@@ -145,6 +146,7 @@ describe("Bridge routing", () => {
 
   it("AC-2: away routes after idle minutes; input stops it", async () => {
     const s = setup({ away: { minutes: 10 } })
+    s.router.setAfk("auto")
     await s.bridge.onEvent(form("frm_1", "root"))
     assert.equal(s.published.length, 0, "operator present")
     s.advance(10 * 60_000)

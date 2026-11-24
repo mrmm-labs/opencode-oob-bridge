@@ -165,10 +165,14 @@ export class Control {
   constructor(o: ControlOptions) {
     this.o = o
     this.now = o.now ?? Date.now
-    o.router.setAfk(o.settings.afk(), o.settings.afkUntil())
+    // A forced mode with no end (stored by an older version) is not kept.
+    const ends = o.settings.afkUntil()
+    if (ends !== undefined && ends > this.now())
+      o.router.setAfk(o.settings.afk(), ends)
     o.router.setPresence(() => this.attached() > 0)
     o.bridge.onChat((root) => this.saveSession(root))
     o.bridge.onWatch((root) => this.saveSession(root))
+    o.bridge.onAfk((mode, until) => o.settings.setAfk(mode, until))
     o.bridge.onStuck(() =>
       this.stuck().map((s) => ({
         id: s.id,
@@ -589,6 +593,9 @@ export class Control {
         lastInputAt: router.lastInputAt(),
         tuis: this.attached(),
         until: router.afkEnds(),
+        reason: router.state().reason,
+        why: router.why(),
+        expires: router.state().until,
       },
       night: this.night.view(),
       back:
@@ -604,7 +611,9 @@ export class Control {
         pollOkAt: c.pollOkAt,
         sendOkAt: c.sendOkAt,
         silentMs: c.silentMs,
+        out: c.out,
       })),
+      quiet: st.quiet,
       pending: st.pending,
       drain: this.drain(),
       waiting: st.waiting,
@@ -632,11 +641,16 @@ export class Control {
     const delivery = bridge.deliveryOverride(root)
     settings.setSession(
       root,
-      mode === "auto" && !chat && !delivery
+      mode === "auto" &&
+        !chat &&
+        !delivery &&
+        !router.channel(root) &&
+        router.awayMinutesOf(root) === undefined
         ? undefined
         : {
             on: mode === "auto" ? undefined : mode === "on",
             channel: router.channel(root),
+            awayMinutes: router.awayMinutesOf(root),
             chat: chat || undefined,
             delivery,
           },
@@ -781,22 +795,41 @@ export class Control {
             return fail("afk is on, off or auto")
           const span = str(args.for)
           const ms = span ? parseDuration(span) : undefined
-          if (span && (mode !== "on" || !ms))
-            return fail("A time (8h, 90m) goes with on only")
-          const until = ms ? this.now() + ms : undefined
+          if (span && (mode === "auto" || !ms))
+            return fail("A time (8h, 90m) goes with on or off only")
+          // A forced mode always ends: after the given time, or after away.overrideMinutes.
+          const until =
+            mode === "auto"
+              ? undefined
+              : this.now() + (ms ?? router.overrideMs())
           router.setAfk(mode as Afk, until)
           settings.setAfk(mode as Afk, until)
           bridge.notify()
           return this.done({
             ok: true,
-            text: "afk: " + mode + (span ? " for " + span : ""),
+            text:
+              "afk: " +
+              mode +
+              " for " +
+              (span ?? Math.round(router.overrideMs() / 60_000) + "m"),
           })
         }
         case "route": {
           const mode = args.mode
           if (!root || (mode !== "on" && mode !== "off" && mode !== "auto"))
             return fail("route needs a session and on, off or auto")
-          bridge.setWatch(root, mode, str(args.channel))
+          if (root === "all") {
+            const n = bridge.setAllWatch(mode)
+            return this.done({
+              ok: true,
+              text: `${n} session${n === 1 ? "" : "s"}: ${mode}`,
+            })
+          }
+          const awayMinutes =
+            typeof args.awayMinutes === "number" && args.awayMinutes > 0
+              ? args.awayMinutes
+              : undefined
+          bridge.setWatch(root, mode, str(args.channel), awayMinutes)
           return this.done({ ok: true })
         }
         case "chat": {

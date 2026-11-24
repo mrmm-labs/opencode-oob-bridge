@@ -6,10 +6,10 @@ import { buildMenu, menuHash, validMenu } from "./commandmenu.ts"
 const all = { undo: true, resume: true, digest: true }
 
 describe("the command menu", () => {
-  it("starts with the nine commands of the operator, in order", () => {
+  it("starts with the eleven commands of the operator, in order", () => {
     assert.deepEqual(
       buildMenu(all)
-        .slice(0, 9)
+        .slice(0, 11)
         .map((c) => c.command),
       [
         "status",
@@ -20,6 +20,8 @@ describe("the command menu", () => {
         "undo",
         "resume",
         "afk",
+        "back",
+        "auto",
         "digest",
       ],
     )

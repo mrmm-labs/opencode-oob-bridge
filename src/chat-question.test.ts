@@ -10,6 +10,8 @@ import { fakeTelegram } from "./connectors/fake-telegram.test-util.ts"
 import { TelegramConnector } from "./connectors/telegram.ts"
 import { PendingStore } from "./pending.ts"
 import { Router } from "./routing.ts"
+
+const away = (r: Router) => (r.setAfk("on", Infinity), r)
 import { sleep } from "./util.ts"
 
 const CHAT = 4242
@@ -79,7 +81,7 @@ async function rig(o: { stale?: boolean } = {}) {
     host,
     [channel],
     store,
-    new Router(cfg, async () => true),
+    away(new Router(cfg, async () => true)),
     () => Date.now() + skew.ms,
   )
   bridge.start()

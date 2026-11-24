@@ -323,6 +323,7 @@ describe("bridge telemetry", () => {
       async () => true,
       () => t,
     )
+    router.setAfk("on", Infinity)
     router.set("root", true)
     const bridge = new Bridge(
       cfg,
@@ -463,6 +464,7 @@ describe("bridge telemetry", () => {
       },
     }) as Config
     const router = new Router(cfg, async () => true)
+    router.setAfk("on", Infinity)
     router.set("root", true)
     const ch = stub("ntfy", "ntfy", {})
     ch.send = async () => undefined

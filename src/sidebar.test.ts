@@ -762,7 +762,7 @@ describe("registerSidebar with a fake slot registry", () => {
     await r.remote.poll()
     assert.ok(n > after, "a new prompt")
     assert.deepEqual(rowsOf(seen[0]), [
-      "Notify: on",
+      "Notify: when away",
       "Chat: on",
       "Replies: after turn",
       "Waiting: 1 question",

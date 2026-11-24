@@ -22,7 +22,7 @@ import type {
   TurnCard,
 } from "./connectors/types.ts"
 import { buildMenu } from "./commandmenu.ts"
-import type { NightSource } from "./overnight.ts"
+import { parseDuration, type NightSource } from "./overnight.ts"
 import { DigestLog, digestText } from "./digest.ts"
 import { digestDue, isQuiet } from "./quiet.ts"
 import type { AgentOption } from "./agents.ts"
@@ -347,6 +347,8 @@ const yes = (text: string): Outcome => ({ ok: true, text })
 
 export type BridgeStatus = {
   channels: Array<{ id: string; enabled: boolean } & ConnectorStatus>
+  /** Events not sent while the person was present, and the digests sent when they went away. */
+  quiet: { held: number; digests: number }
   pending: number
   /** Permissions waiting at the Mac, one line per session. */
   waiting?: string[]
@@ -361,6 +363,18 @@ type Patch = {
 }
 
 type Routed = NonNullable<Awaited<ReturnType<Bridge["routed"]>>>
+
+/** What a session did while the person was present: sent as one digest when they go away. */
+type Unsent = {
+  name: string
+  finished: number
+  failed: number
+  asks: Map<string, { kind: "question" | "permission"; sessionID: string }>
+}
+type UnsentKind = "finished" | "failed" | "question" | "permission"
+const PRESENCE_TICK_MS = 2000
+const SLEEP_GAP_MS = 30_000
+const MAX_UNSENT = 200
 
 /** How long the buttons of a turn card stay. */
 export const CARD_BUTTONS_MS = 60 * 60_000
@@ -404,6 +418,13 @@ export class Bridge {
   /** The working tree when each running turn began. */
   private readonly digestLog: DigestLog
   private digestTimer: ReturnType<typeof setInterval> | undefined
+  private readonly unsent = new Map<string, Unsent>()
+  private readonly quiet = { held: 0, digests: 0 }
+  private wasAway: boolean | undefined
+  private wasWhy: string | undefined
+  private afkListener: ((mode: "on" | "off", until: number) => void) | undefined
+  private tickedAt = 0
+  private presenceTimer: ReturnType<typeof setInterval> | undefined
   /** Shortest time between two edits of a permission digest; tests shorten it. */
   digestGapMs = PERM_DIGEST_GAP_MS
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
@@ -584,6 +605,9 @@ export class Bridge {
         this.onState(root, working ? "working" : undefined),
       sessions: () => this.activeSessions(),
       afk: () => this.afkStatus(),
+      autoAll: () => this.setAllWatch("auto"),
+      setAfk: (mode, span) => this.setAfkFromChat(mode, span),
+      chosenCount: () => this.router.chosen().length,
       version: async () => (await this.versionSource?.()) ?? "Version: unknown",
       trace: (n) => traces.format(n),
       digest: () => this.digestNow(),
@@ -633,7 +657,7 @@ export class Bridge {
 
   /** A session started from a chat: mirrored to that channel, with chat on. */
   private startChat(root: string, ch: Connector) {
-    this.router.set(root, true, ch.id)
+    this.router.set(root, undefined, ch.id)
     this.chat.add(root)
     this.changed(root)
   }
@@ -741,14 +765,30 @@ export class Bridge {
     this.versionSource = fn
   }
 
-  /** What `/afk` answers in a chat: the state, never a way to change it. */
+  /** What `/afk status` answers in a chat: the state and why. */
   afkStatus(): string {
-    const away = this.router.away()
     return [
-      `Away mode: ${this.router.afkMode()} (you count as ${away ? "away" : "here"})`,
+      `Routing: ${this.router.why()}`,
       this.night?.status() ?? "Overnight: not planned",
-      "The mode is changed at the Mac: /oob afk on, off or auto.",
+      "/afk [2h] makes you count as away, /back [2h] as here; both end by themselves.",
     ].join("\n")
+  }
+
+  /** Called after `/afk` or `/back` in a chat, to keep the mode across restarts. */
+  onAfk(fn: (mode: "on" | "off", until: number) => void): void {
+    this.afkListener = fn
+  }
+
+  /** `/afk` (away) or `/back` (here) from a chat, for `span` (8h, 90m) or the default time-box. */
+  setAfkFromChat(mode: "on" | "off", span?: string): Outcome {
+    const ms = span ? parseDuration(span) : this.router.overrideMs()
+    if (!ms) return no("A time like 2h or 90m, or nothing for the default.")
+    const until = this.now() + ms
+    this.router.setAfk(mode, until)
+    this.afkListener?.(mode, until)
+    this.notify()
+    void this.presenceTick()
+    return yes(`Routing: ${this.router.why()}`)
   }
 
   start(): void {
@@ -764,6 +804,17 @@ export class Bridge {
         ch.launch?.({ url: app.url, link: app.link })
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
+    for (const ch of this.channels) ch.mute?.(() => !this.router.away())
+    this.wasAway = this.router.away()
+    this.wasWhy = this.router.state().reason
+    this.tickedAt = this.now()
+    if (!this.presenceTimer) {
+      this.presenceTimer = setInterval(
+        () => void this.presenceTick(),
+        PRESENCE_TICK_MS,
+      )
+      this.presenceTimer.unref?.()
+    }
     if (this.cfg.digest && !this.digestTimer) {
       this.digestTimer = setInterval(
         () => void this.digestTick(),
@@ -814,6 +865,7 @@ export class Bridge {
         enabled: c.enabled,
         ...c.status(),
       })),
+      quiet: { ...this.quiet },
       pending: this.store.list().filter((p) => p.state === "pending").length,
       waiting: this.waitingLines(),
     }
@@ -843,6 +895,7 @@ export class Bridge {
       to,
       (ch) => ({
         ...f,
+        explicit: true,
         ...this.card(ch, "notice", undefined, () => ({ kind: "notice", text })),
       }),
       {},
@@ -868,6 +921,8 @@ export class Bridge {
   }
 
   async stop(): Promise<void> {
+    clearInterval(this.presenceTimer)
+    this.presenceTimer = undefined
     clearInterval(this.reconcileTimer)
     this.reconcileTimer = undefined
     for (const ac of this.controllers.values()) ac.abort()
@@ -974,14 +1029,158 @@ export class Bridge {
     }
   }
 
+  private holdUnsent(
+    root: string,
+    name: string,
+    kind: UnsentKind,
+    ask?: { requestID: string; sessionID: string },
+  ): void {
+    const u = this.unsent.get(root) ?? {
+      name,
+      finished: 0,
+      failed: 0,
+      asks: new Map(),
+    }
+    u.name = name
+    if (kind === "finished" || kind === "failed") u[kind]++
+    else if (ask) u.asks.set(ask.requestID, { kind, sessionID: ask.sessionID })
+    this.unsent.delete(root)
+    this.unsent.set(root, u)
+    for (const old of this.unsent.keys()) {
+      if (this.unsent.size <= MAX_UNSENT) break
+      this.unsent.delete(old)
+    }
+    this.quiet.held++
+  }
+
+  /** Edge work when the person goes away (one digest) or comes back (drop what is queued). */
+  async presenceTick(): Promise<void> {
+    const now = this.now()
+    // A gap far longer than the tick means the machine slept.
+    if (this.tickedAt && now - this.tickedAt > SLEEP_GAP_MS)
+      this.router.slept(this.tickedAt)
+    this.tickedAt = now
+    const st = this.router.state()
+    const changed = st.away !== this.wasAway || st.reason !== this.wasWhy
+    if (!changed) return
+    const was = this.wasAway
+    this.wasAway = st.away
+    this.wasWhy = st.reason
+    if (!st.away) {
+      for (const ch of this.channels) ch.hush?.()
+      return
+    }
+    // One line says why routing is on; never sent while present.
+    await this.stateLine()
+    if (was !== true) await this.awayDigest()
+  }
+
+  private async stateLine(): Promise<void> {
+    const text = `📡 Routing on · ${this.router.why()}`
+    const f = this.fmt("notice", { text })
+    await this.dispatch(
+      "notice",
+      this.active().filter((c) => c.capabilities.inboundPrompt),
+      (ch) => ({
+        ...f,
+        ...this.card(ch, "notice", undefined, () => ({ kind: "notice", text })),
+      }),
+      {},
+    )
+  }
+
+  /** What was held while present, one message per topic (one in all for channels without topics). */
+  private async awayDigest(): Promise<void> {
+    const held = [...this.unsent]
+    this.unsent.clear()
+    const noTopics = new Map<string, Connector>()
+    const lines: string[] = []
+    for (const [root, u] of held) {
+      const open = await this.stillOpen(u)
+      const text = [
+        u.finished && `✅ ${u.finished} finished`,
+        u.failed && `❌ ${u.failed} failed`,
+        open.question &&
+          `❓ ${open.question} question${open.question === 1 ? "" : "s"} waiting`,
+        open.permission &&
+          `🔐 ${open.permission} approval${open.permission === 1 ? "" : "s"} waiting`,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+      if (!text) continue
+      const r = await this.routed(root)
+      if (!r) continue
+      const note = "While you were at the Mac: " + text
+      const f = this.fmt("notice", { text: note })
+      const threaded = r.to.filter((c) => c.capabilities.threads)
+      for (const c of r.to) if (!c.capabilities.threads) noTopics.set(c.id, c)
+      lines.push(`${u.name}: ${text}`)
+      await this.dispatch(
+        "notice",
+        threaded,
+        (ch) => ({
+          ...f,
+          ...this.shape(ch, r.session),
+          ...this.card(ch, "notice", r.facts, () => ({
+            kind: "notice",
+            text: note,
+          })),
+        }),
+        { root },
+      )
+      if (threaded.length > 0) this.quiet.digests++
+    }
+    if (noTopics.size === 0 || lines.length === 0) return
+    const text = "While you were at the Mac:\n" + lines.join("\n")
+    const f = this.fmt("notice", { text })
+    await this.dispatch(
+      "notice",
+      [...noTopics.values()],
+      (ch) => ({
+        ...f,
+        ...this.card(ch, "notice", undefined, () => ({ kind: "notice", text })),
+      }),
+      {},
+    )
+    this.quiet.digests++
+  }
+
+  /** The questions and approvals held for a session that OpenCode still lists as open. */
+  private async stillOpen(u: Unsent) {
+    const out = { question: 0, permission: 0 }
+    const listed = new Map<string, Set<string> | undefined>()
+    for (const [requestID, a] of u.asks) {
+      const k = `${a.kind}\0${a.sessionID}`
+      if (!listed.has(k))
+        listed.set(
+          k,
+          await this.host
+            .openRequests?.(a.kind, a.sessionID)
+            .catch(() => undefined),
+        )
+      const ids = listed.get(k)
+      if (ids && !ids.has(requestID)) continue
+      out[a.kind]++
+    }
+    return out
+  }
+
   /** Root facts when the session routes, else undefined. */
-  private async routed(sessionID: string) {
+  private async routed(
+    sessionID: string,
+    held?: { kind: UnsentKind; requestID?: string },
+  ) {
     const rootID = this.host.root(sessionID)
     const [root, asking] = await Promise.all([
       this.host.session(rootID),
       rootID === sessionID ? undefined : this.host.session(sessionID),
     ])
-    const facts = { id: rootID, agent: root?.agent, directory: root?.directory }
+    const facts = {
+      id: rootID,
+      agent: root?.agent,
+      directory: root?.directory,
+      chat: this.chat.has(rootID),
+    }
     const decision = await this.router.decide(facts)
     const to = decision.routes ? this.targets(rootID) : []
     this.tel
@@ -996,8 +1195,21 @@ export class Bridge {
         },
       })
       .end()
-    if (!decision.routes) return undefined
     const project = root?.directory ? basename(root.directory) : "opencode"
+    if (!decision.routes) {
+      if (held && decision.reason === "present")
+        this.holdUnsent(
+          rootID,
+          this.cfg.redact.mode === "title"
+            ? project
+            : `${project} · ${redact(root?.title ?? rootID, this.cfg.redact)}`,
+          held.kind,
+          held.requestID === undefined
+            ? undefined
+            : { requestID: held.requestID, sessionID },
+        )
+      return undefined
+    }
     const who = asking ?? root
     const vars: Vars = {
       project,
@@ -1181,7 +1393,10 @@ export class Bridge {
     if (form.metadata?.kind !== "question") return
     const questions = toQuestions(form.fields)
     if (questions.length === 0) return
-    const r = await this.routed(form.sessionID)
+    const r = await this.routed(form.sessionID, {
+      kind: "question",
+      requestID: form.id,
+    })
     if (!r) return
     const reachable = (await this.host.canReplyForm?.()) ?? true
     const id = this.store.newId()
@@ -1414,7 +1629,10 @@ export class Bridge {
   private async onPermission(
     d: Extract<BridgeEvent, { type: "permission.asked" }>["data"],
   ) {
-    const r = await this.routed(d.sessionID)
+    const r = await this.routed(d.sessionID, {
+      kind: "permission",
+      requestID: d.id,
+    })
     if (!r) return
     const id = this.store.newId()
     const detail = [`${d.action}: ${(d.resources ?? []).join(", ")}`, d.message]
@@ -1628,11 +1846,29 @@ export class Bridge {
   }
 
   /** Sets whether a session is mirrored, and through which channel. */
-  setWatch(root: string, mode: "on" | "off" | "auto", channel?: string): void {
-    this.router.set(root, mode === "auto" ? undefined : mode === "on", channel)
+  setWatch(
+    root: string,
+    mode: "on" | "off" | "auto",
+    channel?: string,
+    awayMinutes?: number,
+  ): void {
+    this.router.set(
+      root,
+      mode === "auto" ? undefined : mode === "on",
+      channel,
+      awayMinutes ?? this.router.awayMinutesOf(root),
+    )
     this.watchListener?.(root)
     void this.retrack(root)
     this.notify()
+  }
+
+  /** Sets the mode of every known top-level session; the sessions it reached. */
+  setAllWatch(mode: "on" | "off" | "auto"): number {
+    const roots = new Set([...this.router.chosen(), ...this.lastStates.keys()])
+    for (const root of roots)
+      this.setWatch(root, mode, this.router.channel(root))
+    return roots.size
   }
 
   /** Called after chat is switched on or off for a session, to keep it across restarts. */
@@ -1776,18 +2012,11 @@ export class Bridge {
       return no(
         "No channel that can chat is selected for this session: use /oob on telegram first.",
       )
-    const mirrored = this.router.mode(root) === "on"
-    // The session's topic is where the chat happens, so it is mirrored too.
-    this.router.set(root, true, this.router.channel(root))
+    // The session's topic is where the chat happens: with chat on it routes when away, whatever the rules say.
     this.chat.add(root)
     await this.onState(root)
     this.changed(root)
-    return {
-      ok: true,
-      text: mirrored
-        ? "Chat is on for this session."
-        : "Chat is on for this session. It is now mirrored too (routing on).",
-    }
+    return { ok: true, text: "Chat is on for this session." }
   }
 
   private joined(root: string): string {
@@ -1983,9 +2212,9 @@ export class Bridge {
 
   private async onFinished(sessionID: string, failed: boolean) {
     if (this.host.root(sessionID) !== sessionID) return
-    const r = await this.routed(sessionID)
-    if (!r) return
     const kind = failed ? "failed" : "finished"
+    const r = await this.routed(sessionID, { kind })
+    if (!r) return
     const final = this.joined(sessionID).trim()
     const born = this.createdAt.get(sessionID)
     if (failed && born !== undefined && this.now() - born < UNSTARTED_MS) {
@@ -2285,6 +2514,7 @@ export class Bridge {
 
   /** A prompt was answered or cancelled in OpenCode. */
   private async closed(requestID: string, note: string, choice?: string) {
+    for (const u of this.unsent.values()) u.asks.delete(requestID)
     const p = this.store.byRequest(requestID)
     if (!p) return this.router.touch()
     if (p.state !== "pending") return
@@ -2420,6 +2650,7 @@ export class Bridge {
     m: Inbound,
   ): Promise<Outcome | undefined> {
     const kind = this.inboundKind(ch, m)
+    this.router.phone()
     const span = this.tel.begin("oob.inbound", {
       attrs: { kind, "connector.type": ch.type },
     })

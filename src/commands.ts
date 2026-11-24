@@ -43,6 +43,8 @@ const GENERAL_COMMANDS = ["new", "sessions", "projects"] as const
 const ANYWHERE_COMMANDS = [
   "resume",
   "afk",
+  "back",
+  "auto",
   "digest",
   "night",
   "version",
@@ -81,6 +83,12 @@ export type CommandDeps = {
   sessions(): Promise<Array<{ id: string; label: string }>>
   /** What /afk shows: the state, never a way to change it. */
   afk(): string
+  /** `/afk` (on) and `/back` (off): a forced mode that ends after the time, or the default. */
+  setAfk(mode: "on" | "off", span?: string): Outcome
+  /** Puts every session on auto; how many it reached. Never turns anything on. */
+  autoAll(): number
+  /** How many sessions have a mode of their own. */
+  chosenCount(): number
   /** What /version shows: what is installed and what each half runs. */
   version(): Promise<string>
   /** The last `n` updates and sends, one line each plus their path. */
@@ -113,6 +121,7 @@ type Flow = {
     | "prompt"
     | "undo"
     | "resume"
+    | "auto"
     | "held"
   exp: number
   /** The session a model, agent or variant pick is for. */
@@ -305,7 +314,33 @@ export class Commands {
     name: string,
     info: Info,
   ): Promise<Outcome> {
-    if (name === "afk") return this.done(info, "applied", yes(this.d.afk()))
+    if (name === "afk" || name === "back") {
+      const arg = (m.command?.args ?? "").trim().toLowerCase()
+      if (name === "afk" && arg === "status")
+        return this.done(info, "applied", yes(this.d.afk()))
+      const out = this.d.setAfk(name === "afk" ? "on" : "off", arg || undefined)
+      return this.done(info, out.ok ? "applied" : "invalid", out)
+    }
+    if (name === "auto") {
+      const arg = (m.command?.args ?? "").trim().toLowerCase()
+      if (arg === "all") {
+        const n = this.d.autoAll()
+        return this.done(
+          info,
+          "applied",
+          yes(
+            `${n} session${n === 1 ? "" : "s"} back on auto: they follow the away rule.`,
+          ),
+        )
+      }
+      return this.done(
+        info,
+        "applied",
+        this.menu("auto", "Put every session back on auto?", [
+          { label: "All sessions → auto", value: "all" },
+        ]),
+      )
+    }
     if (name === "version")
       return this.done(info, "applied", yes(await this.d.version()))
     if (name === "trace")
@@ -821,6 +856,14 @@ export class Commands {
         : this.done(info, "invalid", no("This model has no variants."))
     }
 
+    if (f.kind === "auto") {
+      const n = this.d.autoAll()
+      return this.done(
+        info,
+        "applied",
+        yes(`${n} session${n === 1 ? "" : "s"} back on auto.`),
+      )
+    }
     if (f.kind === "resume") {
       const blocked = await this.gate(value, info)
       if (blocked) return blocked

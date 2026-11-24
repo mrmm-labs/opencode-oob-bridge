@@ -198,6 +198,7 @@ export class Remote implements Pilot {
   status() {
     return {
       channels: this.snap?.channels ?? [],
+      quiet: this.snap?.quiet,
       pending: this.snap?.pending ?? 0,
       waiting: this.snap?.waiting ?? [],
       trace: this.snap?.trace ?? [],
@@ -250,6 +251,7 @@ export class Remote implements Pilot {
   deliveryOverride = (root: string) => this.row(root)?.deliveryOverride
   openPromptList = (root: string): PromptView[] => this.row(root)?.prompts ?? []
 
+  /** `root` may be "all": every session. */
   route(root: string, mode: "on" | "off" | "auto", channel?: string) {
     return this.act("route", { root, mode, channel })
   }
