@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.46.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.45.1...v0.46.0) (2026-11-24)
+
+
+### Features
+
+* /qa and /update, with buttons on the cards and in the app ([#168](https://github.com/mrmm-labs/opencode-oob-bridge/issues/168)) ([71f6b2f](https://github.com/mrmm-labs/opencode-oob-bridge/commit/71f6b2fc2b7e7f29a5057a7ddc9878edfa8948df))
+
 ## [0.45.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.45.0...v0.45.1) (2026-11-23)
 
 
