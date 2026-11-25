@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.48.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.47.0...v0.48.0) (2026-11-25)
+
+
+### Features
+
+* headless sessions share one Telegram topic per project ([#174](https://github.com/mrmm-labs/opencode-oob-bridge/issues/174)) ([ccbaff4](https://github.com/mrmm-labs/opencode-oob-bridge/commit/ccbaff416dd08f58c0a4ce84c1531f20b0ffb712))
+
 ## [0.47.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.46.1...v0.47.0) (2026-11-24)
 
 
