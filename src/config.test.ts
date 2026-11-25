@@ -87,6 +87,26 @@ describe("parseConfig", () => {
       )
   })
 
+  it("reads telegram's topics.headless, project by default, and refuses others", () => {
+    const tg = (topics: unknown) =>
+      parseConfig({
+        channels: { telegram: { token: { env: "TG" }, topics } },
+      })
+    const topicsOf = (c: unknown) =>
+      (opts(c as Config, "telegram") as { topics: unknown }).topics
+    assert.deepEqual(topicsOf(tg(undefined)), { headless: "project" })
+    assert.deepEqual(topicsOf(tg({})), { headless: "project" })
+    assert.deepEqual(topicsOf(tg({ headless: "session" })), {
+      headless: "session",
+    })
+    for (const bad of [{ headless: "all" }, { headless: true }, "project"])
+      assert.ok("error" in tg(bad), JSON.stringify(bad))
+    assert.match(
+      (tg({ headless: "none" }) as { error: string }).error,
+      /topics\.headless must be "project" or "session"/,
+    )
+  })
+
   it("reads telegram's rate budget and refuses bad values", () => {
     const tg = (rate: unknown) =>
       parseConfig({ channels: { telegram: { token: { env: "TG" }, rate } } })
@@ -187,6 +207,7 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: true,
       rate: { gapMs: 1100, perMinute: 18 },
+      topics: { headless: "project" },
       draft: false,
       notify: {},
       icons: {},
@@ -239,6 +260,7 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: false,
       rate: { gapMs: 1100, perMinute: 18 },
+      topics: { headless: "project" },
       draft: false,
       notify: { finished: true, failed: undefined },
       icons: { "^coord": "🎯" },

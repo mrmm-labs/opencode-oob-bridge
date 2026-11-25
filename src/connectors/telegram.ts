@@ -79,6 +79,7 @@ import type {
   Connector,
   ConnectorStatus,
   ConnectorType,
+  Home,
   Inbound,
   InboundFile,
   Menu,
@@ -178,6 +179,8 @@ export type TelegramOptions = {
   toastAfterMs?: number
   /** One status card per session topic; on unless false. */
   statusCard?: boolean
+  /** `project`: headless sessions of a project share one topic; `session`: a topic each. */
+  topics?: { headless: "project" | "session" }
   /** Stream a reply as a native draft in a private chat. Off until it has been checked against a live bot. */
   draft?: boolean
   /** Session-end pushes wanted; finished defaults to off while the card shows it. */
@@ -242,6 +245,12 @@ const POLLERS = new Map<string, Promise<void>>()
 const HANDOVER_MS = 5_000
 /** Telegram allows about one message a second per chat and 20 a minute in a group. */
 const DEFAULT_RATE: Rate = { gapMs: 1100, perMinute: 18 }
+/** Topic-file keys of shared topics start with this after the chat id; session ids never do. */
+const SHARED = "agents/"
+/** The most of a session title a tag shows. */
+const TAG_MAX = 60
+const SHARED_HINT =
+  "This topic is shared by agents with no topic of their own. Reply to one agent's message to write to it."
 /** After an update from the paired chat, the connector may answer it while the person counts as present. */
 const ANSWER_WINDOW_MS = 30_000
 
@@ -319,6 +328,13 @@ type Topic = {
 }
 
 type Sticker = { emoji?: string; custom_emoji_id?: string }
+
+/** The tag line of a message in a shared topic, as HTML; nothing without a tag. */
+const tagHtml = (tag?: string) => (tag ? `🏷 <i>${esc(tag)}</i>\n` : "")
+
+/** The tag of a message in a shared topic ahead of a plain caption (at most 1024 characters). */
+const tagCaption = (tag: string | undefined, caption: string) =>
+  tag ? truncate(`🏷 ${tag}\n${caption}`, 1024) : caption
 
 /** FNV-1a: the same text always picks the same icon and color. */
 export function hash(text: string): number {
@@ -429,6 +445,11 @@ export class TelegramConnector implements Connector {
   private readonly now: () => number
   private readonly budget: SendBudget | undefined
   private isMuted: (() => boolean) | undefined
+  private homeOf: ((id: string) => Promise<Home | undefined>) | undefined
+  /** The shared topic a session last posted to, for what is sync: its link and the tag of an edit. */
+  private readonly homes = new Map<string, Home>()
+  /** The tag a message carries in a shared topic, by message, so an edit keeps it. */
+  private readonly tags = new Map<string, string>()
   /** When the paired chat last sent an update: what is sent in answer is not unsolicited. */
   private inboundAt = -Infinity
   private readonly out = { sent: 0, suppressed: 0, rateLimited: 0 }
@@ -602,6 +623,10 @@ export class TelegramConnector implements Connector {
     }
   }
 
+  home(of: (sessionID: string) => Promise<Home | undefined>): void {
+    this.homeOf = of
+  }
+
   mute(isMuted: () => boolean): void {
     this.isMuted = isMuted
   }
@@ -641,21 +666,24 @@ export class TelegramConnector implements Connector {
     try {
       for (let attempt = 0; ; attempt++) {
         const thread = await this.thread(push.session)
+        const tag = push.session && this.tagOf(push.session.id)
         try {
           const m = await this.call<{ message_id: number }>(
             "sendMessage",
             {
               chat_id: this.chatId,
               message_thread_id: thread,
-              text: renderPush(push, {
-                inTopic: thread !== undefined,
-                footer:
-                  q && push.card?.kind === "question"
-                    ? this.hint(q.id, q.questions)
-                    : push.permission
-                      ? "Tap a button to answer. Each answer is logged."
-                      : undefined,
-              }),
+              text:
+                (tag ? tagHtml(tag) : "") +
+                renderPush(push, {
+                  inTopic: thread !== undefined,
+                  footer:
+                    q && push.card?.kind === "question"
+                      ? this.hint(q.id, q.questions)
+                      : push.permission
+                        ? "Tap a button to answer. Each answer is logged."
+                        : undefined,
+                }),
               parse_mode: "HTML",
               link_preview_options: { is_disabled: true },
               // A failure needs attention: it is the one push that may make a sound.
@@ -690,6 +718,7 @@ export class TelegramConnector implements Connector {
           )
           const ref = String(m.message_id)
           if (push.session) this.remember(ref, push.session.id)
+          if (tag) this.tagged(ref, tag)
           return ref
         } catch (err) {
           // The topic was deleted in Telegram: make a new one once.
@@ -699,7 +728,10 @@ export class TelegramConnector implements Connector {
             !/thread/i.test((err as Error).message)
           )
             throw err
-          this.topics?.delete(this.topicKey(push.session!.id))
+          const home = this.homes.get(push.session!.id)
+          this.topics?.delete(
+            this.topicKey(home ? SHARED + home.key : push.session!.id),
+          )
           await this.saveTopics()
         }
       }
@@ -707,6 +739,12 @@ export class TelegramConnector implements Connector {
       this.fail(err)
       return undefined
     }
+  }
+
+  private tagged(ref: string, tag: string) {
+    this.tags.set(ref, tag)
+    if (this.tags.size > SENT_KEEP)
+      this.tags.delete(this.tags.keys().next().value!)
   }
 
   private remember(ref: string | number, sessionID: string) {
@@ -726,9 +764,23 @@ export class TelegramConnector implements Connector {
     this.topics ??= await this.loadTopics()
     const prefix = `${this.chatId}:`
     for (const [k, t] of this.topics)
-      if (t.thread === thread && k.startsWith(prefix))
+      if (
+        t.thread === thread &&
+        k.startsWith(prefix) &&
+        !k.startsWith(prefix + SHARED)
+      )
         return k.slice(prefix.length)
     return undefined
+  }
+
+  /** Whether a topic is one several headless sessions share, where only a reply names the session. */
+  private async isShared(thread?: number): Promise<boolean> {
+    if (thread === undefined || !this.chatId) return false
+    this.topics ??= await this.loadTopics()
+    const prefix = `${this.chatId}:${SHARED}`
+    for (const [k, t] of this.topics)
+      if (t.thread === thread && k.startsWith(prefix)) return true
+    return false
   }
 
   private topicKey(sessionID: string) {
@@ -778,19 +830,49 @@ export class TelegramConnector implements Connector {
     if (!session || !this.chatId) return undefined
     if (!(await this.isForum())) return undefined
     this.topics ??= await this.loadTopics()
-    const key = this.topicKey(session.id)
+    // A session that has a topic keeps it; only one without gets the shared one.
+    const own = this.topics.get(this.topicKey(session.id))
+    if (own !== undefined) {
+      this.homes.delete(session.id)
+      return own.thread
+    }
+    const home = await this.homeFor(session.id)
+    const key = home
+      ? this.topicKey(SHARED + home.key)
+      : this.topicKey(session.id)
     const known = this.topics.get(key)
     if (known !== undefined) return known.thread
     // After a failure the main chat is used, and creation is tried again later.
     if (this.now() < this.topicRetryAt) return undefined
     let job = this.topicJobs.get(key)
     if (!job) {
-      job = this.createTopic(key, session).finally(() =>
-        this.topicJobs.delete(key),
-      )
+      job = this.createTopic(
+        key,
+        home ? { id: key, name: home.name, project: session.project } : session,
+      ).finally(() => this.topicJobs.delete(key))
       this.topicJobs.set(key, job)
     }
     return job
+  }
+
+  /** The shared topic a session belongs in, when it has none of its own and the setting allows it. */
+  private async homeFor(sessionID: string): Promise<Home | undefined> {
+    if (!this.homeOf || this.opts.topics?.headless === "session") return
+    let home: Home | undefined
+    try {
+      home = await this.homeOf(sessionID)
+    } catch (err) {
+      log("telegram_home_error", { message: (err as Error).message })
+    }
+    if (home) this.homes.set(sessionID, home)
+    else this.homes.delete(sessionID)
+    return home
+  }
+
+  /** What starts a message of a session that posts in a shared topic; nothing for any other. */
+  private tagOf(sessionID: string): string | undefined {
+    const tag = this.homes.get(sessionID)?.tag
+    return tag ? truncate(filterSecrets(tag), TAG_MAX) : undefined
   }
 
   private async createTopic(
@@ -945,6 +1027,13 @@ export class TelegramConnector implements Connector {
         this.topics ??= await this.loadTopics()
         if (!this.topics.has(this.topicKey(state.id))) return
       }
+      // A session in a shared topic has no card, name or typing indicator of its own.
+      this.topics ??= await this.loadTopics()
+      if (
+        !this.topics.has(this.topicKey(state.id)) &&
+        (await this.homeFor(state.id))
+      )
+        return
       const thread = await this.thread(session)
       if (thread === undefined) return
       this.pulse(state.id, thread, !!state.chat && state.state === "working")
@@ -1056,7 +1145,10 @@ export class TelegramConnector implements Connector {
       this.topics ??= await this.loadTopics()
       const prefix = `${this.chatId}:`
       const bound = [...this.topics.keys()].filter(
-        (k) => k.startsWith(prefix) && k !== this.topicKey("approvals"),
+        (k) =>
+          k.startsWith(prefix) &&
+          k !== this.topicKey("approvals") &&
+          !k.startsWith(prefix + SHARED),
       )
       if (bound.length === 0 || !(await this.isForum())) return
       for (const key of bound)
@@ -1220,7 +1312,7 @@ export class TelegramConnector implements Connector {
         {
           chat_id: this.chatId,
           message_id: Number(ref),
-          text: renderPush(push),
+          text: tagHtml(this.tags.get(ref)) + renderPush(push),
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
         },
@@ -1792,6 +1884,9 @@ export class TelegramConnector implements Connector {
     if (inbound.kind === "prompt") void this.react(m.message_id, "received")
     const sent0 = this.now()
     const out = await this.onInbound?.(inbound)
+    // A reply to a message nobody tracks, in a topic that names no session.
+    if (!sessionKey && !out && (await this.isShared(m.message_thread_id)))
+      return this.unbound(m)
     traces.step("deliver", { ms: this.now() - sent0, ok: out?.ok !== false })
     await this.settle(m, out, sessionKey)
   }
@@ -1802,7 +1897,9 @@ export class TelegramConnector implements Connector {
     this.note("ignored", "no session is bound to this topic")
     await this.deliver(m.message_thread_id, {
       ok: false,
-      text: "No session here; write in a session topic",
+      text: (await this.isShared(m.message_thread_id))
+        ? SHARED_HINT
+        : "No session here; write in a session topic",
     })
   }
 
@@ -2298,7 +2395,10 @@ export class TelegramConnector implements Connector {
 
   /** A link that opens a session's topic, in a supergroup. */
   topicLink(sessionID: string): string | undefined {
-    const topic = this.topics?.get(this.topicKey(sessionID))
+    const home = this.homes.get(sessionID)
+    const topic =
+      this.topics?.get(this.topicKey(sessionID)) ??
+      (home && this.topics?.get(this.topicKey(SHARED + home.key)))
     const m = /^-100(\d+)$/.exec(this.chatId ?? "")
     return topic && m ? `https://t.me/c/${m[1]}/${topic.thread}` : undefined
   }
@@ -2929,10 +3029,11 @@ export class TelegramConnector implements Connector {
     if (!this.chatId) return undefined
     try {
       const thread = await this.thread(session)
+      const tag = this.tagOf(session.id)
       const m = await this.call<{ message_id: number }>("sendMessage", {
         chat_id: this.chatId,
         message_thread_id: thread,
-        text: renderTurnCard(card),
+        text: (tag ? tagHtml(tag) : "") + renderTurnCard(card),
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
         disable_notification: true,
@@ -2953,6 +3054,7 @@ export class TelegramConnector implements Connector {
         },
       })
       this.remember(m.message_id, session.id)
+      if (tag) this.tagged(String(m.message_id), tag)
       return String(m.message_id)
     } catch (err) {
       this.fail(err)
@@ -2982,6 +3084,7 @@ export class TelegramConnector implements Connector {
     if (!this.chatId || images.length === 0) return false
     try {
       const thread = await this.thread(session)
+      caption = tagCaption(this.tagOf(session.id), caption)
       const files = images.map((data, i) => ({
         field: `p${i}`,
         name: `diff-${i + 1}.png`,
@@ -3077,6 +3180,7 @@ export class TelegramConnector implements Connector {
     if (!this.chatId) return false
     try {
       const thread = await this.thread(session)
+      caption = tagCaption(this.tagOf(session.id), caption)
       await this.upload(
         "sendDocument",
         { chat_id: this.chatId, message_thread_id: thread, caption },
@@ -3110,6 +3214,7 @@ export type TelegramConfig = {
   apiBase: string
   statusCard: boolean
   rate: Rate
+  topics: { headless: "project" | "session" }
   draft: boolean
   notify: { finished?: boolean; failed?: boolean }
   icons: Record<string, string>
@@ -3167,6 +3272,16 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       }
     }
 
+    const topics: { headless: "project" | "session" } = { headless: "project" }
+    if (raw.topics !== undefined) {
+      if (!isObject(raw.topics))
+        return { error: `${at}topics must be an object` }
+      const h = raw.topics.headless
+      if (h !== undefined && h !== "project" && h !== "session")
+        return { error: `${at}topics.headless must be "project" or "session"` }
+      if (h) topics.headless = h
+    }
+
     const draft = raw.draft ?? false
     if (typeof draft !== "boolean")
       return { error: `${at}draft must be true or false` }
@@ -3206,6 +3321,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       apiBase: apiBase.replace(/\/+$/, ""),
       statusCard,
       rate,
+      topics,
       draft,
       notify,
       icons,
@@ -3226,6 +3342,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       apiBase: o.apiBase,
       statusCard: o.statusCard,
       rate: o.rate,
+      topics: o.topics,
       draft: o.draft,
       notify: o.notify,
       icons: o.icons,
