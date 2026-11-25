@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.49.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.48.0...v0.49.0) (2026-11-25)
+
+
+### Features
+
+* confirmed owner-only Interrupt for a busy session ([#176](https://github.com/mrmm-labs/opencode-oob-bridge/issues/176)) ([5cb4bf1](https://github.com/mrmm-labs/opencode-oob-bridge/commit/5cb4bf10acd1c65f42d910656a7e034c68b36cc9))
+
 ## [0.48.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.47.0...v0.48.0) (2026-11-25)
 
 
