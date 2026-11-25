@@ -108,6 +108,9 @@ export type Card =
   | { kind: "notice"; text: string }
 
 /** What a connector may show about a top-level session. */
+/** The topic several headless sessions of a project share, and what names one of them in it. */
+export type Home = { key: string; name: string; tag: string }
+
 export type SessionState = {
   id: string
   /** `<project> · <title>`, or the project alone when titles are redacted. */
@@ -335,6 +338,8 @@ export interface Connector {
     images: Uint8Array[],
     caption: string,
   ): Promise<boolean>
+  /** Where a session posts when it has no topic of its own; asked for before a topic is made. */
+  home?(of: (sessionID: string) => Promise<Home | undefined>): void
   /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
   silence?(isQuiet: () => boolean): void
   /**

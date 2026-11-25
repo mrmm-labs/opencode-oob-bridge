@@ -202,19 +202,20 @@ say who answered ("Answered from telegram: Yes", "Answered in the TUI").
 | `actionAuth`                | `true`     | Put the token in each button so buttons work on an auth-protected server.             |
 | `enabled`                   | `true`     | Set `false` to configure it without using it.                                         |
 
-| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                                                                           |
-| ------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                                                                       |
-| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                                                                           |
-| `operator`                      | none                                   | Your Telegram user id, for a bridge paired to a group before the id was stored. Pairing stores it, and the stored id wins. Without either, the Mini App refuses every request with `no_operator`. |
-| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                                                                     |
-| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                                                                          |
-| `rate`                          | `{ gapMs: 1100, perMinute: 18 }`       | Send budget per chat: the least gap between calls (0 to 60000 ms) and the most calls a minute (1 to 600).                                                                                         |
-| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                                                                     |
-| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                                                                               |
-| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                                                                           |
-| `reactions`                     | built-in map                           | The reaction of each stage: `{ received, queued, sent, steered, done, failed, ignored, held, default, agents: { "<agent>": "<emoji>" } }`. See [Chat from Telegram](#chat-from-telegram).         |
-| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                                                                             |
+| Key (under `channels.telegram`) | Default                                | Meaning                                                                                                                                                                                                                 |
+| ------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token`                         | (required)                             | The bot token, as `{ "env": NAME }` or `{ "command": [argv] }`. A literal token is refused.                                                                                                                             |
+| `chatId`                        | none                                   | The chat to talk to. Leave it out and run `/oob pair telegram` instead.                                                                                                                                                 |
+| `operator`                      | none                                   | Your Telegram user id, for a bridge paired to a group before the id was stored. Pairing stores it, and the stored id wins. Without either, the Mini App refuses every request with `no_operator`.                       |
+| `enabled`                       | `true`                                 | Set `false` to configure it without using it.                                                                                                                                                                           |
+| `apiBase`                       | `https://api.telegram.org`             | Bot API URL, for a local Bot API server.                                                                                                                                                                                |
+| `topics.headless`               | `"project"`                            | `"project"`: headless sessions of a project share one topic, `<project> · agents`. `"session"`: a topic each, as before. Set in the config file only. (Under the channel because the top-level `topics` key is ntfy's.) |
+| `rate`                          | `{ gapMs: 1100, perMinute: 18 }`       | Send budget per chat: the least gap between calls (0 to 60000 ms) and the most calls a minute (1 to 600).                                                                                                               |
+| `statusCard`                    | `true`                                 | In a forum, one pinned status card per session topic (working, idle, failed).                                                                                                                                           |
+| `notify`                        | `{ finished: false, failed: true }`    | Which session-end pushes arrive. `finished` is `true` when `statusCard` is `false`.                                                                                                                                     |
+| `icons`                         | none                                   | `{ "<agent regex or project glob>": "<emoji>" }`: the topic icon for matching sessions.                                                                                                                                 |
+| `reactions`                     | built-in map                           | The reaction of each stage: `{ received, queued, sent, steered, done, failed, ignored, held, default, agents: { "<agent>": "<emoji>" } }`. See [Chat from Telegram](#chat-from-telegram).                               |
+| `media`                         | `{ maxBytes: 10485760, mimes: [...] }` | Photos and documents taken from the chat: the size limit and the accepted mime types.                                                                                                                                   |
 
 Which channels are on is also a TUI setting (`/oob channel <name> on|off`). The choice is stored in
 `settings.json` in the state directory and layered over the config file, which the plugin never
@@ -317,6 +318,18 @@ What you get in Telegram:
   `redact` is `title`), and its messages go there. Elsewhere everything goes to the chat, with the
   project and session in each message. The topic is renamed when the session is (at most once a
   minute).
+  - **Headless sessions share one topic.** A top-level session that no TUI has viewed (the host's
+    session has no `time.viewed`, which a viewer sets once it observes the session go idle), such as
+    one a script starts with `opencode run --session <id> --title role/name`, posts to one topic per
+    project, `<project> · agents`, made on first use. Each message starts with `🏷` and the session
+    title (the last 6 characters of the id when `redact` is `title`). That topic has no status card,
+    rename or typing indicator. Reply to a message to write to its session: a reply to a question
+    answers it, and free text is delivered when chat is on for that session (as everywhere); a message
+    that replies to no known message is refused with a hint. A session with chat on, a child session
+    (it follows its root), and a session that already has its own topic keep or get their own topic;
+    a session viewed later posts to its own topic from then on, and nothing already sent is moved,
+    renamed or deleted. `topics.headless: "session"` turns this off. The one gap: an operator's new
+    session is unviewed during its first turn, so that turn lands in the shared topic.
   - Its first message is a **status card**, pinned without a sound. The first line, which is all
     the pinned-message bar shows, reads `<watch> · <chat> — <state>`, for example
     `👁 on·telegram · 💬 on — 💤 Idle 22:06`. Then come the session title, agent and model,

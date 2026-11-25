@@ -69,6 +69,7 @@ const WATCH = [
   "session.inbox.delivered",
   "session.inbox.cancelled",
   "session.deleted",
+  "session.viewed",
 ]
 
 const RESUME_TEXT =
@@ -89,7 +90,7 @@ type Info = {
   title?: string
   location?: { directory?: string }
   model?: { providerID: string; id: string; variant?: string }
-  time?: { busy?: number; idle?: number }
+  time?: { busy?: number; idle?: number; viewed?: number }
 }
 
 /** What the server has told us of each session, so the bridge can read it without waiting. */
@@ -143,6 +144,10 @@ export class Sessions {
       case "session.renamed":
         if (info && typeof d.title === "string") info.title = d.title
         break
+      case "session.viewed":
+        if (info && typeof d.idle === "number")
+          info.time = { ...info.time, viewed: d.idle }
+        break
       case "session.agent.selected":
         if (info && typeof d.agent === "string") info.agent = d.agent
         break
@@ -157,12 +162,13 @@ export class Sessions {
   }
 }
 
-const toSession = (i: Info): SessionInfo => ({
+export const toSession = (i: Info): SessionInfo => ({
   id: i.id,
   parentID: i.parentID,
   agent: i.agent,
   directory: i.location?.directory,
   title: i.title,
+  viewed: i.time && i.time.viewed !== undefined,
   model: i.model?.id,
   modelRef: i.model && {
     providerID: i.model.providerID,

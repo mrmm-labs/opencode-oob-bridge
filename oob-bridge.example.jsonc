@@ -34,6 +34,9 @@
     //   // Your Telegram user id, if pairing stored none (a group paired long ago).
     //   // "operator": 123456789,
     //   // In a forum group: one pinned status card per session topic.
+    //   // "project": sessions no TUI ever viewed (script runs) share one topic per
+    //   // project, "<project> · agents". "session": a topic for each, as before.
+    //   // "topics": { "headless": "project" },
     //   // Send budget per chat: least gap between calls, most calls a minute.
     //   // "rate": { "gapMs": 1100, "perMinute": 18 },
     //   // "statusCard": true,

@@ -12,6 +12,7 @@ import type {
   CardQuestion,
   Connector,
   ConnectorStatus,
+  Home,
   Inbound,
   InboundFile,
   Outcome,
@@ -64,6 +65,8 @@ export type SessionInfo = {
   agent?: string
   directory?: string
   title?: string
+  /** A viewer (a TUI) has marked an idle transition viewed: false is a headless session. Unset when the host does not say. */
+  viewed?: boolean
   model?: string
   modelRef?: { providerID: string; id: string; variant?: string }
 }
@@ -805,6 +808,7 @@ export class Bridge {
     for (const ch of this.channels) ch.menu?.(list)
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
     for (const ch of this.channels) ch.mute?.(() => !this.router.away())
+    for (const ch of this.channels) ch.home?.((id) => this.homeOf(id))
     this.wasAway = this.router.away()
     this.wasWhy = this.router.state().reason
     this.tickedAt = this.now()
@@ -1233,6 +1237,27 @@ export class Bridge {
         ? undefined
         : redact(root?.title ?? "", this.cfg.redact)
     return { rootID, root, facts, vars, session, to, project, title }
+  }
+
+  /**
+   * Where a headless session posts instead of a topic of its own: a top-level
+   * session no TUI has viewed and that has no chat. Nothing for any other.
+   */
+  private async homeOf(sessionID: string): Promise<Home | undefined> {
+    const rootID = this.host.root(sessionID)
+    if (this.chat.has(rootID)) return undefined
+    const root = await this.host.session(rootID)
+    if (!root || root.parentID || root.viewed !== false) return undefined
+    const project = root.directory ? basename(root.directory) : "opencode"
+    const title =
+      this.cfg.redact.mode === "title"
+        ? ""
+        : redact(root.title ?? "", this.cfg.redact)
+    return {
+      key: project,
+      name: `${project} · agents`,
+      tag: title || rootID.slice(-6),
+    }
   }
 
   /** Enabled channels a session's pushes go to: its own choice, else the default. */
