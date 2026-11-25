@@ -115,6 +115,8 @@ export interface Host {
   switchAgent(sessionID: string, agent: string): Promise<void>
   /** Whether a turn was running and has been stopped. */
   interrupt(sessionID: string): Promise<boolean>
+  /** How many messages wait in the session's inbox, not yet delivered. Unset when the host cannot say. */
+  queued?(sessionID: string): Promise<number | undefined>
   compact(sessionID: string): Promise<void>
   rename(sessionID: string, title: string): Promise<void>
   /** Stages a revert of the session's last turn through a TUI. False when there is nothing to revert. */
@@ -377,6 +379,9 @@ type Unsent = {
 type UnsentKind = "finished" | "failed" | "question" | "permission"
 const PRESENCE_TICK_MS = 2000
 const SLEEP_GAP_MS = 30_000
+/** How often the cards of working sessions are checked for a stuck turn, and the step of the minutes they show. */
+const STUCK_CHECK_MS = 30_000
+const STUCK_STEP_MS = 5 * 60_000
 const MAX_UNSENT = 200
 
 /** How long the buttons of a turn card stay. */
@@ -424,6 +429,9 @@ export class Bridge {
   private readonly unsent = new Map<string, Unsent>()
   private readonly quiet = { held: 0, digests: 0 }
   private wasAway: boolean | undefined
+  /** When each session's last event was read: the progress a stuck turn lacks. */
+  private readonly lastActive = new Map<string, number>()
+  private stuckCheckedAt = 0
   private wasWhy: string | undefined
   private afkListener: ((mode: "on" | "off", until: number) => void) | undefined
   private tickedAt = 0
@@ -609,6 +617,7 @@ export class Bridge {
       sessions: () => this.activeSessions(),
       afk: () => this.afkStatus(),
       autoAll: () => this.setAllWatch("auto"),
+      interrupt: (root) => this.interruptTurn(root, "chat"),
       setAfk: (mode, span) => this.setAfkFromChat(mode, span),
       chosenCount: () => this.router.chosen().length,
       version: async () => (await this.versionSource?.()) ?? "Version: unknown",
@@ -1033,6 +1042,35 @@ export class Bridge {
     }
   }
 
+  /** An event of the session or of one of its subagents was read: the turn is making progress. */
+  activity(root: string): void {
+    this.lastActive.set(root, this.now())
+  }
+
+  /** The session is working and has had no event for `chat.stuckMinutes`; the times are rounded down to 5 minutes. */
+  private stuckOf(root: string): SessionState["stuck"] {
+    const limit = this.cfg.chat.stuckMinutes * 60_000
+    const st = this.states.get(root)
+    if (!limit || st?.state !== "working") return undefined
+    const now = this.now()
+    const quiet = now - Math.max(this.lastActive.get(root) ?? 0, st.at)
+    if (quiet < limit) return undefined
+    const down = (ms: number) => Math.floor(ms / STUCK_STEP_MS) * STUCK_STEP_MS
+    return {
+      busyMs: down(now - (st.started ?? st.at)),
+      quietMs: down(quiet),
+    }
+  }
+
+  /** Redraws the card of a session whose stuck flag appeared, went, or changed its minutes. */
+  private async stuckTick(): Promise<void> {
+    for (const [root, last] of this.lastStates) {
+      const now = this.stuckOf(root)
+      if (JSON.stringify(now) !== JSON.stringify(last.stuck))
+        await this.retrack(root)
+    }
+  }
+
   private holdUnsent(
     root: string,
     name: string,
@@ -1064,6 +1102,10 @@ export class Bridge {
     if (this.tickedAt && now - this.tickedAt > SLEEP_GAP_MS)
       this.router.slept(this.tickedAt)
     this.tickedAt = now
+    if (now - this.stuckCheckedAt >= STUCK_CHECK_MS) {
+      this.stuckCheckedAt = now
+      await this.stuckTick()
+    }
     const st = this.router.state()
     const changed = st.away !== this.wasAway || st.reason !== this.wasWhy
     if (!changed) return
@@ -1821,6 +1863,7 @@ export class Bridge {
       ...(this.unstarted.has(r.rootID) ? { unstarted: true } : {}),
       at: next.at,
       chat: this.chat.has(r.rootID),
+      stuck: this.stuckOf(r.rootID),
       watch: this.watchOf(r.rootID),
     }
     this.lastStates.set(r.rootID, s)
@@ -1851,6 +1894,7 @@ export class Bridge {
     const s: SessionState = {
       ...last,
       chat: this.chat.has(root),
+      stuck: this.stuckOf(root),
       watch: this.watchOf(root),
     }
     this.lastStates.set(root, s)
@@ -2021,6 +2065,59 @@ export class Bridge {
   }
 
   /** Switches chat from a connector on or off for a top-level session. */
+  /**
+   * Stops the session's running turn through the host, as Esc does in the TUI, once the caller
+   * has asked whoever needs asking. Says what became of the messages waiting behind it and logs
+   * the attempt with the trace id.
+   */
+  async interruptTurn(root: string, source: "chat" | "rpc"): Promise<Outcome> {
+    const trace = traces.current()?.id
+    const audit = (outcome: string, extra: Record<string, unknown> = {}) =>
+      log("interrupt", { session: root, source, trace, outcome, ...extra })
+    if (!this.host.busy(root)) {
+      audit("idle")
+      return no("This session is idle: nothing to interrupt.")
+    }
+    // Counted before the abort: what the host holds then is what stays parked, and the bridge's own
+    // held messages go out when the interrupt event arrives.
+    const held = this.held.get(root)?.items.length ?? 0
+    const parked = await this.host.queued?.(root).catch(() => undefined)
+    let stopped: boolean
+    try {
+      stopped = await this.actions.stop(root)
+    } catch (err) {
+      const why = truncate(
+        filterSecrets((err as Error).message || "unknown error"),
+        120,
+      )
+      audit("error", { message: why })
+      return no(
+        `Could not interrupt: ${why}. Try again, or press Esc in the OpenCode window.`,
+      )
+    }
+    if (!stopped) {
+      audit("not-stopped", { held, parked })
+      return no(
+        "The server stopped nothing: the turn may be running in another OpenCode process. Press Esc in that window.",
+      )
+    }
+    audit("interrupted", { held, parked })
+    const n = (k: number, what: string) => `${k} ${what}${k === 1 ? "" : "s"}`
+    return yes(
+      [
+        "⏹ Interrupted; send a message to continue.",
+        held > 0
+          ? `${n(held, "message")} waiting in the bridge go on as a new turn.`
+          : "",
+        parked
+          ? `${n(parked, "message")} wait in the session: they run with your next message, or tap ▶ Resume (/resume).`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+  }
+
   async setChat(root: string, on: boolean): Promise<Outcome> {
     if (!on) {
       this.chat.delete(root)

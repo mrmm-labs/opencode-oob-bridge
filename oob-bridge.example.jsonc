@@ -89,6 +89,8 @@
   // "chat": {
   //   // Seconds a message queued behind a busy session waits before it is steered in (0: wait for the turn to end).
   //   "queueSteerSeconds": 30,
+  //   // Minutes with no event before a working session is flagged as stuck on its status card (0: off).
+  //   "stuckMinutes": 30,
   //   "stream": true,
   //   // Shortest time between two edits of a streamed reply, in ms (800 at least).
   //   "streamMs": 1000,

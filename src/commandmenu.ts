@@ -38,6 +38,10 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
     description: "Show the overnight plan, or end it",
     needs: "night",
   },
+  {
+    command: "interrupt",
+    description: "Interrupt the running turn (asks first)",
+  },
   { command: "new", description: "Start a session in a listed project" },
   { command: "sessions", description: "Sessions mirrored here, with links" },
   { command: "projects", description: "Projects a new session can use" },

@@ -888,7 +888,7 @@ describe("commands: the menu and /undo /resume /afk /digest", () => {
       "back",
       "auto",
       "night",
-      "new",
+      "interrupt",
     ])
     assert.ok(!names(c).includes("digest"), "the digest is off")
     await r.done()

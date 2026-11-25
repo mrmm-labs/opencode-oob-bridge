@@ -45,6 +45,7 @@ async function rig(
   const clock = { t: 1_000_000 }
   const now = () => clock.t
   const resumed: string[] = []
+  const interrupted: string[] = []
   const state = { busy: o.busy ?? false }
   const host: Host = {
     session: async (id) =>
@@ -55,6 +56,10 @@ async function rig(
     replyForm: async () => {},
     prompt: async () => {},
     busy: () => state.busy,
+    interrupt: async (id: string) => {
+      interrupted.push(id)
+      return true
+    },
     ...(o.resume === "none"
       ? {}
       : {
@@ -101,6 +106,7 @@ async function rig(
     clock,
     state,
     resumed,
+    interrupted,
     enqueue,
     sends: () => tg.of("sendMessage").map((c) => c.body),
     async done() {
@@ -748,6 +754,22 @@ describe("version", () => {
       r.sends().find((b) => /Running: /.test(b.text)),
     )
     assert.match(sent.text, /restart OpenCode/)
+    await r.done()
+  })
+})
+
+describe("the interrupt op", () => {
+  it("interrupts a working session without asking, and refuses an idle one", async () => {
+    const r = await rig({ busy: true })
+    const out = await r.control.op("interrupt", { session: "root" })
+    assert.equal(out.ok, true)
+    assert.match(out.text ?? "", /Interrupted/)
+    assert.deepEqual(r.interrupted, ["root"])
+    r.state.busy = false
+    const idle = await r.control.op("interrupt", { session: "root" })
+    assert.equal(idle.ok, false)
+    assert.match(idle.text ?? "", /nothing to interrupt/)
+    assert.deepEqual(r.interrupted, ["root"])
     await r.done()
   })
 })

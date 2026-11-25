@@ -30,6 +30,7 @@ const SESSION_COMMANDS = [
   "variant",
   "status",
   "stop",
+  "interrupt",
   "chat",
   "compact",
   "rename",
@@ -85,6 +86,8 @@ export type CommandDeps = {
   afk(): string
   /** `/afk` (on) and `/back` (off): a forced mode that ends after the time, or the default. */
   setAfk(mode: "on" | "off", span?: string): Outcome
+  /** Interrupts the session's running turn, once confirmed; the result to show. */
+  interrupt(root: string): Promise<Outcome>
   /** Puts every session on auto; how many it reached. Never turns anything on. */
   autoAll(): number
   /** How many sessions have a mode of their own. */
@@ -120,12 +123,15 @@ type Flow = {
     | "new-model"
     | "prompt"
     | "undo"
+    | "interrupt"
     | "resume"
     | "auto"
     | "held"
   exp: number
   /** The session a model, agent or variant pick is for. */
   root?: string
+  /** Only the paired owner may pick. */
+  owner?: boolean
   /** The values that were offered; a pick is one of them. */
   values: string[]
   project?: string
@@ -414,6 +420,7 @@ export class Commands {
           "/variant (/effort): pick the model's effort variant",
           "/status: redraw and pin the status card",
           "/stop: stop the running turn",
+          "/interrupt: interrupt the running turn (asks first)",
           "/undo: revert the last turn (asks first)",
           "/resume: wake this session if it is stuck",
           "/afk: who counts as away (read only)",
@@ -472,7 +479,11 @@ export class Commands {
       values: choices.map((c) => c.value),
       ...extra,
     })
-    return { ok: true, text: title, menu: { id, choices } }
+    return {
+      ok: true,
+      text: title,
+      menu: { id, choices, ...(extra.owner ? { owner: true } : {}) },
+    }
   }
 
   private flow(f: Omit<Flow, "exp">): string {
@@ -541,6 +552,27 @@ export class Commands {
         info,
         "applied",
         yes(stopped ? "⏹ Stopped the running turn." : "Nothing is running."),
+      )
+    }
+    if (name === "interrupt") {
+      if (!this.d.host.busy(root))
+        return this.done(
+          info,
+          "invalid",
+          no("This session is idle: nothing to interrupt."),
+        )
+      return this.done(
+        info,
+        "applied",
+        this.menu(
+          "interrupt",
+          "Interrupt the running turn?",
+          [
+            { label: "yes", value: "yes" },
+            { label: "no", value: "no" },
+          ],
+          { root, owner: true },
+        ),
       )
     }
     if (name === "undo") {
@@ -829,6 +861,10 @@ export class Commands {
       const blocked = await this.gate(f.root, info)
       if (blocked) return blocked
       if (f.kind === "held") return this.applyHeld(f, value, info)
+      if (f.kind === "interrupt")
+        return value === "yes"
+          ? this.done(info, "applied", await this.d.interrupt(f.root!))
+          : this.done(info, "cancelled", yes("Left running."))
       if (f.kind === "undo")
         return value === "undo"
           ? this.applyUndo(f.root, info)

@@ -251,6 +251,7 @@ const SHARED = "agents/"
 const TAG_MAX = 60
 const SHARED_HINT =
   "This topic is shared by agents with no topic of their own. Reply to one agent's message to write to it."
+const OWNER_ONLY = "Only the paired owner can interrupt a turn."
 /** After an update from the paired chat, the connector may answer it while the person counts as present. */
 const ANSWER_WINDOW_MS = 30_000
 
@@ -425,7 +426,7 @@ export class TelegramConnector implements Connector {
   /** Menus on screen: the choices and the page shown. */
   private readonly menus = new Map<
     string,
-    { choices: Menu["choices"]; page: number }
+    { choices: Menu["choices"]; page: number; owner?: boolean }
   >()
   /** Force-reply questions of a command: message id to the question's id. */
   private readonly asks = new Map<string, string>()
@@ -1045,6 +1046,8 @@ export class TelegramConnector implements Connector {
       }
       // The Stop button appears and goes away at once.
       if (
+        (!!live.want.chat && live.want.state === "working") !==
+          (!!state.chat && state.state === "working") ||
         !!live.want.chat !== !!state.chat ||
         JSON.stringify(live.want.watch) !== JSON.stringify(state.watch)
       )
@@ -1127,7 +1130,7 @@ export class TelegramConnector implements Connector {
       const text = renderStatus(s, topic.icon)
       if (topic.cardText !== text && due(live.editedAt, CARD_GAP_MS)) {
         live.editedAt = now
-        await this.card(topic, text, !!s.chat, s.id)
+        await this.card(topic, text, !!s.chat, s.id, s.state === "working")
       }
     }
     await this.appMessage(key, s.id)
@@ -1246,11 +1249,19 @@ export class TelegramConnector implements Connector {
     text: string,
     chat: boolean,
     sessionID: string,
+    busy = false,
   ): Promise<void> {
     // Always sent: an edit without it would keep the old button.
     const open = this.openButton(sessionID)
     const reply_markup = {
       inline_keyboard: [
+        ...(busy && chat
+          ? [
+              [
+                { text: "⏹ Interrupt", callback_data: "ctl:interrupt" },
+              ] as Button[],
+            ]
+          : []),
         ...(chat
           ? [
               [
@@ -2158,6 +2169,12 @@ export class TelegramConnector implements Connector {
     return true
   }
 
+  /** Whether a Telegram user is the paired owner. Nobody is when the owner is not known. */
+  private isOwner(from?: { id: number }): boolean {
+    const op = this.operator()
+    return op !== undefined && from !== undefined && String(from.id) === op
+  }
+
   operator(): string | undefined {
     if (this.userId !== undefined) return this.userId
     // The id of a private chat is the id of its person.
@@ -2289,6 +2306,27 @@ export class TelegramConnector implements Connector {
         inline: true,
       })
     }
+    if (cb.data === "ctl:interrupt") {
+      if (!this.isOwner(cb.from)) {
+        this.note("refused", "interrupt: not the owner")
+        return this.toast(cb.id, OWNER_ONLY)
+      }
+      const sessionKey = await this.sessionAt(cb.message.message_thread_id)
+      if (!sessionKey) return this.toast(cb.id, "Unknown session.")
+      await this.toast(cb.id)
+      const out = await this.onInbound?.({
+        kind: "command",
+        id: "cb" + cb.id,
+        time: Math.floor(Date.now() / 1000),
+        sessionKey,
+        text: "/interrupt",
+        command: { name: "interrupt", args: "" },
+        from: { connector: this.id, chat: String(cb.message.chat.id) },
+        inline: true,
+      })
+      if (out) await this.deliver(cb.message.message_thread_id, out)
+      return
+    }
     const ctl = /^ctl:(resume|diff|continue|qa|update|stop)$/.exec(
       cb.data ?? "",
     )
@@ -2371,6 +2409,11 @@ export class TelegramConnector implements Connector {
   ): Promise<void> {
     // "/cmd@otherbot" is for another bot sharing the group.
     if (to && !(await this.isMe(to))) return
+    if (name.toLowerCase() === "interrupt" && !this.isOwner(m.from)) {
+      this.note("refused", "interrupt: not the owner")
+      await this.deliver(m.message_thread_id, { ok: false, text: OWNER_ONLY })
+      return
+    }
     const sessionKey = await this.sessionAt(m.message_thread_id)
     const out = await this.onInbound?.({
       ...base,
@@ -2413,10 +2456,11 @@ export class TelegramConnector implements Connector {
       const text = renderStatus(live.want, topic.icon)
       topic.cardText = undefined
       live.editedAt = this.now()
-      await this.card(topic, text, !!live.want.chat, sessionID)
+      const busy = live.want.state === "working"
+      await this.card(topic, text, !!live.want.chat, sessionID, busy)
       // A card gone from Telegram was made again, and pinned, by the call above.
       if (topic.card === undefined)
-        await this.card(topic, text, !!live.want.chat, sessionID)
+        await this.card(topic, text, !!live.want.chat, sessionID, busy)
       else
         await this.call("pinChatMessage", {
           chat_id: this.chatId,
@@ -2484,7 +2528,11 @@ export class TelegramConnector implements Connector {
       }
       if (out.menu) {
         this.bound(this.menus)
-        this.menus.set(out.menu.id, { choices: out.menu.choices, page: 0 })
+        this.menus.set(out.menu.id, {
+          choices: out.menu.choices,
+          page: 0,
+          owner: out.menu.owner,
+        })
         const sent = await this.call<{ message_id: number }>("sendMessage", {
           ...msg,
           reply_markup: this.menuKeyboard(out.menu.id, out.menu.choices, 0),
@@ -2570,6 +2618,10 @@ export class TelegramConnector implements Connector {
       await this.toast(cb.id, "That menu expired: send the command again.")
       await clear()
       return
+    }
+    if (menu.owner && !this.isOwner(cb.from)) {
+      this.note("refused", "interrupt: not the owner")
+      return this.toast(cb.id, OWNER_ONLY)
     }
     if (act === "n") return this.toast(cb.id)
     if (act.startsWith("p")) {

@@ -814,6 +814,12 @@ export class Control {
               (span ?? Math.round(router.overrideMs() / 60_000) + "m"),
           })
         }
+        case "interrupt": {
+          const target = str(args.session) ?? root
+          if (!target) return fail("interrupt needs a session")
+          const out = await bridge.interruptTurn(target, "rpc")
+          return this.done({ ok: out.ok, text: out.text })
+        }
         case "route": {
           const mode = args.mode
           if (!root || (mode !== "on" && mode !== "off" && mode !== "auto"))
