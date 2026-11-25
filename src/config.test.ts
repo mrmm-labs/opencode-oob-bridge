@@ -294,6 +294,7 @@ describe("parseConfig channels", () => {
       streamBudget: 30,
       delivery: "queue",
       queueSteerSeconds: 30,
+      stuckMinutes: 30,
       redact: { mode: "full" },
       projects: {},
       models: [],
@@ -307,6 +308,16 @@ describe("parseConfig channels", () => {
       { mode: "title" },
     )
     assert.ok("error" in parseConfig({ ...base, chat: { redact: "half" } }))
+    for (const bad of [-1, 1.5, "30", 10_081])
+      assert.ok(
+        "error" in parseConfig({ ...base, chat: { stuckMinutes: bad } }),
+        String(bad),
+      )
+    assert.equal(
+      (parseConfig({ ...base, chat: { stuckMinutes: 0 } }) as Config).chat
+        .stuckMinutes,
+      0,
+    )
     const c = parseConfig({
       ...base,
       chat: {

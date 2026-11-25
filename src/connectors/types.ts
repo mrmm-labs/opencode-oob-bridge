@@ -128,6 +128,8 @@ export type SessionState = {
   at: number
   /** Chatting with this session from the connector is on. */
   chat?: boolean
+  /** Working with no event for the configured time: how long it has worked and gone quiet, in ms. */
+  stuck?: { busyMs: number; quietMs: number }
   /** Whether the session is mirrored: forced on through a channel, by the away rule, or off. */
   watch?: { mode: "on" | "off" | "auto"; channel: string; minutes: number }
 }
@@ -201,6 +203,8 @@ export type Inbound = {
 
 /** Choices to tap. The connector pages them; what comes back is always one of `choices`. */
 export type Menu = {
+  /** Only the paired owner may tap a choice. */
+  owner?: boolean
   id: string
   choices: Array<{ label: string; value: string; current?: boolean }>
 }

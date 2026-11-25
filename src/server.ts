@@ -72,6 +72,20 @@ const WATCH = [
   "session.viewed",
 ]
 
+/**
+ * Read only to see that a turn is alive: not passed to the core API or the bridge. A turn stuck on
+ * one call makes none of these; a long, healthy one makes some.
+ */
+const ACTIVITY = [
+  "session.tool.called",
+  "session.tool.progress",
+  "session.tool.success",
+  "session.tool.failed",
+  "session.step.started",
+  "session.step.ended",
+  "session.reasoning.delta",
+]
+
 const RESUME_TEXT =
   "Continue from where you left off: messages are waiting in your inbox. This was started from the chat bridge."
 const FORM_WAIT_MS = 10_000
@@ -248,6 +262,7 @@ export function serverHost(
   canReplyForm?: () => boolean | Promise<boolean>,
   requestState?: Host["requestState"],
   openRequests?: Host["openRequests"],
+  queued?: Host["queued"],
 ): Host {
   return {
     async session(id) {
@@ -271,6 +286,7 @@ export function serverHost(
     canReplyForm,
     requestState,
     openRequests,
+    queued,
     replyPermission: (sessionID, requestID, decision) =>
       ctx.permission.reply({ sessionID, requestID, decision } as never),
     prompt: async (sessionID, text, delivery, files) => {
@@ -541,6 +557,7 @@ async function boot(
     async () => control.pickTui() !== undefined || (await service.ready()),
     (kind, sessionID, requestID) => service.state(kind, sessionID, requestID),
     (kind, sessionID) => service.open(kind, sessionID),
+    (sessionID) => service.queued(sessionID),
   )
   const digest = new DigestLog(join(dir, "digest.jsonl"))
   await digest.load()
@@ -662,12 +679,11 @@ async function boot(
       let seen = 0
       try {
         for await (const e of ctx.event.subscribe({
-          types: [...EVENTS, ...WATCH] as never,
+          types: [...EVENTS, ...WATCH, ...ACTIVITY] as never,
           signal: ac.signal,
         })) {
           seen++
           const ev = e as unknown as { type: string; data?: unknown }
-          control.onEvent(ev)
           const d = (isObject(ev.data) ? ev.data : {}) as Record<
             string,
             unknown
@@ -677,6 +693,13 @@ async function boot(
             (typeof d.sessionID === "string" && d.sessionID) ||
             (typeof form.sessionID === "string" && form.sessionID) ||
             undefined
+          if (id)
+            void sessions
+              .ensure(id)
+              .then(() => bridge.activity(sessions.root(id)))
+              .catch(() => {})
+          if ((ACTIVITY as string[]).includes(ev.type)) continue
+          control.onEvent(ev)
           dispatch(ev, id || undefined)
         }
         if (!ac.signal.aborted)

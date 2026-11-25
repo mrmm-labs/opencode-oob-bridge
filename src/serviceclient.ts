@@ -17,6 +17,7 @@ type Api = {
     list?(i: { sessionID: string }): Promise<Listed>
   }
   session: {
+    inbox?: { list?(i: { sessionID: string }): Promise<Listed> }
     form: {
       list?(i: { sessionID: string }): Promise<Listed>
       get(i: {
@@ -48,6 +49,8 @@ export type ServiceClient = {
     kind: "question" | "permission",
     sessionID: string,
   ): Promise<Set<string> | undefined>
+  /** How many messages wait in the session's inbox. Undefined when the service cannot say. */
+  queued(sessionID: string): Promise<number | undefined>
   /**
    * What the service says of a form or permission request: still `open`, or already `answered` or
    * `cancelled` (a request it no longer has counts as answered). Undefined when it cannot say.
@@ -126,6 +129,17 @@ export function serviceClient(
         const tag = (err as { _tag?: string })._tag
         // A session the service no longer has holds nothing open.
         return tag === "SessionNotFoundError" ? new Set() : undefined
+      }
+    },
+    async queued(sessionID) {
+      const a = await api()
+      if (!a?.session.inbox?.list) return undefined
+      try {
+        const out = await a.session.inbox.list({ sessionID })
+        const items = Array.isArray(out) ? out : out?.items
+        return Array.isArray(items) ? items.length : undefined
+      } catch {
+        return undefined
       }
     },
     async state(kind, sessionID, requestID) {

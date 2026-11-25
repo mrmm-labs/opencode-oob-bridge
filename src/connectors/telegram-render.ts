@@ -225,9 +225,22 @@ export function renderStatus(s: SessionState, icon?: string): string {
     ...(agent ? [`🤖 ${fit(clean(agent), 120)}`] : []),
     `📁 ${fit(clean(s.project), 80)}${icon ? ` ${icon}` : ""}`,
     `🆔 <code>${esc(s.id.slice(-6))}</code>`,
+    ...(s.stuck
+      ? [
+          `⚠ Busy for ${span(s.stuck.busyMs)}, no progress for ${span(s.stuck.quietMs)}`,
+        ]
+      : []),
     ...(s.watch ? [watchLine(s.watch)] : []),
     `🕐 ${at}`,
   ].join("\n")
+}
+
+/** A length of time in words, to the minute: `45 min`, `2 h 5 min`. */
+export function span(ms: number): string {
+  const m = Math.max(1, Math.floor(ms / 60_000))
+  return m < 60
+    ? `${m} min`
+    : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`
 }
 
 /** A turn card: the header, and the summary and files in a block Telegram shows collapsed. */
