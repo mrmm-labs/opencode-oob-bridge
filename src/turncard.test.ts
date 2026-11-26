@@ -265,7 +265,7 @@ describe("turn card: buttons", () => {
     await r.tg.waitFor(() => r.cards()[0])
     tap(r, "ctl:update")
     const a = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.match(a.body.text, /→ sent/)
+    assert.match(a.body.text, /⏳ Update sent to /)
     assert.equal(r.state.prompts.length, 1)
     assert.match(r.state.prompts[0], /^Give a short progress update now:/)
     await r.done()
@@ -279,7 +279,7 @@ describe("turn card: buttons", () => {
     assert.deepEqual(keys(c), ["Diff", "Continue", "QA", "Update", "Stop"])
     tap(r, "ctl:qa")
     const a = await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[0])
-    assert.match(a.body.text, /→ sent/)
+    assert.match(a.body.text, /⏳ QA sent to /)
     assert.equal(r.state.prompts.length, 1)
     assert.match(
       r.state.prompts[0],
@@ -296,9 +296,13 @@ describe("turn card: buttons", () => {
     assert.deepEqual(keys(c), ["Diff", "Stop"])
     tap(off, "ctl:qa")
     tap(off, "ctl:update")
-    await off.tg.waitFor(() => off.tg.of("answerCallbackQuery")[1])
-    for (const a of off.tg.of("answerCallbackQuery"))
-      assert.match(a.body.text, /Chat is off/)
+    await off.tg.waitFor(
+      () =>
+        off.tg
+          .of("sendMessage")
+          .filter((c) => /not delivered: Chat is off/.test(c.body.text))
+          .length >= 2 || undefined,
+    )
     assert.deepEqual(off.state.prompts, [])
     await off.done()
     const r = await rig()

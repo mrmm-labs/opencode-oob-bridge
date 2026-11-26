@@ -429,16 +429,19 @@ describe("chat from Telegram: deny list and the Stop button", () => {
     await r.tg.waitFor(() => r.prompts[1])
     assert.match(r.prompts[1].text, /^Give a short progress update now:/)
     await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[1])
-    assert.deepEqual(
-      r.tg.of("answerCallbackQuery").map((c) => c.body.text),
-      ["→ sent", "→ sent"],
-    )
+    const toasts = r.tg.of("answerCallbackQuery").map((c) => c.body.text)
+    assert.match(toasts[0], /^⏳ QA sent to /)
+    assert.match(toasts[1], /^⏳ Update sent to /)
     assert.equal(r.prompts.length, 2)
     r.tg.callback(CHAT, 503, "chatoff", 9001)
     await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[2])
     r.tg.callback(CHAT, 504, "ctl:update", 9001)
     await r.tg.waitFor(() => r.tg.of("answerCallbackQuery")[3])
-    assert.match(r.tg.of("answerCallbackQuery")[3].body.text, /Chat is off/)
+    await r.tg.waitFor(() =>
+      r.tg
+        .of("sendMessage")
+        .find((c) => /Update not delivered: Chat is off/.test(c.body.text)),
+    )
     assert.equal(r.prompts.length, 2)
     await r.done()
   })

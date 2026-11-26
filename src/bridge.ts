@@ -2566,13 +2566,27 @@ export class Bridge {
           : no("Nothing is running.")
       if (what === "continue") {
         if (!this.chat.has(root)) return no("Chat is off for this session.")
-        await this.actions.prompt(root, "continue", this.delivery(root))
-        return yes("Sent: continue.")
+        const busy = this.host.busy(root)
+        const delivery = this.delivery(root)
+        await this.actions.prompt(root, "continue", delivery)
+        return {
+          ...yes("Sent: continue."),
+          sent: true,
+          delivered: {
+            how: busy ? (delivery === "steer" ? "steered" : "queued") : "sent",
+          },
+        }
       }
       if (what === "qa" || what === "update") {
+        const busy = this.host.busy(root)
         const r = await this.actions.run(what, root, {})
-        if (r.ok) this.remote.add(root)
-        return r
+        if (!r.ok) return no(r.text)
+        this.remote.add(root)
+        return {
+          ...yes(r.text),
+          sent: true,
+          delivered: { how: busy ? "steered" : "sent" },
+        }
       }
       const files = await this.actions.diffFiles(root)
       if (files === undefined)
@@ -3046,12 +3060,42 @@ export class Bridge {
     ) {
       info.root = root
       info.outcome = "applied"
-      return this.cardButton(ch, root, m.text)
+      return this.within(this.cardButton(ch, root, m.text))
     }
     if (m.text !== "chat off") return undefined
     info.root = root
     info.outcome = "applied"
     return this.setChat(root, false)
+  }
+
+  /** How long a card button's work may take before the tap is reported as unanswered. */
+  cardDeadlineMs = 12_000
+
+  /** The work of a card button, or a failed outcome when it throws or the host does not answer in time. */
+  private async within(work: Promise<Outcome>): Promise<Outcome> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<Outcome>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve(
+            no(
+              `No answer from OpenCode in ${Math.round(this.cardDeadlineMs / 1000)} s. It may still arrive.`,
+            ),
+          ),
+        this.cardDeadlineMs,
+      )
+      timer.unref?.()
+    })
+    try {
+      return await Promise.race([
+        work.catch((err: Error) =>
+          no(truncate(filterSecrets(err.message || "unknown error"), 160)),
+        ),
+        late,
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**

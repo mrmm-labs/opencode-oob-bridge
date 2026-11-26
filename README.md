@@ -533,6 +533,8 @@ With `digest` set, one message goes out once a day at `digest.at`: what finished
 
 When a turn of a mirrored session ends and it changed a file, or ran at least `turnCard.minSeconds`, the bot posts one card in the topic. The first line is always visible: `✅ Done · 14 files · +320 −41 · 3m12s`. The last paragraph of the final reply and the changed files (15, then "+N more") sit in a block Telegram shows collapsed. Under it: **Diff** sends up to three images of the diff and the patch as a file (see below), **Continue** sends `continue` to the session (left out when chat is off), **QA** and **Update** do what `/qa` and `/update` do with no topic (also left out when chat is off), **Stop** interrupts the running turn. A new card, or an hour, takes the buttons off the old one. Counts are what the turn changed in the working tree; when the tree cannot be read the card shows no counts. Subagent turns get no card, and a channel that cannot fold gets the first line and a short summary.
 
+**Card buttons answer at once.** A tap on QA, Update or Continue is answered with a toast ("⏳ QA sent to <topic>") the moment it arrives, before any work. The state then shows as a reaction on the tapped message: sent, steered (the session was working), queued (Continue behind a busy turn) or failed. A failure, or no answer from OpenCode within 12 s, also posts a line in the topic with the reason. Stop, Resume and Diff keep their result toast. Taps of a topic run one after the other and never wait for its messages. Each tap's `telegram_inbound` log line carries `action`, `result` and `ack_ms`.
+
 ### Commands
 
 The bot registers one command list for the paired chat (Telegram has no per-topic menu), so it
