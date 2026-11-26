@@ -251,6 +251,19 @@ const SHARED = "agents/"
 const TAG_MAX = 60
 const SHARED_HINT =
   "This topic is shared by agents with no topic of their own. Reply to one agent's message to write to it."
+const CARD_TAP = /^ctl:(resume|diff|continue|qa|update|stop)$/
+/** The buttons that send the session a message: their state shows on the tapped message. */
+const SENDS = /^ctl:(continue|qa|update)$/
+const TAP_LABEL: Record<string, string> = {
+  qa: "QA",
+  update: "Update",
+  continue: "Continue",
+}
+
+/** The toast of a button that sends a message, shown before its work starts. */
+const tapPending = (action: string, name: string) =>
+  `⏳ ${TAP_LABEL[action] ?? action} sent to ${name}`
+
 const OWNER_ONLY = "Only the paired owner can interrupt a turn."
 /** After an update from the paired chat, the connector may answer it while the person counts as present. */
 const ANSWER_WINDOW_MS = 30_000
@@ -1674,15 +1687,18 @@ export class TelegramConnector implements Connector {
     return rec
   }
 
+  /** Taps and messages of a topic have lanes of their own: a tap never waits for a message. */
   private laneOf(u: Update): string {
     const m = u.message ?? u.callback_query?.message
-    return `${m?.chat.id}:${m?.message_thread_id ?? 0}`
+    return `${m?.chat.id}:${m?.message_thread_id ?? 0}${u.callback_query ? ":tap" : ""}`
   }
 
   /** Runs the update after the ones before it in its topic; the poll loop never waits for it. */
   private dispatch(u: Update, attempt: number): void {
+    const ack = attempt === 0 ? this.earlyAck(u) : undefined
     const lane = this.laneOf(u)
     const next = (this.lanes.get(lane) ?? Promise.resolve())
+      .then(() => ack)
       .then(() => this.handle(u, attempt))
       .catch((err) =>
         log("telegram_update_error", {
@@ -1694,6 +1710,64 @@ export class TelegramConnector implements Connector {
         if (this.lanes.get(lane) === next) this.lanes.delete(lane)
       })
     this.lanes.set(lane, next)
+  }
+
+  /** A card button is answered the moment it arrives, before it waits in its lane or does any work. */
+  private async earlyAck(u: Update): Promise<void> {
+    const cb = u.callback_query
+    const action = SENDS.exec(cb?.data ?? "")?.[1]
+    if (!cb?.message || !action || String(cb.message.chat.id) !== this.chatId)
+      return
+    try {
+      // An unknown topic is left to the handler, which says so.
+      if (!(await this.sessionAt(cb.message.message_thread_id))) return
+      const name = await this.topicName(cb.message.message_thread_id)
+      await this.toast(cb.id, tapPending(action, name))
+      const rec = this.recs.get(u.update_id) ?? this.begin(u)
+      traces.annotate({ extra: { ack_ms: this.now() - rec.startedAt } }, rec)
+    } catch (err) {
+      this.fail(err)
+    }
+  }
+
+  /** The name of the session's topic, from the local map only. */
+  private async topicName(thread?: number): Promise<string> {
+    if (thread === undefined || !this.chatId) return "the session"
+    this.topics ??= await this.loadTopics()
+    const prefix = `${this.chatId}:`
+    for (const [k, t] of this.topics)
+      if (
+        t.thread === thread &&
+        k.startsWith(prefix) &&
+        !k.startsWith(prefix + SHARED)
+      )
+        return t.name ?? "the session"
+    return "the session"
+  }
+
+  /** What a card button did: its state on the tapped message, a line in the topic when it failed, and the log. */
+  private async tapped(
+    cb: NonNullable<Update["callback_query"]>,
+    action: string,
+    out: Outcome | undefined,
+  ): Promise<void> {
+    const failed = out?.ok === false
+    const result = failed
+      ? "failed"
+      : (out?.delivered?.how ?? (out?.sent ? "sent" : "done"))
+    traces.annotate({
+      extra: { action, result },
+      ...(failed
+        ? { outcome: "failed", reason: truncate(filterSecrets(out.text), 200) }
+        : {}),
+    })
+    const id = cb.message?.message_id
+    if (id !== undefined) void this.react(id, result)
+    if (failed)
+      await this.deliver(cb.message?.message_thread_id, {
+        ok: false,
+        text: `⚠ ${TAP_LABEL[action] ?? action} not delivered: ${out.text}`,
+      })
   }
 
   private kindOf(u: Update): string {
@@ -2327,13 +2401,11 @@ export class TelegramConnector implements Connector {
       if (out) await this.deliver(cb.message.message_thread_id, out)
       return
     }
-    const ctl = /^ctl:(resume|diff|continue|qa|update|stop)$/.exec(
-      cb.data ?? "",
-    )
+    const ctl = CARD_TAP.exec(cb.data ?? "")
     if (ctl) {
       const sessionKey = await this.sessionAt(cb.message.message_thread_id)
       if (!sessionKey) return this.toast(cb.id, "Unknown session.")
-      return this.answer(cb.id, {
+      const inbound: Inbound = {
         kind: "control",
         id: "cb" + cb.id,
         time: Math.floor(Date.now() / 1000),
@@ -2341,7 +2413,14 @@ export class TelegramConnector implements Connector {
         text: ctl[1],
         from: { connector: this.id, chat: String(cb.message.chat.id) },
         inline: true,
-      })
+      }
+      if (!SENDS.test(cb.data ?? "")) return this.answer(cb.id, inbound)
+      // Already answered on arrival; this answers a tap that was not.
+      await this.toast(
+        cb.id,
+        tapPending(ctl[1], await this.topicName(cb.message.message_thread_id)),
+      )
+      return this.tapped(cb, ctl[1], await this.onInbound?.(inbound))
     }
     if (/^s:[A-Za-z0-9]+:/.test(cb.data ?? "")) {
       log("form_select", { outcome: "moved" })
@@ -3245,7 +3324,13 @@ export class TelegramConnector implements Connector {
     }
   }
 
+  private readonly answered = new Set<string>()
+
   private async toast(callbackID: string, text?: string): Promise<void> {
+    if (this.answered.has(callbackID)) return
+    this.answered.add(callbackID)
+    while (this.answered.size > 200)
+      this.answered.delete(this.answered.values().next().value!)
     try {
       await this.call("answerCallbackQuery", {
         callback_query_id: callbackID,
