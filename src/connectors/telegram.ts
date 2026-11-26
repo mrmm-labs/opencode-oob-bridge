@@ -1086,7 +1086,21 @@ export class TelegramConnector implements Connector {
     return out
   }
 
-  private async saveTopics(): Promise<void> {
+  private saveChain: Promise<void> = Promise.resolve()
+
+  /** Resolves when the saves started so far have been written. */
+  settled(): Promise<void> {
+    return this.saveChain
+  }
+
+  /** Saves one after the other: two writes of the file at once interleave and corrupt it. */
+  private saveTopics(): Promise<void> {
+    const run = this.saveChain.then(() => this.writeTopics())
+    this.saveChain = run
+    return run
+  }
+
+  private async writeTopics(): Promise<void> {
     const file = this.opts.topicsFile
     if (!file || !this.topics) return
     try {

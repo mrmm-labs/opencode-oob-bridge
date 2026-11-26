@@ -97,6 +97,7 @@ async function rig(
     } as unknown as BridgeEvent)
   return {
     tg,
+    channel,
     bridge,
     busy,
     table,
@@ -105,6 +106,11 @@ async function rig(
     closes: () => tg.of("closeForumTopic").map((c) => c.body.message_thread_id),
     reopens: () =>
       tg.of("reopenForumTopic").map((c) => c.body.message_thread_id),
+    /** The topics file once every save has landed. */
+    async saved() {
+      await channel.settled()
+      return JSON.parse(await readFile(topicsFile, "utf8"))
+    },
     async quiet() {
       await new Promise((r) => setTimeout(r, 300))
     },
@@ -165,7 +171,7 @@ describe("the sweep at start", () => {
       await r.tg.waitFor(() => r.closes().length >= 2 || undefined)
       await r.quiet()
       assert.deepEqual(r.closes().sort(), [11, 12])
-      const saved = JSON.parse(await readFile(r.topicsFile, "utf8"))
+      const saved = await r.saved()
       assert.equal(saved[key("ses_a")].closed, true)
       assert.equal(saved[key("ses_viewed")].closed, undefined)
       assert.equal(r.tg.of("editForumTopic").length, 0, "no rename")
@@ -208,13 +214,35 @@ describe("the sweep at start", () => {
       r.tg.fail("closeForumTopic", 400, { description: "not enough rights" })
       await r.tg.waitFor(() => r.closes()[0])
       await r.quiet()
-      const saved = JSON.parse(await readFile(r.topicsFile, "utf8"))
+      const saved = await r.saved()
       assert.equal(saved[key("ses_a")].closed, undefined)
       assert.ok(
         (await lines()).some((l) => l.event === "telegram_topic_close_failed"),
       )
       await r.done()
     })
+  })
+})
+
+describe("the topics file", () => {
+  it("stays valid when many saves run at once", async () => {
+    const r = await rig({ sessions: [] })
+    const ch = r.channel as unknown as {
+      topics?: Map<string, { thread: number; name?: string }>
+      loadTopics(): Promise<Map<string, { thread: number; name?: string }>>
+      saveTopics(): Promise<void>
+    }
+    ch.topics = await ch.loadTopics()
+    // A long snapshot saved, then a short one: unserialized writes leave the long one's tail.
+    for (let i = 0; i < 40; i++) {
+      ch.topics.set(key("big"), { thread: 1, name: "x".repeat(60_000) })
+      const long = ch.saveTopics()
+      ch.topics.delete(key("big"))
+      const short = ch.saveTopics()
+      await Promise.all([long, short])
+      JSON.parse(await readFile(r.topicsFile, "utf8"))
+    }
+    await r.done()
   })
 })
 
@@ -231,7 +259,7 @@ describe("a session that ends", () => {
       await r.ev("session.execution.started", "ses_a")
       await r.tg.waitFor(() => r.reopens()[0])
       assert.deepEqual(r.reopens(), [thread])
-      const saved = JSON.parse(await readFile(r.topicsFile, "utf8"))
+      const saved = await r.saved()
       assert.equal(saved[key("ses_a")].closed, undefined)
       const events = (await lines())
         .filter((l) => /^telegram_topic_(closed|reopened)$/.test(l.event))
