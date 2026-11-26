@@ -94,11 +94,26 @@ describe("parseConfig", () => {
       })
     const topicsOf = (c: unknown) =>
       (opts(c as Config, "telegram") as { topics: unknown }).topics
-    assert.deepEqual(topicsOf(tg(undefined)), { headless: "project" })
-    assert.deepEqual(topicsOf(tg({})), { headless: "project" })
+    assert.deepEqual(topicsOf(tg(undefined)), {
+      headless: "project",
+      closeHeadless: true,
+    })
+    assert.deepEqual(topicsOf(tg({})), {
+      headless: "project",
+      closeHeadless: true,
+    })
     assert.deepEqual(topicsOf(tg({ headless: "session" })), {
       headless: "session",
+      closeHeadless: true,
     })
+    assert.deepEqual(topicsOf(tg({ closeHeadless: false })), {
+      headless: "project",
+      closeHeadless: false,
+    })
+    assert.match(
+      (tg({ closeHeadless: "no" }) as { error: string }).error,
+      /topics\.closeHeadless must be true or false/,
+    )
     for (const bad of [{ headless: "all" }, { headless: true }, "project"])
       assert.ok("error" in tg(bad), JSON.stringify(bad))
     assert.match(
@@ -207,7 +222,7 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: true,
       rate: { gapMs: 1100, perMinute: 18 },
-      topics: { headless: "project" },
+      topics: { headless: "project", closeHeadless: true },
       draft: false,
       notify: {},
       icons: {},
@@ -260,7 +275,7 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: false,
       rate: { gapMs: 1100, perMinute: 18 },
-      topics: { headless: "project" },
+      topics: { headless: "project", closeHeadless: true },
       draft: false,
       notify: { finished: true, failed: undefined },
       icons: { "^coord": "🎯" },

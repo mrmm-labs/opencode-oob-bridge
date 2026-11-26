@@ -818,6 +818,7 @@ export class Bridge {
     for (const ch of this.channels) ch.silence?.(() => this.quietNow())
     for (const ch of this.channels) ch.mute?.(() => !this.router.away())
     for (const ch of this.channels) ch.home?.((id) => this.homeOf(id))
+    void this.sweepTopics()
     this.wasAway = this.router.away()
     this.wasWhy = this.router.state().reason
     this.tickedAt = this.now()
@@ -994,7 +995,8 @@ export class Bridge {
         case "session.execution.interrupted":
           void this.release(e.data.sessionID, "free")
           await this.endTurn(e.data.sessionID)
-          return await this.onState(e.data.sessionID, "idle")
+          await this.onState(e.data.sessionID, "idle")
+          return void this.closeIdle(e.data.sessionID, "ended")
         case "session.text.delta":
           return await this.onText(e.data, e.data.delta)
         case "session.text.ended":
@@ -1002,10 +1004,11 @@ export class Bridge {
         case "session.execution.succeeded":
         case "session.execution.failed":
           void this.release(e.data.sessionID, "free")
-          return await this.onFinished(
+          await this.onFinished(
             e.data.sessionID,
             e.type === "session.execution.failed",
           )
+          return void this.closeIdle(e.data.sessionID, "ended")
         case "session.renamed":
           return await this.onState(e.data.sessionID, undefined, {
             title: e.data.title,
@@ -1299,6 +1302,45 @@ export class Bridge {
       key: project,
       name: `${project} · agents`,
       tag: title || rootID.slice(-6),
+    }
+  }
+
+  /** Whether a session is headless and idle: no parent, never viewed, no chat, not working, nothing waiting on it. */
+  private async idleHeadless(root: string): Promise<boolean> {
+    if (this.chat.has(root)) return false
+    if (
+      this.store
+        .list()
+        .some((p) => p.state === "pending" && p.rootSessionID === root)
+    )
+      return false
+    const info = await this.host.session(root)
+    if (!info || info.parentID || info.viewed !== false) return false
+    return !this.host.busy(root)
+  }
+
+  /** Closes the topic of a headless session that is idle, on every channel that keeps one. Never throws. */
+  private async closeIdle(id: string, why: "start" | "ended"): Promise<void> {
+    try {
+      const root = this.host.root(id)
+      if (root !== id && why === "start") return
+      if (!this.active().some((c) => c.closeTopic)) return
+      if (!(await this.idleHeadless(root))) return
+      for (const c of this.active())
+        await this.safely(c, async () => c.closeTopic?.(root, why))
+    } catch (err) {
+      log("topic_close_error", {
+        session: id,
+        message: filterSecrets((err as Error).message),
+      })
+    }
+  }
+
+  /** Once at start: closes the topics already kept whose session is headless and idle. */
+  async sweepTopics(): Promise<void> {
+    for (const c of this.active()) {
+      const ids = await this.safely(c, async () => c.topicSessions?.())
+      for (const id of ids ?? []) await this.closeIdle(id, "start")
     }
   }
 
