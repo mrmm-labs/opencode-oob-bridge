@@ -328,14 +328,19 @@ export class Control {
     return best?.[0]
   }
 
-  /** A TUI is alive; `inputAt` is when its operator last typed or clicked. */
+  /** An input that is not a TUI's heartbeat: the app on the phone, or a local client. */
+  activity(source: "app" | "rpc"): void {
+    this.o.router.input(source)
+  }
+
+  /** A TUI is alive; `inputAt`, when it has one, is when its operator last used it. */
   heartbeat(tui: string, inputAt?: number, version?: string): void {
     const before = this.attached()
     this.tuis.set(tui, this.now())
     if (typeof version === "string" && version)
       this.tuiVersions.set(tui, version.slice(0, 40))
-    if (inputAt !== undefined && Number.isFinite(inputAt))
-      this.o.router.touch(Math.min(inputAt, this.now()))
+    if (inputAt !== undefined && Number.isFinite(inputAt) && inputAt > 0)
+      this.o.router.input("tui", Math.min(inputAt, this.now()))
     if (before !== this.attached()) this.o.bridge.notify()
   }
 

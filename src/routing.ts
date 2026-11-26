@@ -116,10 +116,34 @@ export type Reason =
   | "no-tui"
   | "input"
 
-/** Whether the person is away, which rule decided it, and when that rule stops holding (epoch ms). */
-export type Presence = { away: boolean; reason: Reason; until?: number }
+/**
+ * Where an input came from. Only `tui` is the person at the Mac; `telegram` and `app` are the person
+ * on the phone; `agent` and `rpc` are neither and change nothing.
+ */
+export type Source = "tui" | "telegram" | "app" | "agent" | "rpc"
+
+/**
+ * Whether the person is away, which rule decided it, and when that rule stops holding (epoch ms).
+ * `source` and `at` say whose input decided `input` and `phone`; `start` is the grace after the bridge starts.
+ */
+export type Presence = {
+  away: boolean
+  reason: Reason
+  until?: number
+  source?: Source | "start"
+  at?: number
+}
 
 const mins = (ms: number) => Math.max(1, Math.ceil(ms / 60_000))
+
+/** `30s ago`, `2m ago`, `3h ago`. */
+const ago = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s ago`
+  return s < 3600
+    ? `${Math.floor(s / 60)}m ago`
+    : `${Math.floor(s / 3600)}h ago`
+}
 
 /** One line: the state and why. */
 export function explain(p: Presence, now: number, idleMinutes: number): string {
@@ -135,7 +159,7 @@ export function explain(p: Presence, now: number, idleMinutes: number): string {
     case "slept":
       return "away: the machine slept"
     case "phone":
-      return `away: you wrote from Telegram${left}`
+      return `away: phone active${p.at === undefined ? "" : " " + ago(now - p.at)}${left}`
     case "schedule-away":
       return "away: inside an away window of the schedule"
     case "schedule-present":
@@ -145,7 +169,9 @@ export function explain(p: Presence, now: number, idleMinutes: number): string {
     case "no-tui":
       return "away: no OpenCode window is open"
     case "input":
-      return "here: recent input"
+      return p.source === "start"
+        ? `here: bridge started ${ago(now - (p.at ?? now))}`
+        : `here: TUI input ${ago(now - (p.at ?? now))}`
   }
 }
 
@@ -153,8 +179,13 @@ export class Router {
   private lastInput: number
   /** Start of the run of input that `lastInput` ends: a gap longer than the grace starts a new one. */
   private runStart: number
-  /** When the paired chat last sent something. */
+  /** What `lastInput` is: input in a TUI, or the grace after the bridge started. */
+  private inputSource: "tui" | "start" = "start"
+  /** When the paired chat last sent something, or the mini-app was used, and which of the two. */
   private phoneAt = 0
+  private phoneSource: "telegram" | "app" = "telegram"
+  /** The last input that is neither the Mac nor the phone: kept to be shown, it changes nothing. */
+  private ignored: { source: "agent" | "rpc"; at: number } | undefined
   private sleptAt = 0
   private afk: "auto" | "on" | "off" = "auto"
   /** When a forced "on" or "off" ends and the mode returns to auto. */
@@ -189,12 +220,32 @@ export class Router {
   touch(at?: number): void {
     const t = at ?? this.now()
     if (t - this.lastInput > this.rules.graceSeconds * 1000) this.runStart = t
+    if (t >= this.lastInput) this.inputSource = "tui"
     this.lastInput = Math.max(this.lastInput, t)
   }
 
-  /** A message or tap from the paired chat: away for `phoneMinutes`, until a TUI has had input for the grace. */
-  phone(at?: number): void {
-    this.phoneAt = Math.max(this.phoneAt, at ?? this.now())
+  /** A message or tap from the paired chat, or the mini-app: away for `phoneMinutes`, until a TUI has had input for the grace. */
+  phone(at?: number, source: "telegram" | "app" = "telegram"): void {
+    const t = at ?? this.now()
+    if (t >= this.phoneAt) this.phoneSource = source
+    this.phoneAt = Math.max(this.phoneAt, t)
+  }
+
+  /** One input, by where it came from: only a TUI is the person at the Mac. */
+  input(source: Source, at?: number): void {
+    if (source === "tui") this.touch(at)
+    else if (source === "telegram" || source === "app") this.phone(at, source)
+    else this.ignored = { source, at: at ?? this.now() }
+  }
+
+  /** Whether any TUI is attached. */
+  attached(): boolean {
+    return this.present()
+  }
+
+  /** The latest input that changed nothing (an agent's or an RPC call's), if any. */
+  lastIgnored(): { source: "agent" | "rpc"; at: number } | undefined {
+    return this.ignored
   }
 
   /** The machine slept (told by whoever notices a long gap): away until the next input, if `sleep` is on. */
@@ -267,7 +318,14 @@ export class Router {
         this.lastInput > this.phoneAt &&
         this.lastInput - Math.max(this.runStart, this.phoneAt) >=
           r.graceSeconds * 1000
-      if (!stayed) return { away: true, reason: "phone", until: phoneUntil }
+      if (!stayed)
+        return {
+          away: true,
+          reason: "phone",
+          until: phoneUntil,
+          source: this.phoneSource,
+          at: this.phoneAt,
+        }
     }
     const w = r.schedule.find((x) => isQuiet({ ...x, breakthrough: [] }, now))
     if (w)
@@ -278,7 +336,12 @@ export class Router {
     if (!this.present()) return { away: true, reason: "no-tui" }
     return now - this.lastInput >= this.cfg.away.minutes * 60_000
       ? { away: true, reason: "idle" }
-      : { away: false, reason: "input" }
+      : {
+          away: false,
+          reason: "input",
+          source: this.inputSource,
+          at: this.lastInput,
+        }
   }
 
   /** The state in words, for the status and the chat line. */

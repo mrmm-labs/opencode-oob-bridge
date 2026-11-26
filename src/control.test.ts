@@ -773,3 +773,33 @@ describe("the interrupt op", () => {
     await r.done()
   })
 })
+
+describe("presence by source through the control", () => {
+  it("a TUI that is attached with no input is not input; a time of 0 is none", async () => {
+    const r = await rig()
+    const start = r.router.lastInputAt()
+    r.clock.t += 30 * MIN_MS
+    r.control.heartbeat("tui1")
+    r.control.heartbeat("tui1", undefined)
+    r.control.heartbeat("tui1", 0)
+    assert.equal(r.router.lastInputAt(), start)
+    r.control.heartbeat("tui1", r.clock.t - 1000)
+    assert.equal(r.router.lastInputAt(), r.clock.t - 1000)
+    assert.equal(r.router.state().source, "tui")
+    await r.done()
+  })
+
+  it("the app is the phone: away, with the source in afk.why; rpc changes nothing", async () => {
+    const r = await rig()
+    r.control.heartbeat("tui1", r.clock.t)
+    r.control.activity("rpc")
+    assert.equal(r.router.state().away, false)
+    r.control.activity("app")
+    const out = await r.control.op("afk", { mode: "auto" })
+    assert.equal(out.snapshot.afk.away, true)
+    assert.match(out.snapshot.afk.why, /^away: phone active/)
+    await r.done()
+  })
+})
+
+const MIN_MS = 60_000
