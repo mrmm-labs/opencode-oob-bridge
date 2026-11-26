@@ -34,10 +34,19 @@ logic: it pilots the server half over the plugin RPC.
   standby takes over within 15 s.
 - **Away is instance-wide, decided by rules.** In order, the first that holds wins: a forced `/afk` or
   `/back` (it always ends: after the time you give or `away.overrideMinutes`); the screen locked
-  (`away.lock`, off); the machine slept (`away.sleep`, off); a message from the paired Telegram chat
-  (away for `away.phoneMinutes`, each later message extends it, and typing at the Mac ends it only after
-  `away.graceSeconds` of continuous input); a window of `away.schedule` (empty); no TUI attached, or no
-  input in _any_ TUI for `away.minutes`. `/oob status` and `/afk status` say which rule holds and when it ends.
+  (`away.lock`, off); the machine slept (`away.sleep`, off); the phone: a message, button or reply
+  from the paired Telegram chat, or any use of the mini-app (away for `away.phoneMinutes`, each later
+  one extends it, and typing at the Mac ends it only after `away.graceSeconds` of continuous input); a window of `away.schedule` (empty); no TUI attached, or no
+  input in _any_ TUI for `away.minutes`. `/oob status` and `/afk status` say which rule holds and when it
+  ends, and whose input decided it ("here: TUI input 2m ago", "away: phone active 30s ago").
+  **Only input at the Mac counts as here:** a prompt typed in a TUI (into a top-level session a TUI has
+  viewed, that neither the bridge nor a subagent sent, with a TUI attached) and `/oob` in a TUI. A
+  Telegram message, button or reply, the mini-app, a prompt an agent, a subagent or an RPC call delivers, an
+  answer to a form or permission, and a TUI that is merely attached never do. Each change of state is
+  logged as `presence_change` with its `source` (`tui`, `telegram`, `app`; `agent` and `rpc` change
+  nothing). Starting the bridge counts as input for `away.minutes`; phone activity overrides it. A
+  question held while the state said here is sent, with its buttons, when it turns away. The macOS idle time
+  is not read, and an agent that prompts a viewed session while a TUI is attached still looks typed.
 - **Quiet while you are here.** While you count as present the bridge sends nothing to Telegram: no
   message, no typing indicator, no edit. Polling goes on, and the bot answers what you type in the chat
   for 30 seconds. Going away sends one "While you were at the Mac" note per topic (questions and

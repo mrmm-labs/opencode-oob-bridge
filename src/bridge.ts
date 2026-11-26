@@ -374,7 +374,15 @@ type Unsent = {
   name: string
   finished: number
   failed: number
-  asks: Map<string, { kind: "question" | "permission"; sessionID: string }>
+  asks: Map<
+    string,
+    {
+      kind: "question" | "permission"
+      sessionID: string
+      /** Sends the ask as it would have been, once the person is away. */
+      replay?: () => Promise<void>
+    }
+  >
 }
 type UnsentKind = "finished" | "failed" | "question" | "permission"
 const PRESENCE_TICK_MS = 2000
@@ -984,10 +992,8 @@ export class Bridge {
             e.data.reply && PERMISSION_LABEL[e.data.reply],
           )
         case "session.inbox.enqueued":
-          if (e.data.item?.type === "user") {
-            this.router.touch()
+          if (e.data.item?.type === "user")
             return await this.onUserPrompt(e.data)
-          }
           return
         case "session.execution.started":
           this.turns.delete(e.data.sessionID)
@@ -1078,7 +1084,11 @@ export class Bridge {
     root: string,
     name: string,
     kind: UnsentKind,
-    ask?: { requestID: string; sessionID: string },
+    ask?: {
+      requestID: string
+      sessionID: string
+      replay?: () => Promise<void>
+    },
   ): void {
     const u = this.unsent.get(root) ?? {
       name,
@@ -1088,7 +1098,12 @@ export class Bridge {
     }
     u.name = name
     if (kind === "finished" || kind === "failed") u[kind]++
-    else if (ask) u.asks.set(ask.requestID, { kind, sessionID: ask.sessionID })
+    else if (ask)
+      u.asks.set(ask.requestID, {
+        kind,
+        sessionID: ask.sessionID,
+        replay: ask.replay,
+      })
     this.unsent.delete(root)
     this.unsent.set(root, u)
     for (const old of this.unsent.keys()) {
@@ -1115,6 +1130,13 @@ export class Bridge {
     const was = this.wasAway
     this.wasAway = st.away
     this.wasWhy = st.reason
+    log("presence_change", {
+      away: st.away,
+      reason: st.reason,
+      source: st.source,
+      ago_s: st.at === undefined ? undefined : Math.round((now - st.at) / 1000),
+      why: this.router.why(),
+    })
     if (!st.away) {
       for (const ch of this.channels) ch.hush?.()
       return
@@ -1142,6 +1164,7 @@ export class Bridge {
   private async awayDigest(): Promise<void> {
     const held = [...this.unsent]
     this.unsent.clear()
+    for (const [, u] of held) await this.replayHeld(u)
     const noTopics = new Map<string, Connector>()
     const lines: string[] = []
     for (const [root, u] of held) {
@@ -1194,6 +1217,36 @@ export class Bridge {
     this.quiet.digests++
   }
 
+  /**
+   * Sends the questions and permissions held while the person counted as here, now that they are away:
+   * the ones OpenCode still lists as open and that nothing has been sent for. What is sent leaves the digest.
+   */
+  private async replayHeld(u: Unsent): Promise<void> {
+    const listed = new Map<string, Set<string> | undefined>()
+    for (const [requestID, a] of u.asks) {
+      if (!a.replay || this.store.byRequest(requestID)) continue
+      const k = `${a.kind}\0${a.sessionID}`
+      if (!listed.has(k))
+        listed.set(
+          k,
+          await this.host
+            .openRequests?.(a.kind, a.sessionID)
+            .catch(() => undefined),
+        )
+      const ids = listed.get(k)
+      if (ids && !ids.has(requestID)) continue
+      u.asks.delete(requestID)
+      try {
+        await a.replay()
+      } catch (err) {
+        log("held_replay_error", {
+          kind: a.kind,
+          message: (err as Error).message,
+        })
+      }
+    }
+  }
+
   /** The questions and approvals held for a session that OpenCode still lists as open. */
   private async stillOpen(u: Unsent) {
     const out = { question: 0, permission: 0 }
@@ -1217,7 +1270,11 @@ export class Bridge {
   /** Root facts when the session routes, else undefined. */
   private async routed(
     sessionID: string,
-    held?: { kind: UnsentKind; requestID?: string },
+    held?: {
+      kind: UnsentKind
+      requestID?: string
+      replay?: () => Promise<void>
+    },
   ) {
     const rootID = this.host.root(sessionID)
     const [root, asking] = await Promise.all([
@@ -1255,7 +1312,7 @@ export class Bridge {
           held.kind,
           held.requestID === undefined
             ? undefined
-            : { requestID: held.requestID, sessionID },
+            : { requestID: held.requestID, sessionID, replay: held.replay },
         )
       return undefined
     }
@@ -1505,6 +1562,7 @@ export class Bridge {
     const r = await this.routed(form.sessionID, {
       kind: "question",
       requestID: form.id,
+      replay: () => this.onForm(form),
     })
     if (!r) return
     const reachable = (await this.host.canReplyForm?.()) ?? true
@@ -1741,6 +1799,7 @@ export class Bridge {
     const r = await this.routed(d.sessionID, {
       kind: "permission",
       requestID: d.id,
+      replay: () => this.onPermission(d),
     })
     if (!r) return
     const id = this.store.newId()
@@ -2694,9 +2753,7 @@ export class Bridge {
   private async closed(requestID: string, note: string, choice?: string) {
     for (const u of this.unsent.values()) u.asks.delete(requestID)
     const p = this.store.byRequest(requestID)
-    if (!p) return this.router.touch()
-    if (p.state !== "pending") return
-    this.router.touch()
+    if (!p || p.state !== "pending") return
     const cancelled = note === "Cancelled"
     this.store.update(p.id, {
       state: cancelled ? "cancelled" : "answered",
@@ -2715,17 +2772,27 @@ export class Bridge {
   }
 
   /** A prompt entered a session: one typed at the Mac is shown in the topic, one this bridge sent is not. */
+  /**
+   * A prompt the bridge did not send reached a top-level session. It is the person at the Mac only
+   * when a TUI is attached and has viewed the session; a script or an agent prompts unviewed ones.
+   */
+  private async typedAtMac(root: string): Promise<void> {
+    const info = await this.host.session(root).catch(() => undefined)
+    const typed = this.router.attached() && info?.viewed !== false
+    this.router.input(typed ? "tui" : "agent")
+  }
+
   private async onUserPrompt(
     d: Extract<BridgeEvent, { type: "session.inbox.enqueued" }>["data"],
   ) {
     const root = this.host.root(d.sessionID)
-    if (root !== d.sessionID) return
     if (d.inboxID) {
       if (this.seenInbox.has(d.inboxID)) return
       this.seenInbox.add(d.inboxID)
       if (this.seenInbox.size > 500)
         this.seenInbox.delete(this.seenInbox.values().next().value!)
     }
+    if (root !== d.sessionID) return this.router.input("agent")
     const text = d.item?.payload?.text ?? ""
     const list = this.sentPrompts.get(root) ?? []
     const at = list.findIndex(
@@ -2737,6 +2804,7 @@ export class Bridge {
       return
     }
     this.origins.set(root, "mac")
+    await this.typedAtMac(root)
     if (!text.trim() || this.cfg.chat.mirror === "remote-only") return
     const r = await this.routed(root)
     if (!r) return
@@ -2828,7 +2896,7 @@ export class Bridge {
     m: Inbound,
   ): Promise<Outcome | undefined> {
     const kind = this.inboundKind(ch, m)
-    this.router.phone()
+    this.router.input("telegram")
     const span = this.tel.begin("oob.inbound", {
       attrs: { kind, "connector.type": ch.type },
     })

@@ -54,7 +54,8 @@ export class Remote implements Pilot {
   private online = false
   private seenBack = 0
   private readonly onBack: ((text: string) => void) | undefined
-  private lastInput: number
+  /** When the operator last used this TUI (`/oob`); none until then, attaching is not input. */
+  private lastInput = 0
   private timer: ReturnType<typeof setInterval> | undefined
   private readonly listeners = new Set<() => void>()
 
@@ -76,7 +77,6 @@ export class Remote implements Pilot {
     this.pollMs = o.pollMs ?? POLL_MS
     this.version = o.version ?? RUNNING
     this.readLocal = o.installed ?? readInstalled
-    this.lastInput = this.now()
   }
 
   refresh(): Promise<void> {
@@ -107,7 +107,7 @@ export class Remote implements Pilot {
       this.take(
         (await this.call("status", {
           tui: this.id,
-          inputAt: this.lastInput,
+          inputAt: this.lastInput || undefined,
           roots: this.roots(),
           version: this.version,
         })) as Snapshot,

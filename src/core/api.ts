@@ -385,11 +385,14 @@ export function handler(d: ApiDeps) {
     lastRefusal.set(reason, t)
     log("edge_refused", { reason, status, client })
   }
-  const done = (req: IncomingMessage, res: ServerResponse, edge = false) =>
-    route(req, res, edge).catch(() => {
+  // A request on the relay edge is the mini-app on the phone; any other is a local client.
+  const done = (req: IncomingMessage, res: ServerResponse, edge = false) => {
+    d.control.activity?.(edge ? "app" : "rpc")
+    return route(req, res, edge).catch(() => {
       if (!res.headersSent) send(res, 500, { error: "internal error" })
       else res.end()
     })
+  }
 
   /** The link counts as an edge: init data only, a short path list, a failed-auth limit. */
   const viaEdge = (req: IncomingMessage, res: ServerResponse, edge: Edge) => {

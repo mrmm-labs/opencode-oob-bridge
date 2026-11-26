@@ -31,7 +31,8 @@ const MIN = 60_000
 describe("presence rules", () => {
   it("defaults: idle 10, phone 30, grace 60 s, override 2 h, signals off", () => {
     const { c, r } = router([])
-    assert.deepEqual(r.state(), { away: false, reason: "input" })
+    assert.equal(r.state().away, false)
+    assert.equal(r.state().reason, "input")
     c.advance(10 * MIN)
     assert.deepEqual(r.state(), { away: true, reason: "idle" })
     assert.equal(r.overrideMs(), 120 * MIN)
@@ -59,7 +60,8 @@ describe("presence rules", () => {
     r.touch()
     assert.equal(r.state().reason, "phone")
     c.advance(1000)
-    assert.deepEqual(r.state(), { away: false, reason: "input" })
+    assert.equal(r.state().away, false)
+    assert.equal(r.state().reason, "input")
   })
 
   it("phoneMinutes 0 turns the phone rule off", () => {
@@ -84,7 +86,8 @@ describe("presence rules", () => {
       c.advance(10_000)
       r.touch()
     }
-    assert.deepEqual(r.state(), { away: false, reason: "input" })
+    assert.equal(r.state().away, false)
+    assert.equal(r.state().reason, "input")
   })
 
   it("input with gaps longer than the grace never builds a run", () => {
@@ -212,7 +215,7 @@ describe("presence rules", () => {
   it("explains each state with its end", () => {
     const { c, r } = router([])
     r.phone()
-    assert.match(r.why(), /wrote from Telegram, ends in 30 min/)
+    assert.match(r.why(), /phone active 0s ago, ends in 30 min/)
     r.setAfk("off", c.now() + 5 * MIN)
     assert.match(r.why(), /\/back.*ends in 5 min/)
   })

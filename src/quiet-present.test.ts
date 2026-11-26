@@ -129,7 +129,7 @@ describe("quiet while present", () => {
     s.bridge.stop()
   })
 
-  it("holds what happened while present and sends one digest on going away", async () => {
+  it("holds what happened while present, sends the held questions and one digest on going away", async () => {
     const s = setup()
     await s.bridge.onEvent(ask("frm_1"))
     await s.bridge.onEvent(ask("frm_2"))
@@ -142,8 +142,15 @@ describe("quiet while present", () => {
       /While you were at the Mac/.test(p.message),
     )
     assert.equal(digests.length, 1)
-    assert.match(digests[0].message, /2 questions waiting/)
+    assert.ok(
+      !/questions? waiting/.test(digests[0].message),
+      "sent, not counted",
+    )
     assert.match(digests[0].message, /1 finished/)
+    const asked = s.published.filter(
+      (p) => !/While you were|Routing on/.test(p.message),
+    )
+    assert.equal(asked.length, 2, "each held question is sent once")
     assert.equal(s.bridge.status().quiet.digests, 1)
     const before = s.published.length
     await s.bridge.presenceTick()
@@ -207,7 +214,7 @@ describe("quiet while present", () => {
       .of("sendMessage")
       .filter((c) => /Routing on/.test(c.body.text))
     assert.equal(lines.length, 1)
-    assert.match(lines[0].body.text, /wrote from Telegram, ends in 30 min/)
+    assert.match(lines[0].body.text, /phone active 0s ago, ends in 30 min/)
     t += 31 * MIN
     router.touch()
     const before = tg.of("sendMessage").length
