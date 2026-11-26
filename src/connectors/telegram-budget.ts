@@ -17,7 +17,7 @@ export const VISIBLE =
   /^(send|edit|pin|unpin|delete|forward|copy|createForumTopic|setMessageReaction)/
 
 const PACED =
-  /^(sendChatAction|sendMessage|editMessageText|editMessageReplyMarkup|editMessageCaption|pinChatMessage|unpinChatMessage|deleteMessage|setMessageReaction|sendPhoto|sendDocument|sendMediaGroup|sendMessageDraft|editForumTopic|createForumTopic)$/
+  /^(sendChatAction|sendMessage|editMessageText|editMessageReplyMarkup|editMessageCaption|pinChatMessage|unpinChatMessage|deleteMessage|setMessageReaction|sendPhoto|sendDocument|sendMediaGroup|sendMessageDraft|editForumTopic|createForumTopic|closeForumTopic|reopenForumTopic)$/
 /** The text of two merged messages stays well under Telegram's 4096. */
 const MERGED_MAX = 3500
 

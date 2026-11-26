@@ -180,7 +180,7 @@ export type TelegramOptions = {
   /** One status card per session topic; on unless false. */
   statusCard?: boolean
   /** `project`: headless sessions of a project share one topic; `session`: a topic each. */
-  topics?: { headless: "project" | "session" }
+  topics?: { headless: "project" | "session"; closeHeadless?: boolean }
   /** Stream a reply as a native draft in a private chat. Off until it has been checked against a live bot. */
   draft?: boolean
   /** Session-end pushes wanted; finished defaults to off while the card shows it. */
@@ -339,6 +339,8 @@ type Topic = {
   icon?: string
   /** What the card shows now; not kept across restarts. */
   cardText?: string
+  /** The bridge closed this topic (its session is headless and idle); it is reopened when used. */
+  closed?: boolean
 }
 
 type Sticker = { emoji?: string; custom_emoji_id?: string }
@@ -840,7 +842,10 @@ export class TelegramConnector implements Connector {
   }
 
   /** The forum topic of a session, created on first use; undefined outside a forum. */
-  private async thread(session: Push["session"]): Promise<number | undefined> {
+  private async thread(
+    session: Push["session"],
+    reopen = true,
+  ): Promise<number | undefined> {
     if (!session || !this.chatId) return undefined
     if (!(await this.isForum())) return undefined
     this.topics ??= await this.loadTopics()
@@ -848,6 +853,7 @@ export class TelegramConnector implements Connector {
     const own = this.topics.get(this.topicKey(session.id))
     if (own !== undefined) {
       this.homes.delete(session.id)
+      if (own.closed && reopen) await this.reopenTopic(session.id, own)
       return own.thread
     }
     const home = await this.homeFor(session.id)
@@ -922,6 +928,81 @@ export class TelegramConnector implements Connector {
       if (RIGHTS.test((err as Error).message)) await this.rightsMissing()
       return undefined
     }
+  }
+
+  /** The sessions that have an open topic of their own, when closing is on. */
+  async topicSessions(): Promise<string[]> {
+    if (this.opts.topics?.closeHeadless === false || !this.chatId) return []
+    this.topics ??= await this.loadTopics()
+    const prefix = `${this.chatId}:`
+    const out: string[] = []
+    for (const [k, t] of this.topics) {
+      const id = k.slice(prefix.length)
+      if (k.startsWith(prefix) && id.startsWith("ses_") && !t.closed)
+        out.push(id)
+    }
+    return out
+  }
+
+  /** Closes the session's topic. Never deletes it; a failure is logged and left for the next end. */
+  async closeTopic(
+    sessionID: string,
+    why: "start" | "ended",
+  ): Promise<boolean> {
+    if (this.opts.topics?.closeHeadless === false || !this.chatId) return false
+    this.topics ??= await this.loadTopics()
+    const t = this.topics.get(this.topicKey(sessionID))
+    if (!t || t.closed || !(await this.isForum())) return false
+    try {
+      await this.call("closeForumTopic", {
+        chat_id: this.chatId,
+        message_thread_id: t.thread,
+      })
+    } catch (err) {
+      if (!/TOPIC_NOT_MODIFIED/.test((err as Error).message)) {
+        log("telegram_topic_close_failed", {
+          session: sessionID,
+          thread: t.thread,
+          message: filterSecrets((err as Error).message),
+        })
+        return false
+      }
+    }
+    t.closed = true
+    await this.saveTopics()
+    log("telegram_topic_closed", { session: sessionID, thread: t.thread, why })
+    return true
+  }
+
+  private readonly reopening = new Map<string, Promise<void>>()
+
+  /** Reopens a topic the bridge closed, before something is posted to it. */
+  private reopenTopic(sessionID: string, t: Topic): Promise<void> {
+    let job = this.reopening.get(sessionID)
+    if (!job) {
+      job = (async () => {
+        try {
+          await this.call("reopenForumTopic", {
+            chat_id: this.chatId,
+            message_thread_id: t.thread,
+          })
+        } catch (err) {
+          if (!/TOPIC_NOT_MODIFIED/.test((err as Error).message)) {
+            log("telegram_topic_reopen_failed", {
+              session: sessionID,
+              thread: t.thread,
+              message: filterSecrets((err as Error).message),
+            })
+            return
+          }
+        }
+        t.closed = undefined
+        await this.saveTopics()
+        log("telegram_topic_reopened", { session: sessionID, thread: t.thread })
+      })().finally(() => this.reopening.delete(sessionID))
+      this.reopening.set(sessionID, job)
+    }
+    return job
   }
 
   /** The icons a bot may use, fetched once; a failed call is retried after a while and meanwhile only the color is set. */
@@ -1005,7 +1086,21 @@ export class TelegramConnector implements Connector {
     return out
   }
 
-  private async saveTopics(): Promise<void> {
+  private saveChain: Promise<void> = Promise.resolve()
+
+  /** Resolves when the saves started so far have been written. */
+  settled(): Promise<void> {
+    return this.saveChain
+  }
+
+  /** Saves one after the other: two writes of the file at once interleave and corrupt it. */
+  private saveTopics(): Promise<void> {
+    const run = this.saveChain.then(() => this.writeTopics())
+    this.saveChain = run
+    return run
+  }
+
+  private async writeTopics(): Promise<void> {
     const file = this.opts.topicsFile
     if (!file || !this.topics) return
     try {
@@ -1048,7 +1143,11 @@ export class TelegramConnector implements Connector {
         (await this.homeFor(state.id))
       )
         return
-      const thread = await this.thread(session)
+      // The card of a session that is not working is edited in a closed topic without reopening it.
+      const thread = await this.thread(
+        session,
+        state.state !== "idle" && state.state !== "failed",
+      )
       if (thread === undefined) return
       this.pulse(state.id, thread, !!state.chat && state.state === "working")
       const key = this.topicKey(state.id)
@@ -3351,7 +3450,7 @@ export type TelegramConfig = {
   apiBase: string
   statusCard: boolean
   rate: Rate
-  topics: { headless: "project" | "session" }
+  topics: { headless: "project" | "session"; closeHeadless: boolean }
   draft: boolean
   notify: { finished?: boolean; failed?: boolean }
   icons: Record<string, string>
@@ -3409,7 +3508,8 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       }
     }
 
-    const topics: { headless: "project" | "session" } = { headless: "project" }
+    const topics: { headless: "project" | "session"; closeHeadless: boolean } =
+      { headless: "project", closeHeadless: true }
     if (raw.topics !== undefined) {
       if (!isObject(raw.topics))
         return { error: `${at}topics must be an object` }
@@ -3417,6 +3517,10 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       if (h !== undefined && h !== "project" && h !== "session")
         return { error: `${at}topics.headless must be "project" or "session"` }
       if (h) topics.headless = h
+      const c = raw.topics.closeHeadless
+      if (c !== undefined && typeof c !== "boolean")
+        return { error: `${at}topics.closeHeadless must be true or false` }
+      if (c !== undefined) topics.closeHeadless = c
     }
 
     const draft = raw.draft ?? false
