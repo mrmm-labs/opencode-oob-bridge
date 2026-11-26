@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.50.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.49.0...v0.50.0) (2026-11-26)
+
+
+### Features
+
+* close the topics of idle headless sessions ([#180](https://github.com/mrmm-labs/opencode-oob-bridge/issues/180)) ([39293da](https://github.com/mrmm-labs/opencode-oob-bridge/commit/39293da513e7b99a3bd8ec4908420d662d0dbaf3))
+
+
+### Bug Fixes
+
+* answer card taps at once and show their delivery state ([#178](https://github.com/mrmm-labs/opencode-oob-bridge/issues/178)) ([0a0c308](https://github.com/mrmm-labs/opencode-oob-bridge/commit/0a0c3087650d58c741fd13f86a316168db1a5cff))
+* only input at the Mac counts as presence, and held questions go out when away ([#181](https://github.com/mrmm-labs/opencode-oob-bridge/issues/181)) ([2fc4ada](https://github.com/mrmm-labs/opencode-oob-bridge/commit/2fc4adae5df35ffe1dc8a63e6c46f498dbf8035c))
+
 ## [0.49.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.48.0...v0.49.0) (2026-11-25)
 
 
