@@ -38,7 +38,8 @@
     //   // project, "<project> · agents". "session": a topic for each, as before.
     //   // closeHeadless: close (never delete) the topic of an idle headless session, reopen it when it works again.
     //   // closeIdle: the same for a session that was viewed, once it has been quiet for 2 minutes and no TUI shows it.
-    //   // "topics": { "headless": "project", "closeHeadless": true, "closeIdle": true },
+    //   // markOpen: name a topic "🟢 <name>" while a TUI shows its session (one rename a minute at most).
+    //   // "topics": { "headless": "project", "closeHeadless": true, "closeIdle": true, "markOpen": true },
     //   // Send budget per chat: least gap between calls, most calls a minute.
     //   // "rate": { "gapMs": 1100, "perMinute": 18 },
     //   // "statusCard": true,

@@ -98,21 +98,25 @@ describe("parseConfig", () => {
       headless: "project",
       closeHeadless: true,
       closeIdle: true,
+      markOpen: true,
     })
     assert.deepEqual(topicsOf(tg({})), {
       headless: "project",
       closeHeadless: true,
       closeIdle: true,
+      markOpen: true,
     })
     assert.deepEqual(topicsOf(tg({ headless: "session" })), {
       headless: "session",
       closeHeadless: true,
       closeIdle: true,
+      markOpen: true,
     })
     assert.deepEqual(topicsOf(tg({ closeHeadless: false })), {
       headless: "project",
       closeHeadless: false,
       closeIdle: true,
+      markOpen: true,
     })
     assert.match(
       (tg({ closeHeadless: "no" }) as { error: string }).error,
@@ -122,10 +126,21 @@ describe("parseConfig", () => {
       headless: "project",
       closeHeadless: true,
       closeIdle: false,
+      markOpen: true,
     })
     assert.match(
       (tg({ closeIdle: "no" }) as { error: string }).error,
       /topics\.closeIdle must be true or false/,
+    )
+    assert.deepEqual(topicsOf(tg({ markOpen: false })), {
+      headless: "project",
+      closeHeadless: true,
+      closeIdle: true,
+      markOpen: false,
+    })
+    assert.match(
+      (tg({ markOpen: "no" }) as { error: string }).error,
+      /topics\.markOpen must be true or false/,
     )
     for (const bad of [{ headless: "all" }, { headless: true }, "project"])
       assert.ok("error" in tg(bad), JSON.stringify(bad))
@@ -235,7 +250,12 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: true,
       rate: { gapMs: 1100, perMinute: 18 },
-      topics: { headless: "project", closeHeadless: true, closeIdle: true },
+      topics: {
+        headless: "project",
+        closeHeadless: true,
+        closeIdle: true,
+        markOpen: true,
+      },
       draft: false,
       notify: {},
       icons: {},
@@ -288,7 +308,12 @@ describe("parseConfig channels", () => {
       apiBase: "https://api.telegram.org",
       statusCard: false,
       rate: { gapMs: 1100, perMinute: 18 },
-      topics: { headless: "project", closeHeadless: true, closeIdle: true },
+      topics: {
+        headless: "project",
+        closeHeadless: true,
+        closeIdle: true,
+        markOpen: true,
+      },
       draft: false,
       notify: { finished: true, failed: undefined },
       icons: { "^coord": "🎯" },
@@ -733,6 +758,23 @@ describe("deadman", () => {
       assert.ok(
         "error" in (parseConfig({ ...base, deadman }) as object),
         JSON.stringify(deadman),
+      )
+  })
+})
+
+describe("cards", () => {
+  it("is on by default, and off with false or enabled: false", () => {
+    const c = (cards?: unknown) =>
+      (parseConfig({ ...base, cards }) as Config).cards
+    assert.deepEqual(c(undefined), { enabled: true })
+    assert.deepEqual(c(true), { enabled: true })
+    assert.deepEqual(c({}), { enabled: true })
+    assert.deepEqual(c(false), { enabled: false })
+    assert.deepEqual(c({ enabled: false }), { enabled: false })
+    for (const cards of ["yes", { enabled: "no" }, 1])
+      assert.ok(
+        "error" in (parseConfig({ ...base, cards }) as object),
+        String(cards),
       )
   })
 })
