@@ -105,10 +105,13 @@ async function rig(
     state: "pending",
   } as Pending)
   const bridge = new Bridge(cfg, host, [channel], store, router, Date.now)
+  const open = new Set<string>()
+  bridge.onOpenSessions(() => open)
   bridge.start()
   return {
     tg,
     bridge,
+    open,
     dir,
     topicsFile,
     table,
@@ -169,6 +172,42 @@ describe("the verdict of each topic", () => {
       [],
       "no backup",
     )
+    await r.done()
+  })
+
+  it("a session open in a TUI is kept, in a dry run and on apply, however old", async () => {
+    const r = await rig()
+    r.open.add("ses_old").add("ses_gone")
+    const dry = await r.bridge.tidyTopics({
+      apply: false,
+      idleHours: 24,
+      current: "ses_cur",
+      source: "rpc",
+    })
+    const line = (n: string) =>
+      dry.text.split("\n").find((l) => l.includes(n)) ?? ""
+    assert.match(line("shop · old"), /open in a TUI/)
+    assert.match(line("shop · gone"), /open in a TUI/)
+    assert.match(dry.text, /^Dry run \(idle limit 24 h\): 0 to close/)
+    const out = await r.bridge.tidyTopics({
+      apply: true,
+      idleHours: 24,
+      current: "ses_cur",
+      source: "rpc",
+    })
+    assert.equal(out.ok, true)
+    assert.deepEqual(r.closes(), [], "nothing open is closed")
+    const saved = await r.saved()
+    assert.ok(!saved[key("ses_old")].closed)
+    assert.ok(!saved[key("ses_gone")].closed)
+    r.open.clear()
+    await r.bridge.tidyTopics({
+      apply: true,
+      idleHours: 24,
+      current: "ses_cur",
+      source: "rpc",
+    })
+    assert.deepEqual(r.closes(), [11, 13], "closed once no TUI shows them")
     await r.done()
   })
 
