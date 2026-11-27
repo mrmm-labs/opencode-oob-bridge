@@ -1728,7 +1728,9 @@ export class Bridge {
     const earlier: Array<{ ch: Connector; id: string }> = []
     let checked = 0
     let unknown = 0
+    const shown = this.openSessions?.() ?? new Set<string>()
     const guarded = (id: string) =>
+      shown.has(id) ||
       this.chat.has(id) ||
       this.host.busy(id) ||
       this.store
@@ -1783,6 +1785,7 @@ export class Bridge {
         )
           rows.push(row("keep", "a question or permission waits"))
         else if (this.host.busy(e.id)) rows.push(row("keep", "working"))
+        else if (shown.has(e.id)) rows.push(row("keep", "open in a TUI"))
         else if (this.chat.has(e.id)) rows.push(row("keep", "chat is on"))
         else if (!answered) rows.push(row("keep", "the host did not answer"))
         else if (!info) rows.push(row("close", "session gone"))
