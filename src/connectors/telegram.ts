@@ -9,7 +9,7 @@
  * heard; everything else is dropped unread.
  */
 import { createHash, randomInt } from "node:crypto"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
 import {
@@ -89,6 +89,7 @@ import type {
   Push,
   SendStats,
   SessionState,
+  TopicEntry,
   TurnCard,
 } from "./types.ts"
 
@@ -180,7 +181,13 @@ export type TelegramOptions = {
   /** One status card per session topic; on unless false. */
   statusCard?: boolean
   /** `project`: headless sessions of a project share one topic; `session`: a topic each. */
-  topics?: { headless: "project" | "session"; closeHeadless?: boolean }
+  topics?: {
+    headless: "project" | "session"
+    closeHeadless?: boolean
+    closeIdle?: boolean
+  }
+  /** A topic the bridge reopened is not closed again for this long. */
+  reopenDwellMs?: number
   /** Stream a reply as a native draft in a private chat. Off until it has been checked against a live bot. */
   draft?: boolean
   /** Session-end pushes wanted; finished defaults to off while the card shows it. */
@@ -247,6 +254,8 @@ const HANDOVER_MS = 5_000
 const DEFAULT_RATE: Rate = { gapMs: 1100, perMinute: 18 }
 /** Topic-file keys of shared topics start with this after the chat id; session ids never do. */
 const SHARED = "agents/"
+/** An idle close waits this long after the bridge reopened a topic. */
+const REOPEN_DWELL_MS = 10 * 60_000
 /** The most of a session title a tag shows. */
 const TAG_MAX = 60
 const SHARED_HINT =
@@ -932,7 +941,12 @@ export class TelegramConnector implements Connector {
 
   /** The sessions that have an open topic of their own, when closing is on. */
   async topicSessions(): Promise<string[]> {
-    if (this.opts.topics?.closeHeadless === false || !this.chatId) return []
+    const sw = this.opts.topics
+    if (
+      !this.chatId ||
+      (sw?.closeHeadless === false && sw?.closeIdle === false)
+    )
+      return []
     this.topics ??= await this.loadTopics()
     const prefix = `${this.chatId}:`
     const out: string[] = []
@@ -944,37 +958,121 @@ export class TelegramConnector implements Connector {
     return out
   }
 
+  /** Every topic in the map, with its kind and whether the bridge closed it. */
+  async topicEntries(): Promise<TopicEntry[]> {
+    if (!this.chatId) return []
+    this.topics ??= await this.loadTopics()
+    const prefix = `${this.chatId}:`
+    const out: TopicEntry[] = []
+    for (const [k, tp] of this.topics) {
+      if (!k.startsWith(prefix)) continue
+      const id = k.slice(prefix.length)
+      const kind = id.startsWith(SHARED)
+        ? "shared"
+        : id === "approvals"
+          ? "approvals"
+          : id.startsWith("ses_")
+            ? "session"
+            : "other"
+      out.push({ id, kind, name: tp.name, closed: !!tp.closed })
+    }
+    return out
+  }
+
+  /** Drops closed entries from the map, copying the file first. Only closed ones go; an open one is never dropped. */
+  async forgetTopics(sessionIDs: string[]): Promise<number> {
+    if (!this.chatId || sessionIDs.length === 0) return 0
+    this.topics ??= await this.loadTopics()
+    const drop = sessionIDs.filter(
+      (id) => this.topics!.get(this.topicKey(id))?.closed,
+    )
+    if (drop.length === 0) return 0
+    await this.settled()
+    const file = this.opts.topicsFile
+    if (file)
+      try {
+        await copyFile(file, `${file}.bak-${this.now()}`)
+      } catch (err) {
+        log("telegram_topics_backup_failed", {
+          message: (err as Error).message,
+        })
+        return 0
+      }
+    for (const id of drop) this.topics.delete(this.topicKey(id))
+    await this.saveTopics()
+    log("telegram_topics_forgotten", { count: drop.length })
+    return drop.length
+  }
+
   /** Closes the session's topic. Never deletes it; a failure is logged and left for the next end. */
   async closeTopic(
     sessionID: string,
-    why: "start" | "ended",
+    why: "start" | "ended" | "idle" | "tidy",
   ): Promise<boolean> {
-    if (this.opts.topics?.closeHeadless === false || !this.chatId) return false
+    // The switches are for the automatic close; asking for a tidy is its own say.
+    const sw = this.opts.topics
+    const off =
+      why === "tidy"
+        ? false
+        : why === "idle"
+          ? sw?.closeIdle === false
+          : sw?.closeHeadless === false
+    if (!this.chatId || off) return false
+    const since = this.now() - (this.reopenedAt.get(sessionID) ?? -Infinity)
+    if (why === "idle" && since < (this.opts.reopenDwellMs ?? REOPEN_DWELL_MS))
+      return false
     this.topics ??= await this.loadTopics()
     const t = this.topics.get(this.topicKey(sessionID))
-    if (!t || t.closed || !(await this.isForum())) return false
+    if (!t || t.closed || this.closing.has(sessionID)) return false
+    this.closing.add(sessionID)
     try {
-      await this.call("closeForumTopic", {
-        chat_id: this.chatId,
-        message_thread_id: t.thread,
-      })
-    } catch (err) {
-      if (!/TOPIC_NOT_MODIFIED/.test((err as Error).message)) {
-        log("telegram_topic_close_failed", {
-          session: sessionID,
-          thread: t.thread,
-          message: filterSecrets((err as Error).message),
+      if (!(await this.isForum())) return false
+      try {
+        await this.call("closeForumTopic", {
+          chat_id: this.chatId,
+          message_thread_id: t.thread,
         })
-        return false
+      } catch (err) {
+        if (!/TOPIC_NOT_MODIFIED/.test((err as Error).message)) {
+          log("telegram_topic_close_failed", {
+            session: sessionID,
+            thread: t.thread,
+            message: filterSecrets((err as Error).message),
+          })
+          return false
+        }
       }
+      t.closed = true
+      await this.saveTopics()
+      log("telegram_topic_closed", {
+        session: sessionID,
+        thread: t.thread,
+        why,
+      })
+      return true
+    } finally {
+      this.closing.delete(sessionID)
     }
-    t.closed = true
-    await this.saveTopics()
-    log("telegram_topic_closed", { session: sessionID, thread: t.thread, why })
-    return true
   }
 
   private readonly reopening = new Map<string, Promise<void>>()
+  /** Topics being closed right now: a second close of one waits for none and does nothing. */
+  private readonly closing = new Set<string>()
+  /** When the bridge last reopened each session's topic: an idle close waits after it. */
+  private readonly reopenedAt = new Map<string, number>()
+
+  /** The user wrote in a topic the bridge closed: it is reopened before the message is handled. */
+  private async reopenThread(thread?: number): Promise<void> {
+    if (thread === undefined || !this.chatId) return
+    this.topics ??= await this.loadTopics()
+    const prefix = `${this.chatId}:`
+    for (const [k, tp] of this.topics)
+      if (tp.thread === thread && tp.closed && k.startsWith(prefix)) {
+        const id = k.slice(prefix.length)
+        if (id.startsWith("ses_")) await this.reopenTopic(id, tp)
+        return
+      }
+  }
 
   /** Reopens a topic the bridge closed, before something is posted to it. */
   private reopenTopic(sessionID: string, t: Topic): Promise<void> {
@@ -997,6 +1095,7 @@ export class TelegramConnector implements Connector {
           }
         }
         t.closed = undefined
+        this.reopenedAt.set(sessionID, this.now())
         await this.saveTopics()
         log("telegram_topic_reopened", { session: sessionID, thread: t.thread })
       })().finally(() => this.reopening.delete(sessionID))
@@ -1064,7 +1163,14 @@ export class TelegramConnector implements Connector {
     }
   }
 
-  private async loadTopics(): Promise<Map<string, Topic>> {
+  private loading: Promise<Map<string, Topic>> | undefined
+
+  /** One read, shared: callers that arrive before it ends must get the same map, not each their own. */
+  private loadTopics(): Promise<Map<string, Topic>> {
+    return (this.loading ??= this.readTopics())
+  }
+
+  private async readTopics(): Promise<Map<string, Topic>> {
     const file = this.opts.topicsFile
     const out = new Map<string, Topic>()
     if (!file) return out
@@ -2000,6 +2106,7 @@ export class TelegramConnector implements Connector {
       this.note("rejected", "chat is not the paired one")
       return log("telegram_ignored", { kind: "message" })
     }
+    await this.reopenThread(m.message_thread_id)
     // A code typed for an approval is the operator's alone and never reaches a session.
     if (this.approvals && m.from && /^\d{6}$/.test(text)) {
       const r = await this.approvals.typed({
@@ -2587,6 +2694,18 @@ export class TelegramConnector implements Connector {
   ): Promise<void> {
     // "/cmd@otherbot" is for another bot sharing the group.
     if (to && !(await this.isMe(to))) return
+    if (
+      name.toLowerCase() === "topics" &&
+      /\bapply\b/i.test(args) &&
+      !this.isOwner(m.from)
+    ) {
+      this.note("refused", "topics apply: not the owner")
+      await this.deliver(m.message_thread_id, {
+        ok: false,
+        text: "Only the paired owner can close topics.",
+      })
+      return
+    }
     if (name.toLowerCase() === "interrupt" && !this.isOwner(m.from)) {
       this.note("refused", "interrupt: not the owner")
       await this.deliver(m.message_thread_id, { ok: false, text: OWNER_ONLY })
@@ -3450,7 +3569,11 @@ export type TelegramConfig = {
   apiBase: string
   statusCard: boolean
   rate: Rate
-  topics: { headless: "project" | "session"; closeHeadless: boolean }
+  topics: {
+    headless: "project" | "session"
+    closeHeadless: boolean
+    closeIdle: boolean
+  }
   draft: boolean
   notify: { finished?: boolean; failed?: boolean }
   icons: Record<string, string>
@@ -3508,8 +3631,11 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       }
     }
 
-    const topics: { headless: "project" | "session"; closeHeadless: boolean } =
-      { headless: "project", closeHeadless: true }
+    const topics: {
+      headless: "project" | "session"
+      closeHeadless: boolean
+      closeIdle: boolean
+    } = { headless: "project", closeHeadless: true, closeIdle: true }
     if (raw.topics !== undefined) {
       if (!isObject(raw.topics))
         return { error: `${at}topics must be an object` }
@@ -3521,6 +3647,10 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       if (c !== undefined && typeof c !== "boolean")
         return { error: `${at}topics.closeHeadless must be true or false` }
       if (c !== undefined) topics.closeHeadless = c
+      const ci = raw.topics.closeIdle
+      if (ci !== undefined && typeof ci !== "boolean")
+        return { error: `${at}topics.closeIdle must be true or false` }
+      if (ci !== undefined) topics.closeIdle = ci
     }
 
     const draft = raw.draft ?? false

@@ -67,6 +67,8 @@ export type SessionInfo = {
   title?: string
   /** A viewer (a TUI) has marked an idle transition viewed: false is a headless session. Unset when the host does not say. */
   viewed?: boolean
+  /** When the session was last busy or idle, in epoch ms. Unset when the host does not say. */
+  activeAt?: number
   model?: string
   modelRef?: { providerID: string; id: string; variant?: string }
 }
@@ -386,6 +388,8 @@ type Unsent = {
 }
 type UnsentKind = "finished" | "failed" | "question" | "permission"
 const PRESENCE_TICK_MS = 2000
+const TOPIC_TICK_MS = 10_000
+const TOPIC_SETTLE_MS = 120_000
 const SLEEP_GAP_MS = 30_000
 /** How often the cards of working sessions are checked for a stuck turn, and the step of the minutes they show. */
 const STUCK_CHECK_MS = 30_000
@@ -444,6 +448,11 @@ export class Bridge {
   private afkListener: ((mode: "on" | "off", until: number) => void) | undefined
   private tickedAt = 0
   private presenceTimer: ReturnType<typeof setInterval> | undefined
+  private topicTimer: ReturnType<typeof setInterval> | undefined
+  private openSessions: (() => Set<string>) | undefined
+  private startedAt = 0
+  /** How long a session must be quiet before its topic is closed; tests shorten it. */
+  topicSettleMs = TOPIC_SETTLE_MS
   /** Shortest time between two edits of a permission digest; tests shorten it. */
   digestGapMs = PERM_DIGEST_GAP_MS
   private reconcileTimer: ReturnType<typeof setInterval> | undefined
@@ -626,6 +635,7 @@ export class Bridge {
       afk: () => this.afkStatus(),
       autoAll: () => this.setAllWatch("auto"),
       interrupt: (root) => this.interruptTurn(root, "chat"),
+      tidy: (o) => this.tidyTopics({ ...o, source: "chat" }),
       setAfk: (mode, span) => this.setAfkFromChat(mode, span),
       chosenCount: () => this.router.chosen().length,
       version: async () => (await this.versionSource?.()) ?? "Version: unknown",
@@ -780,6 +790,11 @@ export class Bridge {
     }
   }
 
+  /** The sessions some TUI shows right now. */
+  onOpenSessions(fn: () => Set<string>): void {
+    this.openSessions = fn
+  }
+
   /** What `/version` answers in a chat. */
   onVersion(fn: () => Promise<string>): void {
     this.versionSource = fn
@@ -827,6 +842,11 @@ export class Bridge {
     for (const ch of this.channels) ch.mute?.(() => !this.router.away())
     for (const ch of this.channels) ch.home?.((id) => this.homeOf(id))
     void this.sweepTopics()
+    this.startedAt = this.now()
+    if (!this.topicTimer) {
+      this.topicTimer = setInterval(() => void this.topicTick(), TOPIC_TICK_MS)
+      this.topicTimer.unref?.()
+    }
     this.wasAway = this.router.away()
     this.wasWhy = this.router.state().reason
     this.tickedAt = this.now()
@@ -945,6 +965,8 @@ export class Bridge {
   async stop(): Promise<void> {
     clearInterval(this.presenceTimer)
     this.presenceTimer = undefined
+    clearInterval(this.topicTimer)
+    this.topicTimer = undefined
     clearInterval(this.reconcileTimer)
     this.reconcileTimer = undefined
     for (const ac of this.controllers.values()) ac.abort()
@@ -1391,6 +1413,235 @@ export class Bridge {
         message: filterSecrets((err as Error).message),
       })
     }
+  }
+
+  /**
+   * Closes the topic of every session that is not open in a TUI, not working, has no chat and nothing
+   * waiting, and has been quiet for the settle time. Never throws; reopening is the connector's.
+   */
+  async topicTick(): Promise<void> {
+    try {
+      const open = this.openSessions?.() ?? new Set<string>()
+      const waiting = new Set(
+        this.store
+          .list()
+          .filter((p) => p.state === "pending")
+          .map((p) => p.rootSessionID),
+      )
+      for (const c of this.active()) {
+        if (!c.closeTopic) continue
+        const ids = await this.safely(c, async () => c.topicSessions?.())
+        for (const id of ids ?? []) {
+          if (open.has(id) || waiting.has(id) || this.chat.has(id)) continue
+          if (this.host.busy(id)) continue
+          const last = Math.max(
+            this.lastActive.get(id) ?? 0,
+            this.states.get(id)?.at ?? 0,
+            this.startedAt,
+          )
+          if (this.now() - last < this.topicSettleMs) continue
+          const info = await this.host.session(id)
+          if (!info || info.parentID) continue
+          const why = info.viewed === false ? "ended" : "idle"
+          await this.safely(c, async () => c.closeTopic?.(id, why))
+        }
+      }
+    } catch (err) {
+      log("topic_tick_error", {
+        message: filterSecrets((err as Error).message),
+      })
+    }
+  }
+
+  /**
+   * Tidies the topics on request: lists every open topic with a verdict, and with `apply` closes the
+   * `close` ones through the connector's own close. Never deletes a topic or touches a message.
+   */
+  async tidyTopics(o: {
+    apply: boolean
+    idleHours: number
+    current?: string
+    source: "chat" | "rpc"
+  }): Promise<Outcome> {
+    const trace = traces.current()?.id
+    const limit = o.idleHours * 3_600_000
+    const age = (ms: number) =>
+      ms < 3_600_000
+        ? `${Math.max(1, Math.round(ms / 60_000))} min`
+        : ms < 48 * 3_600_000
+          ? `${Math.round(ms / 3_600_000)} h`
+          : `${Math.round(ms / 86_400_000)} d`
+    type Row = {
+      ch: Connector
+      id: string
+      name: string
+      verdict: "close" | "keep"
+      why: string
+      gone: boolean
+    }
+    const rows: Row[] = []
+    const earlier: Array<{ ch: Connector; id: string }> = []
+    let checked = 0
+    let unknown = 0
+    const guarded = (id: string) =>
+      this.chat.has(id) ||
+      this.host.busy(id) ||
+      this.store
+        .list()
+        .some((p) => p.state === "pending" && p.rootSessionID === id)
+    for (const ch of this.active()) {
+      const entries = await this.safely(ch, async () => ch.topicEntries?.())
+      for (const e of entries ?? []) {
+        const name = e.name ?? e.id.slice(-6)
+        if (e.kind !== "session") {
+          if (!e.closed && e.kind !== "other")
+            rows.push({
+              ch,
+              id: e.id,
+              name,
+              verdict: "keep",
+              why: e.kind === "approvals" ? "approvals topic" : "shared topic",
+              gone: false,
+            })
+          continue
+        }
+        let info: Awaited<ReturnType<Host["session"]>>
+        let answered = true
+        try {
+          info = await this.host.session(e.id)
+        } catch {
+          info = undefined
+          answered = false
+        }
+        if (!e.closed) {
+          checked++
+          if (!info && answered) unknown++
+        }
+        if (e.closed) {
+          if (!info && answered && !guarded(e.id))
+            earlier.push({ ch, id: e.id })
+          continue
+        }
+        const row = (verdict: "close" | "keep", why: string): Row => ({
+          ch,
+          id: e.id,
+          name,
+          verdict,
+          why,
+          gone: !info && answered,
+        })
+        if (e.id === o.current) rows.push(row("keep", "this topic"))
+        else if (
+          this.store
+            .list()
+            .some((p) => p.state === "pending" && p.rootSessionID === e.id)
+        )
+          rows.push(row("keep", "a question or permission waits"))
+        else if (this.host.busy(e.id)) rows.push(row("keep", "working"))
+        else if (this.chat.has(e.id)) rows.push(row("keep", "chat is on"))
+        else if (!answered) rows.push(row("keep", "the host did not answer"))
+        else if (!info) rows.push(row("close", "session gone"))
+        else if (info.activeAt === undefined)
+          rows.push(row("keep", "age unknown"))
+        else if (this.now() - info.activeAt > limit)
+          rows.push(row("close", `idle ${age(this.now() - info.activeAt)}`))
+        else
+          rows.push(
+            row("keep", `active ${age(this.now() - info.activeAt)} ago`),
+          )
+      }
+    }
+    const closing = rows.filter((r) => r.verdict === "close")
+    const keeping = rows.filter((r) => r.verdict === "keep")
+    const list = (rs: Row[]) => {
+      const lines = rs
+        .slice(0, 12)
+        .map((r) => `• ${truncate(r.name, 60)}: ${r.why}`)
+      if (rs.length > 12) lines.push(`… and ${rs.length - 12} more`)
+      return lines
+    }
+    const silent = checked >= 3 && unknown === checked
+    if (o.apply && silent) {
+      log("topics_tidy", {
+        apply: true,
+        source: o.source,
+        trace,
+        outcome: "host-silent",
+        checked,
+      })
+      return no(
+        "The host knows none of the sessions: it is probably not answering. Nothing was closed. Try again later.",
+      )
+    }
+    if (!o.apply) {
+      log("topics_tidy", {
+        apply: false,
+        idleHours: o.idleHours,
+        source: o.source,
+        trace,
+        close: closing.length,
+        keep: keeping.length,
+      })
+      return yes(
+        [
+          `Dry run (idle limit ${o.idleHours} h): ${closing.length} to close, ${keeping.length} kept.`,
+          silent
+            ? "Warning: the host knows none of the sessions, so apply would be refused."
+            : "",
+          closing.length ? "close:" : "",
+          ...list(closing),
+          keeping.length ? "keep:" : "",
+          ...list(keeping),
+          closing.length || earlier.length
+            ? "Send /topics apply to close them."
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      )
+    }
+    let closed = 0
+    let failed = 0
+    const done: Row[] = []
+    for (const r of closing) {
+      const ok = await this.safely(r.ch, async () =>
+        r.ch.closeTopic?.(r.id, "tidy"),
+      )
+      if (ok) {
+        closed++
+        done.push(r)
+      } else failed++
+    }
+    let forgot = 0
+    for (const ch of new Set(earlier.map((x) => x.ch)))
+      forgot +=
+        (await this.safely(ch, async () =>
+          ch.forgetTopics?.(
+            earlier.filter((x) => x.ch === ch).map((x) => x.id),
+          ),
+        )) ?? 0
+    log("topics_tidy", {
+      apply: true,
+      idleHours: o.idleHours,
+      source: o.source,
+      trace,
+      closed,
+      failed,
+      kept: keeping.length,
+      forgot,
+    })
+    return yes(
+      [
+        `Closed ${closed} topic${closed === 1 ? "" : "s"}, kept ${keeping.length}.` +
+          (failed ? ` ${failed} could not be closed (see the log).` : ""),
+        ...list(done),
+        forgot
+          ? `Forgot ${forgot} closed topic${forgot === 1 ? "" : "s"} of deleted sessions (the map was backed up).`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
   }
 
   /** Once at start: closes the topics already kept whose session is headless and idle. */

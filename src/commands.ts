@@ -50,6 +50,7 @@ const ANYWHERE_COMMANDS = [
   "night",
   "version",
   "trace",
+  "topics",
 ] as const
 const ALIASES: Record<string, string> = { effort: "variant", start: "help" }
 const KNOWN = new Set<string>([
@@ -88,6 +89,12 @@ export type CommandDeps = {
   setAfk(mode: "on" | "off", span?: string): Outcome
   /** Interrupts the session's running turn, once confirmed; the result to show. */
   interrupt(root: string): Promise<Outcome>
+  /** Lists the open topics with a verdict, and closes the ones to close when `apply` is set. */
+  tidy(o: {
+    apply: boolean
+    idleHours: number
+    current?: string
+  }): Promise<Outcome>
   /** Puts every session on auto; how many it reached. Never turns anything on. */
   autoAll(): number
   /** How many sessions have a mode of their own. */
@@ -349,6 +356,30 @@ export class Commands {
     }
     if (name === "version")
       return this.done(info, "applied", yes(await this.d.version()))
+    if (name === "topics") {
+      let apply = false
+      let idleHours = 24
+      for (const w of (m.command?.args ?? "")
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)) {
+        const n = /^(\d+)h?$/.exec(w)
+        if (w === "apply") apply = true
+        else if (n && Number(n[1]) >= 1 && Number(n[1]) <= 8760)
+          idleHours = Number(n[1])
+        else
+          return this.done(
+            info,
+            "invalid",
+            no("Usage: /topics [apply] [hours]"),
+          )
+      }
+      return this.done(
+        info,
+        "applied",
+        await this.d.tidy({ apply, idleHours, current: m.sessionKey }),
+      )
+    }
     if (name === "trace")
       return this.done(
         info,
@@ -420,6 +451,7 @@ export class Commands {
           "/variant (/effort): pick the model's effort variant",
           "/status: redraw and pin the status card",
           "/stop: stop the running turn",
+          "/topics [apply] [hours]: list open topics and which to close; apply closes them (owner only)",
           "/interrupt: interrupt the running turn (asks first)",
           "/undo: revert the last turn (asks first)",
           "/resume: wake this session if it is stuck",

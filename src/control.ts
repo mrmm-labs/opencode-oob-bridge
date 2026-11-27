@@ -130,6 +130,8 @@ export class Control {
   private readonly tuis = new Map<string, number>()
   /** The version each attached TUI says it runs. */
   private readonly tuiVersions = new Map<string, string>()
+  /** The session each TUI shows, as it last reported. */
+  private readonly tuiRoots = new Map<string, string[]>()
   private installed: Installed | undefined
   private installedAt = -Infinity
   private readonly waiting = new Map<string, Waiting>()
@@ -182,6 +184,7 @@ export class Control {
     )
     o.bridge.onWaiting((id) => this.waitingCount(id))
     o.bridge.onVersion(() => this.versionText())
+    o.bridge.onOpenSessions(() => this.openSessions())
     o.bridge.subscribe(() => this.v++)
     const bridge = o.bridge
     const anyUp = () =>
@@ -251,6 +254,7 @@ export class Control {
       if (at < cut) {
         this.tuis.delete(id)
         this.tuiVersions.delete(id)
+        this.tuiRoots.delete(id)
       }
     return this.tuis.size
   }
@@ -773,9 +777,19 @@ export class Control {
     )
   }
 
-  /** `roots`: the sessions a TUI looks at. */
-  watch(roots: string[]): void {
+  /** `roots`: the sessions a TUI looks at. With `tui`, they are also what that TUI shows. */
+  watch(roots: string[], tui?: string): void {
     this.roots = roots.slice(0, 4)
+    if (tui !== undefined) this.tuiRoots.set(tui, roots.slice(0, 4))
+  }
+
+  /** The sessions some TUI that is still reporting shows. */
+  openSessions(): Set<string> {
+    this.attached()
+    const out = new Set<string>()
+    for (const [tui, roots] of this.tuiRoots)
+      if (this.tuis.has(tui)) for (const r of roots) out.add(r)
+    return out
   }
 
   private done(r: Omit<OpResult, "snapshot">): OpResult {
@@ -818,6 +832,22 @@ export class Control {
               " for " +
               (span ?? Math.round(router.overrideMs() / 60_000) + "m"),
           })
+        }
+        case "topics": {
+          const h = args.idleHours === undefined ? 24 : args.idleHours
+          if (
+            typeof h !== "number" ||
+            !Number.isInteger(h) ||
+            h < 1 ||
+            h > 8760
+          )
+            return fail("idleHours is a whole number of hours, 1 to 8760")
+          const out = await bridge.tidyTopics({
+            apply: args.apply === true,
+            idleHours: h,
+            source: "rpc",
+          })
+          return this.done({ ok: out.ok, text: out.text })
         }
         case "interrupt": {
           const target = str(args.session) ?? root

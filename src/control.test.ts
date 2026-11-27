@@ -137,6 +137,20 @@ describe("who counts as away", () => {
     await r.done()
   })
 
+  it("a session is open while a window that is still reporting shows it", async () => {
+    const r = await rig()
+    r.control.heartbeat("a", r.clock.t)
+    r.control.watch(["s1"], "a")
+    r.control.heartbeat("b", r.clock.t)
+    r.control.watch(["s2"], "b")
+    assert.deepEqual([...r.control.openSessions()].sort(), ["s1", "s2"])
+    r.clock.t += PRESENCE_MS + 1
+    r.control.heartbeat("b", r.clock.t)
+    r.control.watch(["s2"], "b")
+    assert.deepEqual([...r.control.openSessions()], ["s2"])
+    await r.done()
+  })
+
   it("input in any window counts, and a window that stops reporting is gone", async () => {
     const r = await rig()
     const t0 = r.clock.t

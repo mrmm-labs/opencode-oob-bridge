@@ -202,6 +202,14 @@ export type Inbound = {
 }
 
 /** Choices to tap. The connector pages them; what comes back is always one of `choices`. */
+/** A topic of a connector: of a session, of a shared project topic, or the approvals topic. */
+export type TopicEntry = {
+  id: string
+  kind: "session" | "shared" | "approvals" | "other"
+  name?: string
+  closed: boolean
+}
+
 export type Menu = {
   /** Only the paired owner may tap a choice. */
   owner?: boolean
@@ -345,7 +353,14 @@ export interface Connector {
   /** The sessions that have an open topic of their own. */
   topicSessions?(): Promise<string[]>
   /** Closes (never deletes) a session's topic; true when it is closed now. Never throws. */
-  closeTopic?(sessionID: string, why: "start" | "ended"): Promise<boolean>
+  closeTopic?(
+    sessionID: string,
+    why: "start" | "ended" | "idle" | "tidy",
+  ): Promise<boolean>
+  /** Every topic the connector keeps, for a tidy: which session, what it is called, whether it is closed. */
+  topicEntries?(): Promise<TopicEntry[]>
+  /** Drops entries of closed topics from the connector's map, after a backup of it; how many were dropped. */
+  forgetTopics?(sessionIDs: string[]): Promise<number>
   /** Where a session posts when it has no topic of its own; asked for before a topic is made. */
   home?(of: (sessionID: string) => Promise<Home | undefined>): void
   /** Tells the connector how to ask whether it is quiet hours, for messages that are not pushes (replies, files). */
