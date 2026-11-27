@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.52.0...v0.53.0) (2026-11-27)
+
+
+### Features
+
+* mark the topic of a session open in a TUI, and a switch for subagent cards ([#186](https://github.com/mrmm-labs/opencode-oob-bridge/issues/186)) ([b080689](https://github.com/mrmm-labs/opencode-oob-bridge/commit/b080689b0ee6d95ca3b85eb137686dfc711267bd))
+
 ## [0.52.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.51.0...v0.52.0) (2026-11-27)
 
 
