@@ -361,6 +361,8 @@ export interface Connector {
     sessionID: string,
     why: "start" | "ended" | "idle" | "tidy",
   ): Promise<boolean>
+  /** The sessions some TUI shows right now: their topics are marked, and the rest are not. Paced by the connector; never throws. */
+  markOpen?(open: Set<string>): Promise<void>
   /** Every topic the connector keeps, for a tidy: which session, what it is called, whether it is closed. */
   topicEntries?(): Promise<TopicEntry[]>
   /** Drops entries of closed topics from the connector's map, after a backup of it; how many were dropped. */

@@ -397,6 +397,25 @@ describe("the prompts of a subagent", () => {
   })
 })
 
+describe("cards.enabled: false", () => {
+  it("posts and edits no card, and a question is not a reply", async () => {
+    const r = await rig({ config: { cards: { enabled: false } } })
+    await r.ev("session.execution.started", "ses_c1")
+    await r.ev("session.text.ended", "ses_c1", { text: "Found it" })
+    await r.ev("session.execution.succeeded", "ses_c1")
+    await r.wait(300)
+    assert.equal(r.cards().length, 0)
+    assert.equal(r.edits().length, 0)
+    await r.question("ses_c1", "Use the cache?")
+    const q = await r.tg.waitFor(() =>
+      r.sends().find((b) => /Use the cache\?/.test(b.text)),
+    )
+    assert.equal(q.reply_parameters, undefined)
+    assert.equal(r.edits().length, 0, "no card to show waiting on")
+    await r.done()
+  })
+})
+
 describe("a parent without a topic of its own", () => {
   it("gets no card, and its subagent's question goes to the shared topic as before", async () => {
     const r = await rig({

@@ -1483,6 +1483,7 @@ export class Bridge {
     id: string,
     c: { status?: SubStatus; last?: string },
   ): Promise<Sub | undefined> {
+    if (!this.cfg.cards.enabled) return undefined
     const root = this.host.root(id)
     if (root === id) return undefined
     let sub = this.subs.get(id)
@@ -1664,6 +1665,8 @@ export class Bridge {
   async topicTick(): Promise<void> {
     try {
       const open = this.openSessions?.() ?? new Set<string>()
+      for (const c of this.active())
+        await this.safely(c, async () => c.markOpen?.(open))
       const waiting = new Set(
         this.store
           .list()

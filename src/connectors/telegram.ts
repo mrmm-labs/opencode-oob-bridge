@@ -185,6 +185,7 @@ export type TelegramOptions = {
     headless: "project" | "session"
     closeHeadless?: boolean
     closeIdle?: boolean
+    markOpen?: boolean
   }
   /** A topic the bridge reopened is not closed again for this long. */
   reopenDwellMs?: number
@@ -254,6 +255,11 @@ const HANDOVER_MS = 5_000
 const DEFAULT_RATE: Rate = { gapMs: 1100, perMinute: 18 }
 /** Topic-file keys of shared topics start with this after the chat id; session ids never do. */
 const SHARED = "agents/"
+/** Leads the name of a topic whose session is open in a TUI. */
+const OPEN_MARK = "🟢 "
+/** The name to send: the base name, led by the mark when it is wanted and not already there. */
+const marked = (name: string, on: boolean): string =>
+  on && !name.startsWith(OPEN_MARK) ? truncate(OPEN_MARK + name, 128) : name
 /** An idle close waits this long after the bridge reopened a topic. */
 const REOPEN_DWELL_MS = 10 * 60_000
 /** The most of a session title a tag shows. */
@@ -348,6 +354,8 @@ type Topic = {
   icon?: string
   /** What the card shows now; not kept across restarts. */
   cardText?: string
+  /** The name in Telegram has the open mark; `name` never does. */
+  marked?: boolean
   /** The bridge closed this topic (its session is headless and idle); it is reopened when used. */
   closed?: boolean
 }
@@ -419,7 +427,6 @@ export class TelegramConnector implements Connector {
     string,
     {
       want: SessionState
-      renamedAt: number
       editedAt: number
       timer?: ReturnType<typeof setTimeout>
     }
@@ -1076,6 +1083,43 @@ export class TelegramConnector implements Connector {
   }
 
   private readonly reopening = new Map<string, Promise<void>>()
+  /** When each topic was last renamed (key is the topic's): the title and the mark share one pace. */
+  private readonly renamedAt = new Map<string, number>()
+  /** Whether each session's topic should carry the open mark, as last told. */
+  private readonly marks = new Map<string, boolean>()
+
+  /** Marks the topics of the sessions a TUI shows and unmarks the rest, at most one rename per topic per minute. */
+  async markOpen(open: Set<string>): Promise<void> {
+    if (!this.chatId) return
+    this.topics ??= await this.loadTopics()
+    const on = this.opts.topics?.markOpen !== false
+    const prefix = `${this.chatId}:`
+    for (const [key, tp] of this.topics) {
+      const id = key.slice(prefix.length)
+      if (!key.startsWith(prefix) || !id.startsWith("ses_")) continue
+      const want = on && open.has(id)
+      this.marks.set(id, want)
+      if (!!tp.marked === want || tp.closed || !tp.name) continue
+      if (this.now() - (this.renamedAt.get(key) ?? -Infinity) < RENAME_GAP_MS)
+        continue
+      if (!(await this.isForum())) return
+      this.renamedAt.set(key, this.now())
+      try {
+        await this.call("editForumTopic", {
+          chat_id: this.chatId,
+          message_thread_id: tp.thread,
+          name: marked(tp.name, want),
+        })
+      } catch (err) {
+        if (!/TOPIC_NOT_MODIFIED/.test((err as Error).message)) {
+          this.fail(err)
+          continue
+        }
+      }
+      tp.marked = want || undefined
+      await this.saveTopics()
+    }
+  }
   /** Topics being closed right now: a second close of one waits for none and does nothing. */
   private readonly closing = new Set<string>()
   /** When the bridge last reopened each session's topic: an idle close waits after it. */
@@ -1279,7 +1323,6 @@ export class TelegramConnector implements Connector {
       const key = this.topicKey(state.id)
       const live = this.live.get(key) ?? {
         want: state,
-        renamedAt: -Infinity,
         editedAt: -Infinity,
       }
       // The Stop button appears and goes away at once.
@@ -1331,6 +1374,7 @@ export class TelegramConnector implements Connector {
       128,
     )
     const now = this.now()
+    const want = this.marks.get(s.id) ?? !!topic.marked
     let wait = Infinity
     const due = (last: number, gap: number) => {
       if (last + gap <= now) return true
@@ -1342,18 +1386,22 @@ export class TelegramConnector implements Connector {
     const newIcon =
       icon && icon.custom_emoji_id !== topic.iconId ? icon : undefined
     if (
-      (topic.name !== name || newIcon) &&
-      due(live.renamedAt, RENAME_GAP_MS)
+      (topic.name !== name || !!topic.marked !== want || newIcon) &&
+      due(this.renamedAt.get(key) ?? -Infinity, RENAME_GAP_MS)
     ) {
-      live.renamedAt = now
+      this.renamedAt.set(key, now)
       try {
         await this.call("editForumTopic", {
           chat_id: this.chatId,
           message_thread_id: topic.thread,
-          name: topic.name !== name ? name : undefined,
+          name:
+            topic.name !== name || !!topic.marked !== want
+              ? marked(name, want)
+              : undefined,
           icon_custom_emoji_id: newIcon?.custom_emoji_id,
         })
         topic.name = name
+        topic.marked = want || undefined
         if (newIcon) {
           topic.iconId = newIcon.custom_emoji_id
           topic.icon = newIcon.emoji
@@ -3593,6 +3641,7 @@ export type TelegramConfig = {
     headless: "project" | "session"
     closeHeadless: boolean
     closeIdle: boolean
+    markOpen: boolean
   }
   draft: boolean
   notify: { finished?: boolean; failed?: boolean }
@@ -3655,7 +3704,13 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       headless: "project" | "session"
       closeHeadless: boolean
       closeIdle: boolean
-    } = { headless: "project", closeHeadless: true, closeIdle: true }
+      markOpen: boolean
+    } = {
+      headless: "project",
+      closeHeadless: true,
+      closeIdle: true,
+      markOpen: true,
+    }
     if (raw.topics !== undefined) {
       if (!isObject(raw.topics))
         return { error: `${at}topics must be an object` }
@@ -3671,6 +3726,10 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       if (ci !== undefined && typeof ci !== "boolean")
         return { error: `${at}topics.closeIdle must be true or false` }
       if (ci !== undefined) topics.closeIdle = ci
+      const mo = raw.topics.markOpen
+      if (mo !== undefined && typeof mo !== "boolean")
+        return { error: `${at}topics.markOpen must be true or false` }
+      if (mo !== undefined) topics.markOpen = mo
     }
 
     const draft = raw.draft ?? false

@@ -107,6 +107,8 @@ export type Config = {
   }
   /** Approvals for local tools over a unix socket: off unless `enabled`. */
   approvals: ApprovalsConfig
+  /** The card of each subagent in its parent's topic. */
+  cards: { enabled: boolean }
   /** The card posted when a turn ends with changes or after a long turn. */
   turnCard: { enabled: boolean; minSeconds: number }
   /** Whether a permission can be answered from a channel: never, Allow once and Deny, or also Always. */
@@ -334,6 +336,16 @@ function parseTurnCard(raw: unknown): Config["turnCard"] | { error: string } {
   )
     return { error: "turnCard.minSeconds must be 0 to 86400" }
   return { enabled: true, minSeconds }
+}
+
+function parseCards(raw: unknown): Config["cards"] | { error: string } {
+  if (raw === undefined || raw === true) return { enabled: true }
+  if (raw === false) return { enabled: false }
+  if (!isObject(raw)) return { error: "cards must be a boolean or an object" }
+  const { enabled = true } = raw
+  if (typeof enabled !== "boolean")
+    return { error: "cards.enabled must be true or false" }
+  return { enabled }
 }
 
 function parseDeadman(raw: unknown): Config["deadman"] | { error: string } {
@@ -757,6 +769,8 @@ export function parseConfig(raw: unknown): Config | { error: string } {
   if ("error" in overnight) return overnight
   const turnCard = parseTurnCard(raw.turnCard)
   if ("error" in turnCard) return turnCard
+  const cards = parseCards(raw.cards)
+  if ("error" in cards) return cards
 
   const quiet = parseQuiet(raw.quiet)
   if (quiet && "error" in quiet) return quiet
@@ -788,6 +802,7 @@ export function parseConfig(raw: unknown): Config | { error: string } {
     link,
     approvals,
     turnCard,
+    cards,
     permissions,
     diff,
     overnight,
