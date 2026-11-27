@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.53.0...v0.53.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* /topics keeps the topic of a session open in a TUI ([#188](https://github.com/mrmm-labs/opencode-oob-bridge/issues/188)) ([02b0422](https://github.com/mrmm-labs/opencode-oob-bridge/commit/02b04223f5b145f217bc609a52227e2e670a084b))
+
 ## [0.53.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.52.0...v0.53.0) (2026-11-27)
 
 
