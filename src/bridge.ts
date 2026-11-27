@@ -55,6 +55,13 @@ import {
   type Stats,
 } from "./turncard.ts"
 import { CAPTION_MAX, prepareFile, type FileOutcome } from "./sendfile.ts"
+import {
+  isFinal,
+  lastLine,
+  renderSub,
+  subDescription,
+  type SubStatus,
+} from "./subcards.ts"
 import { traces } from "./trace.ts"
 import { clock, formatDuration, sleep, truncate } from "./util.ts"
 import type { Gate } from "./approvals/service.ts"
@@ -389,6 +396,37 @@ type Unsent = {
 type UnsentKind = "finished" | "failed" | "question" | "permission"
 const PRESENCE_TICK_MS = 2000
 const TOPIC_TICK_MS = 10_000
+/** A card's change waits this long for more to ride on the same edit. */
+const SUB_DEBOUNCE_MS = 2_000
+/** Least time between two edits of one subagent card. */
+const SUB_GAP_MS = 8_000
+/** A card that could not be made (no topic of its own) is tried again no sooner than this. */
+const SUB_RETRY_MS = 30_000
+/** A finished card is forgotten by the bridge, not removed from the chat, after this long. */
+const SUB_KEEP_MS = 60 * 60_000
+
+/** One subagent's card: what it shows and where it was posted. */
+type Sub = {
+  root: string
+  depth: number
+  agent: string
+  desc: string
+  status: SubStatus
+  startedAt: number
+  endedAt?: number
+  last?: string
+  refs: Record<string, string>
+  shown: Record<string, string>
+  /** Connectors whose card could not be edited: left alone, never replaced by a new message. */
+  lost: Set<string>
+  editedAt: number
+  tried: number
+  /** Whether the last flush showed it waiting, and for how many whole minutes it had run. */
+  waiting: boolean
+  minute: number
+  timer?: ReturnType<typeof setTimeout>
+  job?: Promise<void>
+}
 const TOPIC_SETTLE_MS = 120_000
 const SLEEP_GAP_MS = 30_000
 /** How often the cards of working sessions are checked for a stuck turn, and the step of the minutes they show. */
@@ -449,6 +487,10 @@ export class Bridge {
   private tickedAt = 0
   private presenceTimer: ReturnType<typeof setInterval> | undefined
   private topicTimer: ReturnType<typeof setInterval> | undefined
+  private readonly subs = new Map<string, Sub>()
+  /** Tests shorten these. */
+  subDebounceMs = SUB_DEBOUNCE_MS
+  subGapMs = SUB_GAP_MS
   private openSessions: (() => Set<string>) | undefined
   private startedAt = 0
   /** How long a session must be quiet before its topic is closed; tests shorten it. */
@@ -844,7 +886,10 @@ export class Bridge {
     void this.sweepTopics()
     this.startedAt = this.now()
     if (!this.topicTimer) {
-      this.topicTimer = setInterval(() => void this.topicTick(), TOPIC_TICK_MS)
+      this.topicTimer = setInterval(() => {
+        void this.topicTick()
+        this.subTick()
+      }, TOPIC_TICK_MS)
       this.topicTimer.unref?.()
     }
     this.wasAway = this.router.away()
@@ -967,6 +1012,8 @@ export class Bridge {
     this.presenceTimer = undefined
     clearInterval(this.topicTimer)
     this.topicTimer = undefined
+    for (const s of this.subs.values()) clearTimeout(s.timer)
+    this.subs.clear()
     clearInterval(this.reconcileTimer)
     this.reconcileTimer = undefined
     for (const ac of this.controllers.values()) ac.abort()
@@ -1018,9 +1065,11 @@ export class Bridge {
             return await this.onUserPrompt(e.data)
           return
         case "session.execution.started":
+          this.sub(e.data.sessionID, { status: "running" })
           this.turns.delete(e.data.sessionID)
           return await this.onState(e.data.sessionID, "working")
         case "session.execution.interrupted":
+          this.sub(e.data.sessionID, { status: "idle" })
           void this.release(e.data.sessionID, "free")
           await this.endTurn(e.data.sessionID)
           await this.onState(e.data.sessionID, "idle")
@@ -1028,9 +1077,14 @@ export class Bridge {
         case "session.text.delta":
           return await this.onText(e.data, e.data.delta)
         case "session.text.ended":
+          if (e.data.text?.trim())
+            this.sub(e.data.sessionID, { last: lastLine(e.data.text) })
           return await this.onText(e.data, undefined, e.data.text)
         case "session.execution.succeeded":
         case "session.execution.failed":
+          this.sub(e.data.sessionID, {
+            status: e.type === "session.execution.failed" ? "error" : "done",
+          })
           void this.release(e.data.sessionID, "free")
           await this.onFinished(
             e.data.sessionID,
@@ -1415,6 +1469,186 @@ export class Bridge {
     }
   }
 
+  /** Records what happened to a subagent for its card. Never throws; a root session has no card. */
+  private sub(id: string, c: { status?: SubStatus; last?: string }): void {
+    this.subTouch(id, c).catch((err) =>
+      log("subcard_error", {
+        session: id,
+        message: filterSecrets((err as Error).message),
+      }),
+    )
+  }
+
+  private async subTouch(
+    id: string,
+    c: { status?: SubStatus; last?: string },
+  ): Promise<Sub | undefined> {
+    const root = this.host.root(id)
+    if (root === id) return undefined
+    let sub = this.subs.get(id)
+    if (!sub) {
+      const info = await this.host.session(id)
+      if (!info?.parentID) return undefined
+      let depth = 1
+      for (
+        let up: string | undefined = info.parentID;
+        up && up !== root && depth < 8;
+        depth++
+      )
+        up = (await this.host.session(up))?.parentID
+      sub = this.subs.get(id) ?? {
+        root,
+        depth,
+        agent: info.agent ?? "agent",
+        desc: redact(subDescription(info.title), this.cfg.redact),
+        status: "running",
+        startedAt: this.now(),
+        refs: {},
+        shown: {},
+        lost: new Set(),
+        editedAt: 0,
+        tried: 0,
+        waiting: false,
+        minute: 0,
+      }
+      this.subs.set(id, sub)
+    }
+    if (c.status) {
+      if (isFinal(c.status)) {
+        if (!isFinal(sub.status)) sub.endedAt = this.now()
+      } else {
+        if (isFinal(sub.status)) sub.startedAt = this.now()
+        sub.endedAt = undefined
+      }
+      sub.status = c.status
+    }
+    if (c.last) sub.last = redact(c.last, this.cfg.redact)
+    this.subSchedule(id, sub)
+    return sub
+  }
+
+  /** One edit per card at a time: after the debounce, and not sooner than the gap since the last edit. */
+  private subSchedule(id: string, sub: Sub): void {
+    if (sub.timer) return
+    const made = Object.keys(sub.refs).length > 0
+    const wait = made
+      ? Math.max(this.subDebounceMs, sub.editedAt + this.subGapMs - this.now())
+      : Math.max(0, sub.tried + SUB_RETRY_MS - this.now())
+    sub.timer = setTimeout(() => {
+      sub.timer = undefined
+      void this.subFlush(id, sub)
+    }, wait)
+    sub.timer.unref?.()
+  }
+
+  private subStatus(id: string, sub: Sub): SubStatus {
+    return this.store
+      .list()
+      .some((p) => p.state === "pending" && p.sessionID === id)
+      ? "waiting"
+      : sub.status
+  }
+
+  /** Posts the card, or edits it to what it should show now. Flushes of one card run one after the other. */
+  private subFlush(id: string, sub: Sub): Promise<void> {
+    const run = async () => {
+      try {
+        const r = await this.routed(id)
+        if (!r) return
+        const status = this.subStatus(id, sub)
+        const ms =
+          (isFinal(status) ? (sub.endedAt ?? this.now()) : this.now()) -
+          sub.startedAt
+        const view = renderSub({
+          agent: sub.agent,
+          desc: sub.desc,
+          depth: sub.depth,
+          status,
+          ms,
+          last: sub.last,
+        })
+        const text = `${view.title}\n${view.message}`
+        for (const ch of r.to) {
+          const cap = ch.capabilities
+          if (!cap.threads || !cap.edit || !ch.update) continue
+          if (sub.lost.has(ch.id) || sub.shown[ch.id] === text) continue
+          const push = {
+            title: view.title,
+            message: view.message,
+            session: r.session,
+            silent: true,
+            own: true,
+          }
+          const ref = sub.refs[ch.id]
+          if (ref === undefined) {
+            sub.tried = this.now()
+            const sent = await this.safely(ch, async () => ch.send(push))
+            if (sent === undefined) continue
+            sub.refs[ch.id] = sent
+            this.tally.pushes++
+          } else if (
+            !(await this.safely(ch, async () => ch.update!(ref, push)))
+          ) {
+            log("subcard_edit_failed", { channel: ch.id, session: id })
+            sub.lost.add(ch.id)
+            continue
+          }
+          sub.shown[ch.id] = text
+          sub.editedAt = this.now()
+        }
+        sub.waiting = status === "waiting"
+        sub.minute = Math.floor(ms / 60_000)
+      } catch (err) {
+        log("subcard_error", {
+          session: id,
+          message: filterSecrets((err as Error).message),
+        })
+      }
+    }
+    sub.job = (sub.job ?? Promise.resolve()).then(run)
+    return sub.job
+  }
+
+  /** The messages of the subagent's card, made now if it has none, so a prompt has something to reply to. */
+  private async subCard(id: string): Promise<Record<string, string>> {
+    try {
+      const sub = await this.subTouch(id, {})
+      if (!sub) return {}
+      if (Object.keys(sub.refs).length === 0) await this.subFlush(id, sub)
+      return sub.refs
+    } catch {
+      return {}
+    }
+  }
+
+  /** A prompt was put or changed: cards whose waiting state changed are refreshed. */
+  private subsDirty(): void {
+    for (const [id, sub] of this.subs)
+      if (
+        Object.keys(sub.refs).length > 0 &&
+        (this.subStatus(id, sub) === "waiting") !== sub.waiting
+      )
+        this.subSchedule(id, sub)
+  }
+
+  /** Once per topic tick: running cards whose whole minutes changed are refreshed; old finished ones are forgotten. */
+  private subTick(): void {
+    for (const [id, sub] of this.subs) {
+      if (isFinal(sub.status)) {
+        if (this.now() - (sub.endedAt ?? this.now()) > SUB_KEEP_MS) {
+          clearTimeout(sub.timer)
+          this.subs.delete(id)
+        }
+        continue
+      }
+      if (
+        Object.keys(sub.refs).length > 0 &&
+        Math.floor((this.now() - sub.startedAt) / 60_000) !== sub.minute
+      )
+        this.subSchedule(id, sub)
+    }
+  }
+
   /**
    * Closes the topic of every session that is not open in a TUI, not working, has no chat and nothing
    * waiting, and has been quiet for the settle time. Never throws; reopening is the connector's.
@@ -1763,6 +1997,7 @@ export class Bridge {
   }
 
   private pendingGauge() {
+    this.subsDirty()
     this.tel.gauge(
       "oob.pending",
       {},
@@ -1854,10 +2089,14 @@ export class Bridge {
     reachable: boolean,
   ) {
     const questions = p.questions ?? []
+    const card = await this.subCard(p.sessionID)
     const sent = await this.dispatch(
       "question",
       r.to,
       (ch) => ({
+        ...(card[ch.id] && ch.capabilities.threads
+          ? { replyTo: card[ch.id] }
+          : {}),
         ...this.fmt(
           "question",
           qvars(reachable ? ch.hint(p.id, questions) : NO_WINDOW),
@@ -2087,6 +2326,7 @@ export class Bridge {
       : this.cfg.permissions.notify
     const to =
       mode === "all" ? r.to : r.to.filter((c) => !c.capabilities.inboundPrompt)
+    const card = to.length ? await this.subCard(d.sessionID) : {}
     const sent =
       to.length === 0
         ? { refs: {} }
@@ -2095,6 +2335,9 @@ export class Bridge {
             to,
             (ch) => ({
               ...f,
+              ...(card[ch.id] && ch.capabilities.threads
+                ? { replyTo: card[ch.id] }
+                : {}),
               ...this.shape(ch, r.session),
               permission:
                 ch.capabilities.buttons && this.permissionChoices().length

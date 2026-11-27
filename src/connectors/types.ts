@@ -154,6 +154,10 @@ export type Push = {
   action?: { label: string; control: string }
   /** Quiet hours: true delivers without a sound or notification, false makes one regardless. Unset: the connector decides. */
   silent?: boolean
+  /** Only in the session's own thread: with none (a shared thread, no threads at all) nothing is sent and `send` answers undefined. */
+  own?: boolean
+  /** The message (as `send` returned it) this one answers: shown as a reply to it. */
+  replyTo?: string
   /** The operator asked for this push (a test): sent even while present. */
   explicit?: boolean
   /** The connector may record transport facts here; it is never shown to anyone. */

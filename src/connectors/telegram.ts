@@ -688,6 +688,7 @@ export class TelegramConnector implements Connector {
     const q = push.prompt
     const live = q && oneTap(q.questions) ? q : undefined
     const one = live?.questions[0]
+    if (push.own && !(await this.ownTopic(push.session))) return undefined
     try {
       for (let attempt = 0; ; attempt++) {
         const thread = await this.thread(push.session)
@@ -711,6 +712,14 @@ export class TelegramConnector implements Connector {
                 }),
               parse_mode: "HTML",
               link_preview_options: { is_disabled: true },
+              ...(push.replyTo
+                ? {
+                    reply_parameters: {
+                      message_id: Number(push.replyTo),
+                      allow_sending_without_reply: true,
+                    },
+                  }
+                : {}),
               // A failure needs attention: it is the one push that may make a sound.
               disable_notification:
                 push.silent ??
@@ -734,7 +743,10 @@ export class TelegramConnector implements Connector {
                             ],
                           ],
                         }
-                      : undefined,
+                      : // An empty keyboard keeps the send budget from merging two own messages into one.
+                        push.own
+                        ? { inline_keyboard: [] }
+                        : undefined,
               ),
             },
             undefined,
@@ -882,6 +894,14 @@ export class TelegramConnector implements Connector {
       this.topicJobs.set(key, job)
     }
     return job
+  }
+
+  /** Whether the session has a topic of its own, or would get one: a forum, and not a session that posts in a shared topic. */
+  private async ownTopic(session: Push["session"]): Promise<boolean> {
+    if (!session || !this.chatId || !(await this.isForum())) return false
+    this.topics ??= await this.loadTopics()
+    if (this.topics.has(this.topicKey(session.id))) return true
+    return !(await this.homeFor(session.id))
   }
 
   /** The shared topic a session belongs in, when it has none of its own and the setting allows it. */
