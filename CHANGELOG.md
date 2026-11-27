@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.51.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.50.0...v0.51.0) (2026-11-27)
+
+
+### Features
+
+* tidy topics on request and close and reopen them by session state ([#182](https://github.com/mrmm-labs/opencode-oob-bridge/issues/182)) ([1be1536](https://github.com/mrmm-labs/opencode-oob-bridge/commit/1be153625e1a0352f7cb6fedab14d8617ac15bb9))
+
 ## [0.50.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.49.0...v0.50.0) (2026-11-26)
 
 
