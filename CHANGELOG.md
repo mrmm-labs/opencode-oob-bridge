@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.52.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.51.0...v0.52.0) (2026-11-27)
+
+
+### Features
+
+* a card per subagent in its parent's topic ([#184](https://github.com/mrmm-labs/opencode-oob-bridge/issues/184)) ([c759b6c](https://github.com/mrmm-labs/opencode-oob-bridge/commit/c759b6cabd540f959f7a1a3dda15904a87751196))
+
 ## [0.51.0](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.50.0...v0.51.0) (2026-11-27)
 
 
