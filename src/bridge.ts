@@ -1553,6 +1553,12 @@ export class Bridge {
   private subFlush(id: string, sub: Sub): Promise<void> {
     const run = async () => {
       try {
+        // An edit never comes sooner than the gap after the last one, whatever queued it.
+        if (
+          Object.keys(sub.refs).length > 0 &&
+          this.now() < sub.editedAt + this.subGapMs
+        )
+          return this.subSchedule(id, sub)
         const r = await this.routed(id)
         if (!r) return
         const status = this.subStatus(id, sub)
@@ -1581,9 +1587,11 @@ export class Bridge {
           }
           const ref = sub.refs[ch.id]
           if (ref === undefined) {
-            sub.tried = this.now()
             const sent = await this.safely(ch, async () => ch.send(push))
-            if (sent === undefined) continue
+            if (sent === undefined) {
+              sub.tried = this.now()
+              continue
+            }
             sub.refs[ch.id] = sent
             this.tally.pushes++
           } else if (

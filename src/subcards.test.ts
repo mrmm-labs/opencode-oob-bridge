@@ -48,6 +48,7 @@ async function rig(
     topic?: boolean
     gapMs?: number
     config?: object
+    slowSendMs?: number
   } = {},
 ) {
   const tg = await fakeTelegram()
@@ -90,6 +91,14 @@ async function rig(
     rate: { gapMs: 0, perMinute: 600 },
     topics: { headless: "project" },
   })
+  if (o.slowSendMs) {
+    const send = channel.send.bind(channel)
+    channel.send = async (p) => {
+      const ref = await send(p)
+      await new Promise((res) => setTimeout(res, o.slowSendMs))
+      return ref
+    }
+  }
   const cfg = parseConfig({
     channels: { telegram: { token: { env: "X" } } },
     ...o.config,
@@ -238,6 +247,20 @@ describe("the card of a subagent", () => {
     )
     assert.match(edit.text, /The cache lives in cache\.ts/)
     assert.match(edit.text, /explore: Find the cache/)
+    assert.equal(r.cards().length, 1)
+    await r.done()
+  })
+
+  it("changes that arrive while the card is being posted are not held for the retry time", async () => {
+    const r = await rig({ slowSendMs: 300 })
+    await r.ev("session.execution.started", "ses_c1")
+    await r.tg.waitFor(() => r.cards()[0])
+    await r.ev("session.text.ended", "ses_c1", { text: "All set" })
+    await r.ev("session.execution.succeeded", "ses_c1")
+    const edit = await r.tg.waitFor(() =>
+      r.edits().find((b) => /done/.test(b.text)),
+    )
+    assert.match(edit.text, /All set/)
     assert.equal(r.cards().length, 1)
     await r.done()
   })
