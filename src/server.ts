@@ -183,6 +183,7 @@ export const toSession = (i: Info): SessionInfo => ({
   directory: i.location?.directory,
   title: i.title,
   viewed: i.time && i.time.viewed !== undefined,
+  activeAt: Math.max(i.time?.busy ?? 0, i.time?.idle ?? 0) || undefined,
   model: i.model?.id,
   modelRef: i.model && {
     providerID: i.model.providerID,
@@ -875,7 +876,7 @@ class Hub {
           i.inputAt,
           typeof i.version === "string" ? i.version : undefined,
         )
-        ctl().watch(roots)
+        ctl().watch(roots, String(i.tui ?? "tui"))
         return statusSnapshot(ctl(), roots) as never
       }),
       op: guard("op", async (input: unknown) => {

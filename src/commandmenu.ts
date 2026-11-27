@@ -42,6 +42,7 @@ const ALL: Array<MenuCommand & { needs?: keyof Features }> = [
     command: "interrupt",
     description: "Interrupt the running turn (asks first)",
   },
+  { command: "topics", description: "Tidy topics: dry run, or /topics apply" },
   { command: "new", description: "Start a session in a listed project" },
   { command: "sessions", description: "Sessions mirrored here, with links" },
   { command: "projects", description: "Projects a new session can use" },
