@@ -349,6 +349,13 @@ What you get in Telegram:
     project, short session id and last activity. It is edited in place, at most once every 10 seconds.
     Set `statusCard: false` to turn it off; `notify.finished: true` brings back one message per
     finished turn.
+  - **Subagent cards.** For each subagent (child session) of a session that has a topic of its own,
+    the bridge posts one card in that topic: `🤖 <agent>: <description>`, then the status (`running`,
+    `waiting for an answer`, `done`, `idle`, `error`), the time it has run and the last line of its last
+    text. A subagent of a subagent has its own card, led by `↳`. The card is edited in place, at most
+    once every 8 seconds and only when its text changes, and is never deleted; a question of the
+    subagent is posted as a reply to its card. A session that posts in the shared `<project> · agents`
+    topic, and a chat that is not a forum, get no cards. There is no setting to turn them off.
   - With the Mini App set up, each topic also holds a pinned **📱 Open app** message whose button
     opens that session in the app. It is posted and pinned silently when the topic is bound and once
     at startup for topics that already exist, then edited in place, never deleted or pinned twice,
