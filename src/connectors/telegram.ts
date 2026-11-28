@@ -10,7 +10,7 @@
  */
 import { createHash, randomInt } from "node:crypto"
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 import {
   buildMenu,
@@ -62,6 +62,9 @@ import {
   mediaOf,
   MediaRejected,
   parseMedia,
+  safeFileName,
+  sizeText,
+  takenInline,
   verify,
   type MediaConfig,
   type MediaMessage,
@@ -163,6 +166,8 @@ export type TelegramOptions = {
   finalRetryMs?: number
   /** Where session topics of a forum chat are remembered across restarts. */
   topicsFile?: string
+  /** Where documents the model cannot take inline are saved, one folder per session. Without it they are refused. */
+  filesDir?: string
   /** The Telegram user id stored at pairing: the only person whose tap or code answers an approval. */
   operator?: string
   /** The same id from the config file, used when pairing stored none. */
@@ -2431,14 +2436,26 @@ export class TelegramConnector implements Connector {
         "Voice and video messages are not supported. Send text, a photo or a document.",
       )
     const cfg = this.opts.media ?? DEFAULT_MEDIA
-    let file: InboundFile
+    let file: InboundFile | undefined
+    let saved = ""
+    const inbox = !takenInline(ref, cfg) && this.opts.filesDir !== undefined
     try {
-      file = await this.fetchMedia(u, ref, cfg)
+      const got = await this.fetchMedia(u, ref, cfg, inbox, sessionKey)
+      if ("note" in got) saved = got.note
+      else file = got
     } catch (err) {
-      if (err instanceof MediaRejected) return notice(err.message)
+      if (err instanceof MediaRejected) {
+        log("telegram_media", { outcome: "refused", mime: ref.mime })
+        return notice(err.message)
+      }
       this.fail(err)
+      log("telegram_media", { outcome: "failed", mime: ref.mime })
       return notice("Could not download that file from Telegram.")
     }
+    log("telegram_media", {
+      outcome: file ? "inline" : "saved",
+      mime: file?.mime ?? ref.mime,
+    })
     void this.react(m.message_id, "received")
     const out = await this.onInbound?.({
       kind: "prompt",
@@ -2446,8 +2463,8 @@ export class TelegramConnector implements Connector {
       time: m.date,
       from: { connector: this.id, chat: String(m.chat.id) },
       sessionKey,
-      text: (m.caption ?? "").trim(),
-      files: [file],
+      text: [(m.caption ?? "").trim(), saved].filter(Boolean).join("\n\n"),
+      files: file ? [file] : undefined,
     })
     await this.settle(m, out, sessionKey)
   }
@@ -2456,15 +2473,17 @@ export class TelegramConnector implements Connector {
     u: Update,
     ref: Extract<MediaRef, { kind: "photo" | "document" }>,
     cfg: MediaConfig,
-  ): Promise<InboundFile> {
-    checkAnnounced(ref, cfg)
+    inbox: boolean,
+    sessionKey: string,
+  ): Promise<InboundFile | { note: string }> {
+    checkAnnounced(ref, cfg, inbox)
     const info = await this.call<{ file_path?: string; file_size?: number }>(
       "getFile",
       { file_id: ref.fileId },
     )
     if (!info.file_path) throw new Error("telegram getFile gave no path")
     if (info.file_size !== undefined && info.file_size > cfg.maxBytes)
-      checkAnnounced({ ...ref, size: info.file_size }, cfg)
+      checkAnnounced({ ...ref, size: info.file_size }, cfg, inbox)
     const token = await this.opts.token()
     if (!token) throw new Error("no Telegram token")
     const bytes = await download({
@@ -2475,11 +2494,33 @@ export class TelegramConnector implements Connector {
       maxBytes: cfg.maxBytes,
       signal: this.signal,
     })
+    if (inbox) return this.saveFile(u, ref, bytes, sessionKey)
     const mime = verify(ref, bytes, cfg)
     return {
       name: fileName(ref, mime, String(u.update_id)),
       mime,
       data: Buffer.from(bytes).toString("base64"),
+    }
+  }
+
+  /** Saves a document the model cannot take inline under the session's folder, and says where, in words the agent can act on. */
+  private async saveFile(
+    u: Update,
+    ref: Extract<MediaRef, { kind: "photo" | "document" }>,
+    bytes: Uint8Array,
+    sessionKey: string,
+  ): Promise<{ note: string }> {
+    if (bytes.length === 0) throw new MediaRejected("That file is empty.")
+    const dir = resolve(
+      this.opts.filesDir!,
+      sessionKey.replace(/[^A-Za-z0-9_-]/g, "_"),
+    )
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    const name = safeFileName(ref.name, String(u.update_id))
+    const path = join(dir, name)
+    await writeFile(path, bytes, { mode: 0o600, flag: "wx" })
+    return {
+      note: `File received: ${name} (${ref.mime ?? "unknown type"}, ${sizeText(bytes.length)}) saved at ${path}`,
     }
   }
 
@@ -3801,6 +3842,7 @@ export const telegramType: ConnectorType<TelegramConfig> = {
       offsetFile: join(env.dir, `${env.name}-offset.json`),
       inboxFile: join(env.dir, `${env.name}-inbox.jsonl`),
       topicsFile: join(env.dir, `${env.name}-topics.json`),
+      filesDir: join(env.dir, `${env.name}-files`),
       operator: typeof operator === "string" ? operator : undefined,
       operatorFallback: o.operator,
       onPaired: (chatId, userId) => env.settings.set({ chatId, userId }),

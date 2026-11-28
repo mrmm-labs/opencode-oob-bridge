@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { describe, it } from "node:test"
 
 import { Bridge, type BridgeEvent, type Host } from "./bridge.ts"
@@ -1248,6 +1248,130 @@ describe("chat from Telegram: files", () => {
     assert.deepEqual(r.tg.downloads, [])
     assert.equal(r.prompts.length, 0)
     await r.done()
+  })
+
+  describe("a type the model cannot take inline", () => {
+    const XLSX =
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    const BYTES = new Uint8Array([0x50, 0x4b, 3, 4, 9, 9, 9, 9])
+    const filesRig = async () => {
+      const files = await mkdtemp(join(tmpdir(), "oobb-files-"))
+      const r = await chatRig({ tg: { filesDir: files } })
+      await chatOn(r)
+      return { r, files }
+    }
+    const send = (
+      r: Rig,
+      name: string | undefined,
+      mime: string,
+      id = "f1",
+    ) => {
+      r.tg.file(id, BYTES)
+      r.tg.media(
+        CHAT,
+        {
+          document: {
+            file_id: id,
+            file_name: name,
+            mime_type: mime,
+            file_size: BYTES.length,
+          },
+        },
+        "look at this",
+        9001,
+      )
+    }
+
+    it("an xlsx is saved for the session and the path is sent as text", async () => {
+      const { r, files } = await filesRig()
+      send(r, "Q3 budget.xlsx", XLSX)
+      await r.tg.waitFor(() => r.prompts[0])
+      const p = r.prompts[0]
+      assert.equal(p.files, undefined, "no file part")
+      const m =
+        /File received: (.+?) \(([^,]+), 8 bytes\) saved at (.+)$/m.exec(p.text)
+      assert.ok(m, p.text)
+      assert.match(p.text, /^look at this\n\n/)
+      assert.equal(m[2], XLSX)
+      assert.ok(m[3].startsWith(files), "under the state folder")
+      assert.ok(m[3].endsWith(".xlsx"), "extension kept")
+      assert.deepEqual(new Uint8Array(await readFile(m[3])), BYTES)
+      assert.equal((await stat(m[3])).mode & 0o777, 0o600)
+      assert.equal(dirname(m[3]), join(files, "root"), "per-session folder")
+      await r.done()
+    })
+
+    it("an accepted type still goes inline as a file part", async () => {
+      const { r, files } = await filesRig()
+      r.tg.file("pdf1", PDF)
+      r.tg.media(
+        CHAT,
+        {
+          document: {
+            file_id: "pdf1",
+            file_name: "a.pdf",
+            mime_type: "application/pdf",
+            file_size: PDF.length,
+          },
+        },
+        undefined,
+        9001,
+      )
+      await r.tg.waitFor(() => r.prompts[0])
+      assert.equal(r.prompts[0].files?.[0].mime, "application/pdf")
+      assert.doesNotMatch(r.prompts[0].text, /File received/)
+      assert.deepEqual(await readdir(files), [], "nothing saved")
+      await r.done()
+    })
+
+    it("a traversal name is sanitized and stays inside the folder", async () => {
+      const { r, files } = await filesRig()
+      send(
+        r,
+        "../../../etc/pass\u0000wd.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      )
+      await r.tg.waitFor(() => r.prompts[0])
+      const path = /saved at (.+)$/m.exec(r.prompts[0].text)![1]
+      assert.ok(resolve(path).startsWith(files + "/"), path)
+      assert.equal(dirname(path).startsWith(files), true)
+      assert.doesNotMatch(path.slice(files.length), /\.\./)
+      assert.match(path, /\.docx$/)
+      await r.done()
+    })
+
+    it("a name with no extension or only dots still saves", async () => {
+      const { r } = await filesRig()
+      send(r, "...", "application/zip")
+      await r.tg.waitFor(() => r.prompts[0])
+      assert.match(
+        r.prompts[0].text,
+        /File received: \d+-file \(application\/zip/,
+      )
+      await r.done()
+    })
+
+    it("an oversize file is refused with the limit, and nothing is saved", async () => {
+      const { r, files } = await filesRig()
+      r.tg.media(
+        CHAT,
+        {
+          document: {
+            file_id: "big",
+            file_name: "big.xlsx",
+            mime_type: XLSX,
+            file_size: 500 * 1024 * 1024,
+          },
+        },
+        undefined,
+        9001,
+      )
+      await notice(r, /the limit is/)
+      assert.deepEqual(r.tg.downloads, [])
+      assert.equal(r.prompts.length, 0)
+      assert.deepEqual(await readdir(files), [])
+      await r.done()
+    })
   })
 
   it("does not trust a declared type: a PDF that is not one, a binary called text, a photo that is not a picture", async () => {
