@@ -425,7 +425,11 @@ How it behaves:
   by default: JPEG, PNG, GIF, WebP, PDF, and plain text, Markdown, CSV and JSON, up to 10 MB
   (`media.maxBytes`, at most 20 MB, which is all the Bot API serves; `media.mimes` lists types,
   and `image/*` takes a family). The type is checked against the first bytes, so a renamed file
-  is refused. Anything else gets a reply saying why. Voice, video, audio and animations are
+  is refused. A document of any other type (`.xlsx`, `.docx`, `.zip`, ...) is not refused: it is
+  saved under the session's folder in the state directory (`<instance>-files/<session>/`, mode
+  `0600`, a safe name with the original extension) and the session is sent `File received: <name>
+(<mime>, <size>) saved at <path>` after the caption, for its own tools to read. The size limit
+  applies. Voice, video, audio and animations are
   answered with "not supported". Chat must be on for the session, as for text.
 - **Delivery.** By default (`chat.delivery: "queue"`) a prompt sent to a busy session waits for the
   turn to end: it never interrupts a step. A message that starts with `!` (the `!` is dropped), or

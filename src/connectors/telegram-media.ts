@@ -144,13 +144,15 @@ export const megabytes = (n: number) =>
 export function checkAnnounced(
   ref: Extract<MediaRef, { kind: "photo" | "document" }>,
   cfg: MediaConfig,
+  /** A type the model cannot take inline goes to the session's file inbox instead of being refused. */
+  inbox = false,
 ): void {
   if (ref.size !== undefined && ref.size > cfg.maxBytes)
     throw new MediaRejected(
       `That file is ${megabytes(ref.size)}; the limit is ${megabytes(cfg.maxBytes)}.`,
     )
   if (ref.kind === "document") {
-    if (!ref.mime || !mimeAllowed(ref.mime, cfg))
+    if (!inbox && (!ref.mime || !mimeAllowed(ref.mime, cfg)))
       throw new MediaRejected(
         `Files of type ${ref.mime ?? "unknown"} are not accepted. Accepted: ${cfg.mimes.join(", ")}.`,
       )
@@ -249,6 +251,40 @@ export function fileName(
     .slice(0, 80)
   return clean || `${ref.kind}-${id}.${EXT[mime] ?? "bin"}`
 }
+
+/** Whether a document goes inline as a file part; any other type is saved for the session to read itself. */
+export const takenInline = (
+  ref: Extract<MediaRef, { kind: "photo" | "document" }>,
+  cfg: MediaConfig,
+): boolean => ref.kind === "photo" || (!!ref.mime && mimeAllowed(ref.mime, cfg))
+
+/** A name safe on disk: no path, no odd characters, not long, the original extension kept. */
+export function safeFileName(name: string | undefined, id: string): string {
+  const base = (name ?? "").split(/[\\/]/).pop()!
+  const dot = base.lastIndexOf(".")
+  const ext =
+    dot > 0
+      ? base
+          .slice(dot)
+          .replace(/[^A-Za-z0-9.]/g, "")
+          .slice(0, 12)
+      : ""
+  const stem = (dot > 0 ? base.slice(0, dot) : base)
+    .replace(/[^A-Za-z0-9._ -]/g, "_")
+    .replace(/^[.\s]+/, "")
+    .replace(/\.{2,}/g, "_")
+    .trim()
+    .slice(0, 80)
+  return `${id}-${stem || "file"}${ext === "." ? "" : ext}`
+}
+
+/** "512 bytes", "3.4 KB", "2.1 MB". */
+export const sizeText = (n: number): string =>
+  n < 1024
+    ? `${n} bytes`
+    : n < 1024 * 1024
+      ? `${Math.round(n / 102.4) / 10} KB`
+      : megabytes(n)
 
 /** Reads a response body, giving up past `max` bytes instead of trusting any announced size. */
 export async function readCapped(
