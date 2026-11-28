@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.53.2](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.53.1...v0.53.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* save documents the model cannot take inline instead of refusing them ([#190](https://github.com/mrmm-labs/opencode-oob-bridge/issues/190)) ([804f142](https://github.com/mrmm-labs/opencode-oob-bridge/commit/804f142d2428bbc047f21c884e846938c26a2bad))
+
 ## [0.53.1](https://github.com/mrmm-labs/opencode-oob-bridge/compare/v0.53.0...v0.53.1) (2026-11-27)
 
 
